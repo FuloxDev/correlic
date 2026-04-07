@@ -80,20 +80,25 @@ FROM debian:bookworm-slim AS runtime
 ARG VERSION=dev
 ENV CORRELIC_VERSION=${VERSION}
 
-# Install runtime dependencies in a single layer
+# Install base tools first
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # PostgreSQL 16
+    curl ca-certificates gnupg lsb-release bash openssl procps supervisor \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add PostgreSQL 16 apt repo
+RUN mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/pgdg.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+
+# Add Node.js 20 apt repo
+RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+
+# Install PostgreSQL 16, Node.js 20, Java 17
+RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-16 postgresql-client-16 \
-    # Java for Neo4j
+    nodejs \
     openjdk-17-jre-headless \
-    # Node.js 20
-    curl ca-certificates gnupg \
-    && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
-    && apt-get update && apt-get install -y --no-install-recommends nodejs \
-    # Supervisor + utilities
-    && apt-get install -y --no-install-recommends supervisor openssl procps bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Neo4j 5
