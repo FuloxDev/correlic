@@ -1,0 +1,154 @@
+# Correlic All-in-One Docker Image
+# Bundles: PostgreSQL 16 + Neo4j 5 + Backend (API+Telemetry) + Agent (eBPF) + UI + Proxy
+#
+# Usage:
+#   docker pull ghcr.io/correlic/correlic:latest
+#   docker run -d --name correlic \
+#     --privileged --pid=host \
+#     -v /sys/kernel:/sys/kernel:ro \
+#     -v correlic-data:/var/lib/correlic \
+#     -p 3001:3001 \
+#     ghcr.io/correlic/correlic:latest
+#
+# Dashboard: http://localhost:3001
+
+ARG VERSION=dev
+
+# ============================================================
+# Stage 1: Build backend Go binaries
+# ============================================================
+FROM golang:1.24-alpine AS builder-backend
+
+RUN apk add --no-cache git
+
+WORKDIR /build
+COPY src/correlic-backend/go.mod src/correlic-backend/go.sum ./
+RUN go mod download
+
+COPY src/correlic-backend/ .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-telemetry ./cmd/telemetry
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-admin ./cmd/admin
+
+# ============================================================
+# Stage 2: Build agent Go binary (needs eBPF toolchain)
+# ============================================================
+FROM golang:1.25-bookworm AS builder-agent
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang llvm libbpf-dev linux-headers-generic \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY src/Correlic-agent/go.mod src/Correlic-agent/go.sum ./
+RUN go mod download
+
+COPY src/Correlic-agent/ .
+RUN go generate ./internal/ebpf/...
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-agent ./cmd/agent
+
+# ============================================================
+# Stage 3: Build Next.js UI
+# ============================================================
+FROM node:20-alpine AS builder-ui
+
+WORKDIR /build
+COPY src/correlic-ui/package.json src/correlic-ui/package-lock.json ./
+RUN npm ci
+
+COPY src/correlic-ui/ .
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PROXY_BASE_URL=http://localhost:8788
+RUN npm run build
+
+# ============================================================
+# Stage 4: Build UI Proxy
+# ============================================================
+FROM node:20-alpine AS builder-proxy
+
+WORKDIR /build
+COPY src/correlic-ui-proxy/package.json src/correlic-ui-proxy/package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY src/correlic-ui-proxy/index.js ./
+
+# ============================================================
+# Stage 5: Runtime — all services in one image
+# ============================================================
+FROM debian:bookworm-slim AS runtime
+
+ARG VERSION=dev
+ENV CORRELIC_VERSION=${VERSION}
+
+# Install runtime dependencies in a single layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # PostgreSQL 16
+    postgresql-16 postgresql-client-16 \
+    # Java for Neo4j
+    openjdk-17-jre-headless \
+    # Node.js 20
+    curl ca-certificates gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    # Supervisor + utilities
+    && apt-get install -y --no-install-recommends supervisor openssl procps bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Neo4j 5
+RUN curl -fsSL https://debian.neo4j.com/neotechnology.gpg.key | gpg --dearmor -o /etc/apt/keyrings/neo4j.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/neo4j.gpg] https://debian.neo4j.com stable 5" > /etc/apt/sources.list.d/neo4j.list \
+    && apt-get update && apt-get install -y --no-install-recommends neo4j \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create directory structure
+RUN mkdir -p \
+    /opt/correlic/bin \
+    /opt/correlic/migrations \
+    /opt/correlic/ui \
+    /opt/correlic/ui-proxy \
+    /opt/correlic/certs \
+    /opt/correlic/scripts \
+    /var/lib/correlic \
+    /var/log/correlic
+
+# Copy Go binaries from build stages
+COPY --from=builder-backend /correlic-api /opt/correlic/bin/
+COPY --from=builder-backend /correlic-telemetry /opt/correlic/bin/
+COPY --from=builder-backend /correlic-admin /opt/correlic/bin/
+COPY --from=builder-agent /correlic-agent /opt/correlic/bin/
+
+# Copy migrations
+COPY --from=builder-backend /build/migrations/ /opt/correlic/migrations/
+
+# Copy UI (Next.js standalone)
+COPY --from=builder-ui /build/.next/standalone/ /opt/correlic/ui/
+COPY --from=builder-ui /build/.next/static/ /opt/correlic/ui/.next/static/
+COPY --from=builder-ui /build/public/ /opt/correlic/ui/public/
+
+# Copy UI Proxy
+COPY --from=builder-proxy /build/ /opt/correlic/ui-proxy/
+
+# Copy scaffolding
+COPY entrypoint.sh /opt/correlic/entrypoint.sh
+COPY supervisord.conf /etc/supervisor/conf.d/correlic.conf
+COPY scripts/generate-certs.sh /opt/correlic/scripts/generate-certs.sh
+COPY scripts/healthcheck.sh /opt/correlic/scripts/healthcheck.sh
+
+RUN chmod +x /opt/correlic/entrypoint.sh \
+    /opt/correlic/scripts/generate-certs.sh \
+    /opt/correlic/scripts/healthcheck.sh \
+    /opt/correlic/bin/*
+
+# PostgreSQL data dir permissions
+RUN mkdir -p /var/lib/correlic/postgresql && chown -R postgres:postgres /var/lib/correlic/postgresql
+RUN mkdir -p /var/lib/correlic/neo4j && chown -R neo4j:neo4j /var/lib/correlic/neo4j
+
+VOLUME ["/var/lib/correlic"]
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /opt/correlic/scripts/healthcheck.sh
+
+ENTRYPOINT ["/opt/correlic/entrypoint.sh"]
