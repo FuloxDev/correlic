@@ -49,6 +49,12 @@ if [ -z "${API_KEY:-}" ]; then
 fi
 
 # ============================================================
+# Ensure log dir is writable (every run, not just first)
+# ============================================================
+mkdir -p "$LOG_DIR"
+chmod 777 "$LOG_DIR"
+
+# ============================================================
 # First-run initialization
 # ============================================================
 if [ ! -f "$SENTINEL" ]; then
@@ -195,7 +201,12 @@ supervisorctl start backend-api backend-telemetry 2>/dev/null
 
 # Wait for API to accept connections
 log "Waiting for backend API..."
-sleep 5
+retries=15
+while [ $retries -gt 0 ]; do
+    if curl -sfk https://localhost:8080/health >/dev/null 2>&1; then break; fi
+    sleep 2; retries=$((retries - 1))
+done
+log "Backend API ready"
 
 # Start agent
 log "Starting agent..."
