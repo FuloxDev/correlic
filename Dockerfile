@@ -4,12 +4,14 @@
 # Usage:
 #   docker pull ghcr.io/correlic/correlic:latest
 #   docker run -d --name correlic \
+#     -e API_KEY=your-key-from-correlic-com \
 #     --privileged --pid=host \
 #     -v /sys/kernel:/sys/kernel:ro \
 #     -v correlic-data:/var/lib/correlic \
 #     -p 3001:3001 \
 #     ghcr.io/correlic/correlic:latest
 #
+# Get your API key at https://correlic.com/register
 # Dashboard: http://localhost:3001
 
 ARG VERSION=dev

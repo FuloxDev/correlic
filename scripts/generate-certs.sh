@@ -41,7 +41,7 @@ openssl x509 -req -in "$CERT_DIR/client.csr" -CA "$CERT_DIR/ca.crt" \
 # Cleanup temp files
 rm -f "$CERT_DIR"/*.csr "$CERT_DIR"/*.cnf "$CERT_DIR"/*.srl
 
-chmod 600 "$CERT_DIR"/*.key
+chmod 644 "$CERT_DIR"/*.key
 chmod 644 "$CERT_DIR"/*.crt
 
 echo "[certs] Done: CA + server + client certificates generated"
