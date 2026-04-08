@@ -199,13 +199,15 @@ wait_for_neo4j && log "Neo4j ready" || true
 log "Starting backend services..."
 supervisorctl start backend-api backend-telemetry 2>/dev/null
 
-# Wait for API to accept connections
+# Wait for API to be fully ready (health + pattern endpoint)
 log "Waiting for backend API..."
-retries=15
+retries=30
 while [ $retries -gt 0 ]; do
     if curl -sfk https://localhost:8080/health >/dev/null 2>&1; then break; fi
-    sleep 2; retries=$((retries - 1))
+    sleep 1; retries=$((retries - 1))
 done
+# Extra wait for full API initialization (routes, DB connections, Neo4j)
+sleep 10
 log "Backend API ready"
 
 # Start agent
