@@ -4,12 +4,12 @@ set -euo pipefail
 # Correlic Linux Installer — Standalone Binary Edition
 # Self-hosted security observability — all data stays on your device
 #
-# Usage: curl -sSL https://raw.githubusercontent.com/Correlic/correlic/main/install/install.sh | sudo bash
+# Usage: curl -sSL https://raw.githubusercontent.com/FuloxDev/correlic/main/install/install.sh | sudo bash
 # ============================================================
 
 VERSION="1.0.0"
 INSTALL_DIR="/opt/correlic"
-BUNDLE_URL="${CORRELIC_BUNDLE_URL:-https://github.com/Correlic/correlic/releases/download/v${VERSION}/correlic-linux-v${VERSION}.tar.gz}"
+BUNDLE_URL="${CORRELIC_BUNDLE_URL:-https://github.com/FuloxDev/correlic/releases/download/v${VERSION}/correlic-linux-v${VERSION}.tar.gz}"
 TOTAL_STEPS=10
 CURRENT_STEP=0
 TEMP_FILE=""
@@ -155,7 +155,7 @@ step 1 "Checking prerequisites..."
 
 # Must be root
 if [ "$(id -u)" -ne 0 ]; then
-  fail "This script must be run as root. Use: curl -sSL https://raw.githubusercontent.com/Correlic/correlic/main/install/install.sh | sudo bash"
+  fail "This script must be run as root. Use: curl -sSL https://raw.githubusercontent.com/FuloxDev/correlic/main/install/install.sh | sudo bash"
 fi
 ok "Running as root"
 
@@ -333,7 +333,7 @@ log "  Downloading from $BUNDLE_URL..."
 if ! curl -fSL --progress-bar "$BUNDLE_URL" -o "$TEMP_FILE"; then
   fail "Failed to download bundle from $BUNDLE_URL
        Check your internet connection and try again.
-       If the problem persists, see https://github.com/Correlic/correlic/releases for alternatives."
+       If the problem persists, see https://github.com/FuloxDev/correlic/releases for alternatives."
 fi
 
 # Validate download

@@ -1,7 +1,8 @@
 name: Release container images
 
 # Builds and pushes the all-in-one image plus the four component images to
-# GitHub Container Registry. Runs on a version tag (v1.2.3) or on demand.
+# GitHub Container Registry under ghcr.io/<repository owner>/. Runs on a
+# version tag (v1.2.3) or on demand.
 #
 # GITHUB_TOKEN can only push to packages this repository owns. If a package was
 # first published from another repository, grant this repository write access
@@ -30,29 +31,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: correlic/correlic
+          - image: correlic
             context: .
             dockerfile: ./Dockerfile
-          - image: correlic/correlic-backend
+          - image: correlic-backend
             context: ./backend
             dockerfile: ./backend/Dockerfile
-          - image: correlic/correlic-agent
+          - image: correlic-agent
             context: ./agent
             dockerfile: ./agent/Dockerfile
-          - image: correlic/correlic-ui
+          - image: correlic-ui
             context: ./ui
             dockerfile: ./ui/Dockerfile
-          - image: correlic/correlic-ui-proxy
+          - image: correlic-ui-proxy
             context: ./ui-proxy
             dockerfile: ./ui-proxy/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve version
+      - name: Resolve version and registry namespace
         id: v
         run: |
-          if [ -n "${{ inputs.version }}" ]; then echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT";
-          else echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"; fi
+          V="${{ inputs.version }}"; [ -z "$V" ] && V="${GITHUB_REF_NAME}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          # Image names must be lowercase; the owner may not be.
+          echo "ns=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -72,7 +75,7 @@ jobs:
           build-args: |
             VERSION=${{ steps.v.outputs.version }}
           tags: |
-            ${{ env.REGISTRY }}/${{ matrix.image }}:${{ steps.v.outputs.version }}
-            ${{ env.REGISTRY }}/${{ matrix.image }}:latest
+            ${{ env.REGISTRY }}/${{ steps.v.outputs.ns }}/${{ matrix.image }}:${{ steps.v.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.v.outputs.ns }}/${{ matrix.image }}:latest
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,scope=${{ matrix.image }},mode=max

@@ -40,7 +40,7 @@ services:
 
   # ── Bootstrap: migrations + org + local API key + agent config (first run) ─
   bootstrap:
-    image: ghcr.io/correlic/correlic-backend:latest
+    image: ghcr.io/fuloxdev/correlic-backend:latest
     entrypoint: [""]
     command: >
       sh -c '
@@ -134,7 +134,7 @@ services:
 
   # ── Backend API ───────────────────────────────────────────
   backend-api:
-    image: ghcr.io/correlic/correlic-backend:latest
+    image: ghcr.io/fuloxdev/correlic-backend:latest
     command: ["api"]
     environment:
       DATABASE_URL: postgres://correlic:${DB_PASSWORD}@db:5432/correlic?sslmode=disable
@@ -163,7 +163,7 @@ services:
 
   # ── Backend Telemetry ─────────────────────────────────────
   backend-tel:
-    image: ghcr.io/correlic/correlic-backend:latest
+    image: ghcr.io/fuloxdev/correlic-backend:latest
     command: ["telemetry"]
     environment:
       DATABASE_URL: postgres://correlic:${DB_PASSWORD}@db:5432/correlic?sslmode=disable
@@ -191,7 +191,7 @@ services:
 
   # ── eBPF Agent ────────────────────────────────────────────
   agent:
-    image: ghcr.io/correlic/correlic-agent:latest
+    image: ghcr.io/fuloxdev/correlic-agent:latest
     privileged: true
     pid: host
     entrypoint: [""]
@@ -219,7 +219,7 @@ services:
   # With API_KEY set the dashboard logs you in automatically; without it,
   # log in with the key printed by the bootstrap service.
   ui:
-    image: ghcr.io/correlic/correlic-ui:latest
+    image: ghcr.io/fuloxdev/correlic-ui:latest
     ports:
       - "3001:3001"
     environment:
@@ -237,7 +237,7 @@ services:
 
   # ── UI Proxy (mTLS handler — internal only) ──────────────
   ui-proxy:
-    image: ghcr.io/correlic/correlic-ui-proxy:latest
+    image: ghcr.io/fuloxdev/correlic-ui-proxy:latest
     environment:
       PORT: 8788
       BIND_HOST: 0.0.0.0

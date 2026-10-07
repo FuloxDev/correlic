@@ -45,7 +45,7 @@ If you find a pattern that should be included and is not — particularly in `ne
   eprint       = {arXiv:XXXX.XXXXX},
   archivePrefix = {arXiv},
   primaryClass = {cs.CR},
-  note         = {Supplementary artifacts: \url{https://github.com/Correlic/paper-supplementary}}
+  note         = {Supplementary artifacts: \url{https://github.com/FuloxDev/correlic/tree/main/paper-supplementary}}
 }
 ```
 

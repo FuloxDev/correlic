@@ -3,7 +3,7 @@ arch: amd64
 version: ${VERSION}
 maintainer: "Correlic maintainers"
 description: "Correlic Security Observability — eBPF agent, backend API, and dashboard"
-homepage: "https://github.com/Correlic/correlic"
+homepage: "https://github.com/FuloxDev/correlic"
 license: "MIT"
 section: "admin"
 priority: "optional"

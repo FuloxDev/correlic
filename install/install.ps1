@@ -3,13 +3,13 @@
 # Self-hosted security observability — all data stays on your device
 # Everything is bundled — zero external dependencies
 #
-# Usage: irm https://raw.githubusercontent.com/Correlic/correlic/main/install/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/FuloxDev/correlic/main/install/install.ps1 | iex
 # ============================================================
 
 $ErrorActionPreference = "Stop"
 $Version = "v1.0.0"
 $InstallDir = "C:\Correlic"
-$BaseURL = if ($env:CORRELIC_BUNDLE_BASE_URL) { $env:CORRELIC_BUNDLE_BASE_URL } else { "https://github.com/Correlic/correlic/releases/download/$Version" }
+$BaseURL = if ($env:CORRELIC_BUNDLE_BASE_URL) { $env:CORRELIC_BUNDLE_BASE_URL } else { "https://github.com/FuloxDev/correlic/releases/download/$Version" }
 $BundleFile = "correlic-windows-$Version.zip"
 $TotalSteps = 10
 
