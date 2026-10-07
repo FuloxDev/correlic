@@ -53,4 +53,3 @@ func (c *CorrelicClient) DoGET(ctx context.Context, path string, q url.Values) (
 	}
 	return body, nil
 }
-
