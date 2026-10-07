@@ -7,7 +7,7 @@
 #     -v /sys/kernel:/sys/kernel:ro \
 #     -v correlic-data:/var/lib/correlic \
 #     -p 3001:3001 \
-#     ghcr.io/correlic/correlic:latest
+#     ghcr.io/fuloxdev/correlic:latest
 #
 # On first start a local API key is generated and printed in the container log
 # (docker logs correlic). Pass -e API_KEY=... to use a key you created yourself.

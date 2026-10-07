@@ -10,15 +10,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Correlic/correlic-ui-proxy.git"
+    "url": "git+https://github.com/FuloxDev/correlic.git",
+    "directory": "ui-proxy"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Correlic/correlic-ui-proxy/issues"
+    "url": "https://github.com/FuloxDev/correlic/issues"
   },
-  "homepage": "https://github.com/Correlic/correlic-ui-proxy#readme",
+  "homepage": "https://github.com/FuloxDev/correlic/tree/main/ui-proxy#readme",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",

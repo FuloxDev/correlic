@@ -31,7 +31,7 @@ docker run -d --name correlic \
   -v /sys/kernel:/sys/kernel:ro \
   -v correlic-data:/var/lib/correlic \
   -p 3001:3001 \
-  ghcr.io/correlic/correlic:latest
+  ghcr.io/fuloxdev/correlic:latest
 docker logs correlic        # first start prints the generated dashboard API key
 open http://localhost:3001
 ```
