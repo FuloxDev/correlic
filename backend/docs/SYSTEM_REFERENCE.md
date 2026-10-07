@@ -147,7 +147,6 @@ Correlic is a distributed security observability platform that monitors AI codin
 | Query & timeline services | `docs/QUERY_AND_TIMELINE.md` |
 | Data retention | `docs/DATA_RETENTION.md` |
 | Enrichment APIs | `docs/ENRICHMENT.md` |
-| Tier/subscription system | `docs/TIER_SYSTEM.md` |
 | Linux agent (eBPF) | `docs/LINUX_AGENT.md` |
 | Windows agent (ETW + USN) | `docs/WINDOWS_AGENT.md` |
 | macOS agent (ESF + kqueue) | `docs/MACOS_AGENT.md` |
@@ -179,7 +178,6 @@ Correlic is a distributed security observability platform that monitors AI codin
 | `internal/query/` | Query service, timeline service, investigation service |
 | `internal/enrichment/` | IP/ASN/BGP enrichment |
 | `internal/maintenance/` | Data retention cleanup |
-| `internal/tier/` | Subscription tier logic |
 | `internal/event/` | Canonical event schema |
 | `internal/model/` | Data models |
 | `internal/config/` | Environment loading |
@@ -216,7 +214,6 @@ Correlic is a distributed security observability platform that monitors AI codin
 | `MTLS_CA_FILE` | — | CA cert for client mTLS verification |
 | `ALLOW_API_KEY_AUTH` | `true` | Enable API key auth (vs mTLS-only) |
 | `CORRELIC_RATE_LIMIT_PER_MIN` | `300` | API rate limit |
-| `CORRELIC_TIER` | `free` | Subscription tier (free/trial/pro) |
 | `LLM_ENCRYPTION_KEY` | (default) | Encryption key for BYOK LLM API keys |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID |
 | `FRONTEND_URL` | `https://localhost:3000` | Frontend URL for email links |

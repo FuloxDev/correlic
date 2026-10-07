@@ -442,15 +442,3 @@ export interface NetworkDestinationResponse {
   evidence: TelemetryEvent[]
 }
 
-export interface TierLimits {
-  telemetry_retention_days: number
-  ai_proof_evidence_limit: number
-  network_allowlist_enabled: boolean
-  supply_chain_allowlist_enabled: boolean
-}
-
-export interface TierResponse {
-  tier: 'free' | 'trial' | 'pro' | string
-  limits: TierLimits
-}
-

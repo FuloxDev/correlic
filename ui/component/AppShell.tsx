@@ -2,8 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import {
   Bot,
   Settings,
@@ -14,7 +13,6 @@ import {
   Globe,
   Shield,
 } from 'lucide-react'
-import { getTier } from '@/lib/queries'
 
 const UI_VERSION = process.env.NEXT_PUBLIC_UI_VERSION ?? 'v0.1.0'
 
@@ -32,18 +30,6 @@ const PUBLIC_PATHS = ['/login', '/verify-email', '/install']
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [isConnected] = useState(true)
-
-  const tierQ = useQuery({
-    queryKey: ['tier'],
-    queryFn: () => getTier(),
-    retry: 1,
-    staleTime: 60_000,
-  })
-  const tierLabel = useMemo(() => {
-    const t = tierQ.data?.tier
-    if (!t) return 'FREE'
-    return String(t).toUpperCase()
-  }, [tierQ.data?.tier])
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/'
@@ -105,35 +91,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
           </div>
-        </div>
-
-        {/* Tier banner */}
-        <div
-          className="mx-3 mt-3 px-3 py-2.5 rounded-lg flex items-center justify-between gap-2"
-          style={{
-            background: 'linear-gradient(135deg, var(--theme-nav-active-from), var(--theme-nav-active-to))',
-            border: '1px solid var(--theme-nav-active-border)',
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4" style={{ color: 'var(--theme-accent)' }} />
-            <span
-              className="text-sm font-medium"
-              style={{ color: 'var(--theme-text-secondary)' }}
-            >
-              Tier
-            </span>
-          </div>
-          <span
-            className="text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded"
-            style={{
-              backgroundColor: 'var(--theme-body)',
-              color: 'var(--theme-text-primary)',
-              border: '1px solid var(--theme-card-border)',
-            }}
-          >
-            {tierLabel}
-          </span>
         </div>
 
         {/* Navigation */}
@@ -267,19 +224,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               title="Settings"
             >
               <Settings className="w-[18px] h-[18px]" />
-            </button>
-
-            <button
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold"
-              style={{
-                background: 'linear-gradient(135deg, #9333ea, #7e22ce)',
-                color: '#ffffff',
-                border: '1px solid rgba(168, 85, 247, 0.5)',
-                boxShadow: '0 0 20px rgba(147, 51, 234, 0.35)',
-              }}
-            >
-              <Sparkles className="w-4 h-4" />
-              Upgrade
             </button>
           </div>
         </header>

@@ -242,9 +242,6 @@ app.get('/scm/branches', (req, res) => proxy(req, res, BACKEND_API))
 // Telemetry events (UI dashboard)
 app.get('/telemetry', (req, res) => proxy(req, res, BACKEND_API))
 
-// Tier + limits
-app.get('/tier', (req, res) => proxy(req, res, BACKEND_API))
-
 // Guards facade (correlation_pack grouped)
 app.get('/guards', (req, res) => proxy(req, res, BACKEND_API))
 app.post('/guards/:id', (req, res) => proxy(req, res, BACKEND_API))

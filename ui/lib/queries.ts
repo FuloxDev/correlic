@@ -22,7 +22,6 @@ import {
   PortsServiceResponse,
   NetworkDomainResponse,
   NetworkDestinationResponse,
-  TierResponse,
 } from './types'
 
 
@@ -444,6 +443,3 @@ export const getNetworkDestination = (opts: {
   const qs = params.toString()
   return fetchJSON(`/network/destination?${qs}`)
 }
-
-export const getTier = (): Promise<TierResponse> =>
-  fetchJSON('/tier')

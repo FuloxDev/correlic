@@ -19,7 +19,6 @@ Everything runs on your own infrastructure. There is no hosted component.
 | `ui-proxy/` | Small Express service that holds the mTLS client certificate between the dashboard and the backend. | Node 20 |
 | `install/` | `docker-compose.yml`, Linux installer and `.deb`/`.rpm` scaffolding, Windows installer scripts, cert generation. | bash, PowerShell |
 | `Dockerfile`, `entrypoint.sh`, `supervisord.conf` | All-in-one image bundling PostgreSQL, Neo4j, backend, agent, dashboard and proxy. | Debian |
-| `web/`, `web-api/` | The former product website and its registration / key-issuing API. Not needed to run Correlic. | Next.js 15, Fastify |
 | `paper-supplementary/` | Machine-readable rule set, chain patterns and never-baseline list from the accompanying paper. | YAML (CC BY 4.0) |
 
 ## Quick start
@@ -108,6 +107,8 @@ install bundles from this repository alone.
 
 ## License
 
-See `LICENSE` (to be added) for the Go and TypeScript code. The eBPF programs
-in `agent/internal/ebpf/bpf/` are dual-licensed GPL-2.0 OR BSD-3-Clause, as
-the kernel requires. `paper-supplementary/` is CC BY 4.0.
+MIT, see `LICENSE`. Every feature is available to everyone; there are no
+tiers, licence keys or usage limits. The eBPF programs in
+`agent/internal/ebpf/bpf/` are dual-licensed GPL-2.0 OR BSD-3-Clause, as the
+kernel requires, and `paper-supplementary/` is CC BY 4.0. Third-party software
+redistributed in the install bundles is listed in `NOTICE.md`.

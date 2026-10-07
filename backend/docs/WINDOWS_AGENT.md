@@ -559,7 +559,7 @@ correlic-agent/
 
 ### Installation
 ```
-msiexec /i correlic-agent.msi /qn APIKEY=sk-... BACKENDURL=https://api.correlic.com
+msiexec /i correlic-agent.msi /qn APIKEY=sk-... BACKENDURL=https://your-backend:8080
 ```
 
 ### Service

@@ -355,7 +355,6 @@ All endpoints in this section are **conditional** -- only registered when Neo4j 
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/tier` | authed | Return the current subscription tier and feature flags. Controlled by `CORRELIC_TIER` env var. |
 
 ---
 

@@ -16,7 +16,6 @@ Correlic v1.0 is the first production release. Everything below is live and runn
 - **Windows** — ETW (4 kernel providers: process, registry, privilege, scheduled tasks) + USN Journal + PEB command-line capture. Windows 10 1809+ / Server 2019+. SCM-integrated service.
 - **macOS** — Endpoint Security Framework + FSEvents + kqueue + lsof (MVP level).
 - **AI session tracking** — UUID per AI root process, inherited across fork/exec by every descendant, 10s grace TTL for exited PIDs (handles cross-PID correlation races).
-- **Key validation** — API key checked against correlic.com on startup and every 12 hours.
 - **Block enforcement** — soft-block enforcer terminates matching processes; rules synced every 30s.
 
 ### Detection Engine
@@ -84,7 +83,7 @@ v1.0 just shipped. These are the things that matter in the first 4–6 weeks bef
 
 ### 1. Real-World Hardening
 - Monitor production telemetry from the first wave of installs
-- Fix bugs and edge cases that only surface on real customer machines
+- Fix bugs and edge cases that only surface on real machines
 - Tune false-positive rates per detection rule based on real data
 - Verify behavioral baselines converge correctly on diverse workloads
 
@@ -197,7 +196,7 @@ v1.0 just shipped. These are the things that matter in the first 4–6 weeks bef
 - Memory access monitoring
 - Kernel module loading detection
 - Extended syscall filtering
-- Customer-uploaded eBPF programs (sandboxed)
+- User-supplied eBPF programs (sandboxed)
 
 ### Threat Intelligence
 - IOC matching (hash, domain, IP)
@@ -263,14 +262,14 @@ v1.0 just shipped. These are the things that matter in the first 4–6 weeks bef
 These are the concrete next actions out of the post-launch list above. Work top to bottom.
 
 1. **Ship OpenAPI spec + Swagger UI** — fastest DX win, every new user asks for it.
-2. **Agent health tile on dashboard** — customers need to know the agent is alive. Critical trust signal.
+2. **Agent health tile on dashboard** — operators need to know the agent is alive. Critical trust signal.
 3. **One-line install scripts (curl | sh) for Linux/macOS + MSI for Windows** — reduce first-install friction.
 4. **First-run wizard** — baseline pass, LLM BYOK key, sample incident — first 10 minutes decide retention.
 5. **macOS agent ESF migration** — needed before we can credibly sell "full macOS coverage".
 6. **Real-data FP tuning pass** — collect verdicts from early users, retune confidence thresholds per rule.
 7. **Backend self-metrics** — events/sec, sampling ratio, detection latency, incident lag — surfaced to ops.
 8. **CI/CD for backend + agent + UI** — automated builds, tests, signed releases. Currently manual.
-9. **Load test to 10k events/sec** — know the ceiling before a customer finds it.
+9. **Load test to 10k events/sec** — know the ceiling before a deployment finds it.
 10. **Community rule repository MVP** — start the moat. Shareable rules = shareable defense.
 
 ---
@@ -297,10 +296,9 @@ Horizontal scale, event streaming bus, distributed tracing correlation, threat i
 ## How Priority Is Decided
 
 1. **Security impact** — does this close a real attack window on AI-agent workloads?
-2. **User pain** — are customers hitting this right now?
+2. **User pain** — are users hitting this right now?
 3. **Moat** — does it widen our 12–18 month window of uniqueness on AI-agent observability?
 4. **Implementation cost** — how much engineering and how much risk?
-5. **Revenue path** — does it unblock a tier upgrade or a segment we can't serve today?
 
 ---
 

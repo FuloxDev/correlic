@@ -346,9 +346,6 @@ func main() {
 	mux.Handle("/auth/email/send-verification", wrapUnauthed(http.HandlerFunc(emailVerifHandler.SendVerification)))
 	mux.Handle("/auth/email/verify", wrapUnauthed(http.HandlerFunc(emailVerifHandler.VerifyEmail)))
 
-	// UI endpoints (new)
-	mux.Handle("/tier", wrapAuthed(api.NewTierHandler()))
-
 	// AI Attribution service for tracking distinct AI agents (must be before telemetry handler)
 	attributionStore := attribution.NewPostgresStore(db)
 	attributionService := attribution.NewService(attributionStore)

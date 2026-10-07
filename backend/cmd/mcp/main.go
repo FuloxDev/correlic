@@ -27,9 +27,6 @@ func main() {
 	if auth != "" && !strings.Contains(auth, " ") {
 		// Keep raw key (backend accepts single token).
 	}
-	allowFree := strings.EqualFold(strings.TrimSpace(os.Getenv("CORRELIC_MCP_ALLOW_FREE")), "true") ||
-		strings.TrimSpace(os.Getenv("CORRELIC_MCP_ALLOW_FREE")) == "1"
-
 	client := &mcp.CorrelicClient{
 		BaseURL:       baseURL,
 		Authorization: auth,
@@ -91,36 +88,13 @@ func main() {
 				},
 			},
 		},
-		{
-			Name:        "correlic.tier",
-			Description: "Return current Correlic tier and limits (for gating decisions).",
-			InputSchema: map[string]any{
-				"type":       "object",
-				"properties": map[string]any{},
-			},
-		},
 	}
 
 	callTool := func(name string, args map[string]any) (mcp.ToolResult, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
-		// Enforce Pro/Trial by default.
-		if !allowFree {
-			t, _, err := client.Tier(ctx)
-			if err == nil {
-				tt := strings.ToLower(strings.TrimSpace(t))
-				if tt != "pro" && tt != "trial" {
-					return mcp.ToolResult{}, mcp.ErrUnauthorizedTier
-				}
-			}
-		}
-
 		switch name {
-		case "correlic.tier":
-			body, err := client.DoTier(ctx)
-			return toTextResult(body, err)
-
 		case "correlic.ai.proof":
 			since, err := mcp.RequireString(args, "since")
 			if err != nil {

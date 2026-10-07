@@ -263,4 +263,3 @@ func OptionalInt(m map[string]any, key string) (int, bool) {
 	}
 }
 
-var ErrUnauthorizedTier = errors.New("this MCP server requires pro/trial tier")

@@ -210,7 +210,7 @@
   --sidebar-ring: #f59e0b;
 }
 
-/* ── Theme 4: CORRELIC PURPLE (matches correlic.com — light, no hover) ── */
+/* ── Theme 4: CORRELIC PURPLE (light, no hover) ── */
 [data-theme="correlic-purple"] {
   --theme-body: #0a0612;
   --theme-surface: #120a24;

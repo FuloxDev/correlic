@@ -265,7 +265,6 @@ All detection rules work identically on Linux and Windows thanks to path normali
 ### Running
 ```bash
 export CORRELIC_API_KEY="your-key"
-export CORRELIC_API_URL="https://api.correlic.com"
 sudo -E go run ./cmd/agent
 ```
 
@@ -280,7 +279,6 @@ ExecStart=/usr/local/bin/correlic-agent
 Restart=always
 RestartSec=5
 Environment=CORRELIC_API_KEY=sk-...
-Environment=CORRELIC_API_URL=https://api.correlic.com
 
 [Install]
 WantedBy=multi-user.target

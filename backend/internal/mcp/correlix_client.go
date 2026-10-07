@@ -55,21 +55,3 @@ func (c *CorrelicClient) DoGET(ctx context.Context, path string, q url.Values) (
 	return body, nil
 }
 
-func (c *CorrelicClient) Tier(ctx context.Context) (string, map[string]any, error) {
-	body, err := c.DoGET(ctx, "/tier", nil)
-	if err != nil {
-		return "", nil, err
-	}
-	var out struct {
-		Tier   string         `json:"tier"`
-		Limits map[string]any `json:"limits"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return "", nil, err
-	}
-	return out.Tier, out.Limits, nil
-}
-
-func (c *CorrelicClient) DoTier(ctx context.Context) ([]byte, error) {
-	return c.DoGET(ctx, "/tier", nil)
-}
