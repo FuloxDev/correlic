@@ -1,0 +1,304 @@
+# Correlic Never-Baseline Safety List — Supplementary Artifact
+#
+# Paper: "Closing the AI Agent Trust Gap: Kernel-Level Runtime Security
+# Monitoring for AI Coding Agents"
+# Author: Ayush Mishra (Correlic)
+#
+# This file documents the never-baseline safety list referenced in §8.3
+# of the paper. Resources on this list are NEVER auto-baselined by the
+# behavioral learning system, regardless of how frequently they are
+# observed. This prevents baseline poisoning attacks where an adversary
+# gradually normalizes access to sensitive resources.
+#
+# HISTORY: The first implementation of this check used a single
+# filepath.Match() call. It was found to be unsound because filepath.Match
+# does not cross path separators, so patterns like "*/.azure/*" silently
+# failed to match "*/.azure/subdir/file". Additionally, a subtly-broken
+# fallback matched EVERY path. The list is now implemented as three typed
+# sub-lists (suffixes, directory containment, exact basenames) plus separate
+# structures for network ports, DNS suffixes, and binaries. See
+# internal/detection/never_baseline.go for the current implementation.
+#
+# INTERACTION WITH USER FEEDBACK: Even a user clicking "Allow Always" on a
+# finding CANNOT create a user-confirmed baseline for a never-baseline
+# pattern. The IsNeverBaselinePattern() check is invoked in LearnFromFinding
+# before the upsert; rejected learning attempts are logged.
+#
+# INTERACTION WITH CHAIN CORRELATION: These lists apply to INDIVIDUAL
+# findings. Chain findings always emit regardless of baseline status.
+
+version: 1
+schema: correlic-never-baseline/v1
+
+# -----------------------------------------------------------------------------
+# FILES — cryptographic material and credential stores
+#
+# File checks apply to events of type file_open / file_write. A file is
+# never-baselined if ANY of the following match its path:
+#   - basename suffix match (suffixes list)
+#   - strings.Contains match against any directory segment (dirs list)
+#   - exact basename match (basenames list)
+#   - parent directory is exactly one of exact_parent_dirs
+#   - file is directly inside /home/<user>/ (depth-3 heuristic; dotfiles)
+#
+# Applied to signal types: file_pattern, credential_file, persistence_path,
+# code_tamper, file_activity.
+
+files:
+  # Crypto material suffixes. Private keys and armored/binary key files.
+  suffixes:
+    - .pem
+    - _rsa
+    - _ecdsa
+    - _ed25519
+    - .key
+    - .p12
+    - .pfx
+    - .asc       # GPG armored key
+    - .gpg       # GPG binary key
+    - .pgp       # PGP key
+    - .jks       # Java keystore
+    - .keystore
+
+  # Directory segments — any file inside these is never-baselined.
+  # strings.Contains on the full path; not filepath.Match.
+  dirs:
+    # Identity and secrets stores
+    - /.ssh/
+    - /.azure/
+    - /.config/gcloud/
+    - /.kube/cache/
+    - /etc/sudoers.d/
+    # Persistence mechanisms (writes here are inherently dangerous)
+    - /var/spool/cron/
+    - /etc/cron.d/
+    - /etc/cron.daily/
+    - /etc/cron.hourly/
+    - /etc/cron.weekly/
+    - /etc/cron.monthly/
+    - /etc/init.d/
+    - /etc/systemd/system/
+    - /.git/hooks/
+    - /etc/pam.d/
+    - /etc/ld.so.conf.d/
+    - /etc/modules-load.d/
+    # Windows credential stores
+    - /AppData/Roaming/Microsoft/Protect/   # DPAPI master keys
+    - /AppData/Local/Microsoft/Credentials/ # Credential Manager
+
+  # Exact basenames that are inherently sensitive regardless of directory.
+  basenames:
+    # Linux auth
+    - shadow
+    - passwd
+    - sudoers
+    - authorized_keys
+    - .gitconfig
+    - krb5.keytab
+    # Persistence
+    - crontab
+    - rc.local
+    - ld.so.preload
+    - sshrc
+    # Infrastructure-as-code state (often contains plaintext secrets)
+    - terraform.tfstate
+    - .git-credentials
+    # Windows registry hives
+    - SAM
+    - SYSTEM
+    - SECURITY
+    - ntds.dit
+
+  # Parent directories that should never hold baselined files directly
+  # (but files in deeper subdirectories are allowed). Protects against
+  # dotfiles like /home/alice/.npmrc being treated as baseline-worthy.
+  exact_parent_dirs:
+    - /home
+    - /tmp
+    - /
+
+  # Heuristic: files sitting DIRECTLY inside a user's home (/home/<user>/<file>,
+  # exactly depth 3) are dotfiles/configs, not project files. Never baseline.
+  # Files at depth > 3 (/home/<user>/projects/foo.go) are fine to baseline.
+  direct_home_depth: 3
+
+# -----------------------------------------------------------------------------
+# NETWORK PORTS — C2 frameworks, exploit tools, anonymization networks
+#
+# A net_connect event to any of these destination ports is never baselined
+# regardless of how often it is observed. Suffix check applied to the
+# "{ip_or_cidr}:{port}" pattern key; port extracted after the final ':'.
+
+ports:
+  - port: 4444
+    category: metasploit
+    note: "Metasploit handler default"
+  - port: 5555
+    category: rat
+    note: "Common RAT"
+  - port: 1337
+    category: generic_exploit
+  - port: 6666
+    category: irc_c2
+  - port: 6667
+    category: irc_c2
+  - port: 8888
+    category: malware_c2
+    note: "Common alt HTTP for malware C2"
+  - port: 9001
+    category: tor
+    note: "Tor default ORPort"
+  - port: 9050
+    category: tor
+    note: "Tor SOCKS"
+  - port: 9150
+    category: tor
+    note: "Tor Browser SOCKS"
+  - port: 31337
+    category: back_orifice
+  - port: 4443
+    category: alt_https_c2
+  - port: 3333
+    category: crypto_mining
+  - port: 2375
+    category: docker_api_unencrypted
+    note: "Unauthenticated Docker daemon — container escape surface"
+
+# -----------------------------------------------------------------------------
+# DNS SUFFIXES — anonymization, dead drops, exfiltration services
+#
+# A net_dns event whose domain ends with any of these suffixes is never
+# baselined. Case-insensitive suffix match.
+
+dns_suffixes:
+  # Anonymization overlays
+  - .onion
+  - .i2p
+  # Paste sites (common exfiltration/dead-drop vehicles)
+  - pastebin.com
+  - paste.ee
+  - ghostbin.com
+  - dpaste.org
+  # File-drop services
+  - transfer.sh
+  - file.io
+  - 0x0.st
+  - anonfiles.com
+  # Tunneling services (common in reverse shells)
+  - ngrok.io
+  - ngrok-free.app
+
+# -----------------------------------------------------------------------------
+# BINARIES — post-exploitation and privilege-escalation tools
+#
+# A process_exec event with a comm/exe matching any of these names is
+# never baselined. Case-sensitive basename match.
+
+binaries:
+
+  reverse_shell_tunneling:
+    - nc
+    - ncat
+    - socat
+    - nmap
+
+  data_exfiltration_encoding:
+    - base64
+    - xxd
+    - rclone       # cloud sync, abused for exfil
+    - sshpass      # unattended SSH password provider
+
+  user_manipulation:
+    - useradd
+    - usermod
+    - passwd
+    - visudo
+    - chpasswd
+
+  permission_manipulation:
+    - chmod
+    - chown
+    - setcap
+
+  privilege_escalation:
+    - sudo
+    - su
+    - pkexec
+    - doas
+    - nsenter
+    - capsh
+    - mount
+    - setpriv
+    - runuser
+    - debugfs
+    - newuidmap
+    - newgidmap
+    - chroot
+    - machinectl
+
+  kernel_module_manipulation:
+    - modprobe
+    - insmod
+    - rmmod
+
+  persistence_commands:
+    - crontab
+
+  process_injection_debugging:
+    - strace
+    - ltrace
+    - gdb
+
+  raw_disk_access:
+    - dd
+
+  packet_capture:
+    - tcpdump
+    - tshark
+
+  firewall_manipulation:
+    - iptables
+    - ip6tables
+    - nft
+
+# -----------------------------------------------------------------------------
+# RATIONALE — why each category exists
+#
+# Files:
+#   If an attacker can gradually normalize reads of ~/.ssh/id_rsa by
+#   scripting benign-looking access, the baseline system would eventually
+#   suppress the alert that catches actual credential theft. Cryptographic
+#   material, system auth files, and persistence mechanisms are categorically
+#   excluded from this learning.
+#
+# Ports:
+#   Connections to these ports have no legitimate non-malicious use on a
+#   developer workstation. A baseline learning "this workstation connects to
+#   port 4444" is effectively a malware welcome mat.
+#
+# DNS:
+#   .onion and .i2p resolution outside a documented privacy research context
+#   is almost always C2 traffic. Paste sites and tunneling services are
+#   common data-exfil and reverse-shell channels.
+#
+# Binaries:
+#   These tools have legitimate administrative uses, but on a developer
+#   workstation running an AI coding agent, their execution is almost always
+#   a signal worth keeping. The monitoring system errs on the side of
+#   surfacing these events.
+
+# -----------------------------------------------------------------------------
+# USER-DEFINED EXTENSIONS
+#
+# Organizations can add to this list via the NeverBaselineStore API:
+#   POST /api/v1/never-baselines
+#   Body: { signal_type, pattern, category, reason }
+#
+# User-defined entries are merged with the hardcoded entries above at
+# check time. Only user-defined entries can be deleted; hardcoded entries
+# are immutable.
+
+extensibility:
+  user_defined_api: "POST /api/v1/never-baselines"
+  merge_behavior: "user-defined AND hardcoded — either match suppresses baseline"
+  hardcoded_immutable: true

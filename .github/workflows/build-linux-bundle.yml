@@ -1,0 +1,182 @@
+name: Build Linux bundle
+
+# Produces the self-contained Linux install bundle (tar.gz), a .deb and an
+# .rpm, and an apt/yum repository tree. Everything is built from this
+# repository; artifacts are attached to the GitHub Release for the version.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: true
+
+env:
+  NODE_VERSION: "20.19.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: v
+        run: |
+          V="${{ inputs.version }}"; [ -z "$V" ] && V="${GITHUB_REF_NAME}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "bare=${V#v}" >> "$GITHUB_OUTPUT"
+
+      # ── Go binaries ────────────────────────────────────────────
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: |
+            backend/go.sum
+            agent/go.sum
+
+      - name: Install eBPF build toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-headers-generic
+
+      - name: Build backend binaries
+        working-directory: backend
+        env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: '0' }
+        run: |
+          LD="-s -w -X main.version=${{ steps.v.outputs.version }}"
+          go build -ldflags="$LD" -o ../build/correlic-api ./cmd/api
+          go build -ldflags="$LD" -o ../build/correlic-telemetry ./cmd/telemetry
+          go build -ldflags="$LD" -o ../build/correlic-admin ./cmd/admin
+
+      - name: Build agent
+        working-directory: agent
+        run: |
+          go generate ./internal/ebpf/...
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.v.outputs.version }}" -o ../build/correlic-agent ./cmd/agent
+
+      # ── UI + proxy (built here, not downloaded) ────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            ui-proxy/package-lock.json
+
+      - name: Build dashboard (standalone)
+        working-directory: ui
+        env: { NEXT_TELEMETRY_DISABLED: "1" }
+        run: |
+          npm ci
+          npm run build
+          mkdir -p ../build/ui/.next
+          cp -r .next/standalone/. ../build/ui/
+          cp -r .next/static ../build/ui/.next/static
+          cp -r public ../build/ui/public
+
+      - name: Build ui-proxy
+        working-directory: ui-proxy
+        run: |
+          npm ci --omit=dev
+          mkdir -p ../build/ui-proxy
+          cp -r index.js package.json package-lock.json node_modules ../build/ui-proxy/
+
+      - name: Download portable Node.js runtime
+        run: |
+          mkdir -p build/node
+          curl -sSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o node.tar.xz
+          tar -xJf node.tar.xz
+          mv node-v${NODE_VERSION}-linux-x64/* build/node/
+          rm -rf node.tar.xz node-v${NODE_VERSION}-linux-x64 build/node/include build/node/share build/node/CHANGELOG.md build/node/README.md build/node/LICENSE build/node/lib build/node/bin/npm build/node/bin/npx build/node/bin/corepack
+
+      # ── Package layout ─────────────────────────────────────────
+      - name: Prepare package filesystem
+        run: |
+          mkdir -p pkg/usr/bin pkg/etc/correlic pkg/usr/share/correlic pkg/var/lib/correlic/certs pkg/var/log/correlic pkg/lib/systemd/system
+          cp build/correlic-api build/correlic-telemetry build/correlic-admin build/correlic-agent pkg/usr/bin/
+          chmod 755 pkg/usr/bin/*
+          cp install/gen-certs.sh pkg/etc/correlic/gen-certs.sh && chmod 755 pkg/etc/correlic/gen-certs.sh
+          cp -r backend/migrations pkg/usr/share/correlic/migrations
+          cp -r build/node pkg/usr/share/correlic/node
+          cp -r build/ui pkg/usr/share/correlic/ui
+          cp -r build/ui-proxy pkg/usr/share/correlic/ui-proxy
+          cp install/linux/systemd/*.service pkg/lib/systemd/system/
+
+      - name: Install nfpm
+        run: |
+          curl -fsSL --retry 3 -o /tmp/nfpm.tar.gz https://github.com/goreleaser/nfpm/releases/download/v2.46.0/nfpm_2.46.0_Linux_x86_64.tar.gz
+          sudo tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
+
+      - name: Build .deb and .rpm
+        run: |
+          sed "s/\${VERSION}/${{ steps.v.outputs.bare }}/" install/linux/nfpm.yml > nfpm.yml
+          nfpm package -p deb -f nfpm.yml -t .
+          nfpm package -p rpm -f nfpm.yml -t .
+
+      - name: Build tar.gz bundle
+        run: |
+          mkdir -p bundle/bin bundle/certs bundle/logs
+          cp build/correlic-api build/correlic-telemetry build/correlic-admin build/correlic-agent bundle/bin/
+          cp -r build/node bundle/node
+          cp -r build/ui bundle/ui
+          cp -r build/ui-proxy bundle/ui-proxy
+          cp -r backend/migrations bundle/migrations
+          cp install/install.sh install/uninstall.sh install/gen-certs.sh bundle/
+          chmod +x bundle/*.sh
+          tar -czf correlic-linux-${{ steps.v.outputs.version }}.tar.gz -C bundle .
+
+      # ── Optional package signing (only if a key is configured) ─
+      - name: Sign packages
+        if: ${{ env.GPG_PRIVATE_KEY != '' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          GPG_KEY_ID=$(gpg --list-keys --keyid-format short 2>/dev/null | grep -oP '[A-F0-9]{8,}' | head -1)
+          sudo apt-get install -y -qq dpkg-sig rpm 2>/dev/null || true
+          dpkg-sig -k "$GPG_KEY_ID" -s builder correlic_*.deb 2>/dev/null || true
+          rpm --addsign correlic-*.rpm 2>/dev/null || true
+          gpg --export --armor > correlic.gpg.key
+
+      - name: Build apt and yum repository trees
+        run: |
+          sudo apt-get install -y -qq dpkg-dev apt-utils createrepo-c 2>/dev/null || true
+          mkdir -p repo/apt/pool/main repo/apt/dists/stable/main/binary-amd64 repo/yum/el/9/x86_64
+          cp correlic_*.deb repo/apt/pool/main/
+          (cd repo/apt && dpkg-scanpackages pool/ /dev/null > dists/stable/main/binary-amd64/Packages && gzip -k dists/stable/main/binary-amd64/Packages && apt-ftparchive release dists/stable > dists/stable/Release 2>/dev/null || true)
+          cp correlic-*.rpm repo/yum/el/9/x86_64/
+          createrepo_c repo/yum/el/9/x86_64/ 2>/dev/null || true
+          [ -f correlic.gpg.key ] && cp correlic.gpg.key repo/ || true
+          tar -czf correlic-linux-repo-${{ steps.v.outputs.version }}.tar.gz repo
+
+      - name: Checksums
+        run: sha256sum correlic-linux-${{ steps.v.outputs.version }}.tar.gz correlic_*.deb correlic-*.rpm > SHA256SUMS-linux.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: correlic-linux-${{ steps.v.outputs.version }}
+          path: |
+            correlic-linux-${{ steps.v.outputs.version }}.tar.gz
+            correlic-linux-repo-${{ steps.v.outputs.version }}.tar.gz
+            correlic_*.deb
+            correlic-*.rpm
+            SHA256SUMS-linux.txt
+          retention-days: 14
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            correlic-linux-${{ steps.v.outputs.version }}.tar.gz
+            correlic-linux-repo-${{ steps.v.outputs.version }}.tar.gz
+            correlic_*.deb
+            correlic-*.rpm
+            SHA256SUMS-linux.txt

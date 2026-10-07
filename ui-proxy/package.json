@@ -1,0 +1,28 @@
+{
+  "name": "correlic-ui-proxy",
+  "version": "1.0.0",
+  "description": "Correlic UI proxy",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Correlic/correlic-ui-proxy.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Correlic/correlic-ui-proxy/issues"
+  },
+  "homepage": "https://github.com/Correlic/correlic-ui-proxy#readme",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "node-fetch": "^3.3.2"
+  }
+}

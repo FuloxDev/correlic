@@ -2,16 +2,15 @@
 # Bundles: PostgreSQL 16 + Neo4j 5 + Backend (API+Telemetry) + Agent (eBPF) + UI + Proxy
 #
 # Usage:
-#   docker pull ghcr.io/correlic/correlic:latest
 #   docker run -d --name correlic \
-#     -e API_KEY=your-key-from-correlic-com \
 #     --privileged --pid=host \
 #     -v /sys/kernel:/sys/kernel:ro \
 #     -v correlic-data:/var/lib/correlic \
 #     -p 3001:3001 \
 #     ghcr.io/correlic/correlic:latest
 #
-# Get your API key at https://correlic.com/register
+# On first start a local API key is generated and printed in the container log
+# (docker logs correlic). Pass -e API_KEY=... to use a key you created yourself.
 # Dashboard: http://localhost:3001
 
 ARG VERSION=dev
@@ -24,10 +23,10 @@ FROM golang:1.24-alpine AS builder-backend
 RUN apk add --no-cache git
 
 WORKDIR /build
-COPY src/correlic-backend/go.mod src/correlic-backend/go.sum ./
+COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
-COPY src/correlic-backend/ .
+COPY backend/ .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-telemetry ./cmd/telemetry
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-admin ./cmd/admin
@@ -42,10 +41,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY src/Correlic-agent/go.mod src/Correlic-agent/go.sum ./
+COPY agent/go.mod agent/go.sum ./
 RUN go mod download
 
-COPY src/Correlic-agent/ .
+COPY agent/ .
 RUN go generate ./internal/ebpf/...
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-agent ./cmd/agent
 
@@ -55,10 +54,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic
 FROM node:20-alpine AS builder-ui
 
 WORKDIR /build
-COPY src/correlic-ui/package.json src/correlic-ui/package-lock.json ./
+COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 
-COPY src/correlic-ui/ .
+COPY ui/ .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PROXY_BASE_URL=http://localhost:8788
 RUN npm run build
@@ -69,10 +68,10 @@ RUN npm run build
 FROM node:20-alpine AS builder-proxy
 
 WORKDIR /build
-COPY src/correlic-ui-proxy/package.json src/correlic-ui-proxy/package-lock.json ./
+COPY ui-proxy/package.json ui-proxy/package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY src/correlic-ui-proxy/index.js ./
+COPY ui-proxy/index.js ./
 
 # ============================================================
 # Stage 5: Runtime — all services in one image

@@ -1,0 +1,66 @@
+name: correlic
+arch: amd64
+version: ${VERSION}
+maintainer: "Correlic maintainers"
+description: "Correlic Security Observability — eBPF agent, backend API, and dashboard"
+homepage: "https://github.com/Correlic/correlic"
+license: "Proprietary"
+section: "admin"
+priority: "optional"
+
+depends:
+  - systemd
+  - openssl
+  - curl
+
+recommends:
+  - postgresql-16
+  - neo4j
+
+contents:
+  - src: pkg/usr/bin/correlic-api
+    dst: /usr/bin/correlic-api
+    file_info:
+      mode: 0755
+  - src: pkg/usr/bin/correlic-telemetry
+    dst: /usr/bin/correlic-telemetry
+    file_info:
+      mode: 0755
+  - src: pkg/usr/bin/correlic-admin
+    dst: /usr/bin/correlic-admin
+    file_info:
+      mode: 0755
+  - src: pkg/usr/bin/correlic-agent
+    dst: /usr/bin/correlic-agent
+    file_info:
+      mode: 0755
+  - src: pkg/lib/systemd/system/correlic-api.service
+    dst: /lib/systemd/system/correlic-api.service
+  - src: pkg/lib/systemd/system/correlic-telemetry.service
+    dst: /lib/systemd/system/correlic-telemetry.service
+  - src: pkg/lib/systemd/system/correlic-agent.service
+    dst: /lib/systemd/system/correlic-agent.service
+  - src: pkg/lib/systemd/system/correlic-ui.service
+    dst: /lib/systemd/system/correlic-ui.service
+  - src: pkg/lib/systemd/system/correlic-ui-proxy.service
+    dst: /lib/systemd/system/correlic-ui-proxy.service
+  - src: pkg/etc/correlic/gen-certs.sh
+    dst: /etc/correlic/gen-certs.sh
+    type: config
+    file_info:
+      mode: 0755
+  - src: pkg/usr/share/correlic/
+    dst: /usr/share/correlic/
+    type: tree
+  - dst: /var/lib/correlic/certs
+    type: dir
+    file_info:
+      mode: 0700
+  - dst: /var/log/correlic
+    type: dir
+    file_info:
+      mode: 0755
+
+scripts:
+  postinstall: install/linux/postinstall.sh
+  preremove: install/linux/preremove.sh

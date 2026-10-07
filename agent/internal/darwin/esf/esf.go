@@ -1,0 +1,202 @@
+//go:build darwin && esf
+
+// Package esf provides Go bindings for Apple's Endpoint Security Framework.
+// ESF gives real-time, kernel-enforced events with full PID attribution,
+// replacing the polling-based FSEvents and lsof collectors from Phase 1.
+//
+// Requirements:
+//   - macOS 10.15+ (Catalina)
+//   - com.apple.developer.endpoint-security.client entitlement
+//   - Running as root
+//   - Binary must be code-signed: codesign -s "Developer ID Application: ..."
+//     --entitlements build/correlic-agent.entitlements --force correlic-agent
+package esf
+
+/*
+#cgo CFLAGS: -x objective-c
+#cgo LDFLAGS: -framework EndpointSecurity -framework Foundation
+#include "esf.h"
+#include <stdlib.h>
+*/
+import "C"
+import (
+	"fmt"
+	"strings"
+	"time"
+	"unsafe"
+)
+
+// EventType mirrors es_event_type_t values we subscribe to.
+type EventType uint32
+
+// Event type constants are resolved from C at init time so they are always
+// correct regardless of the macOS SDK version used to compile the binary.
+var (
+	EventExec   = EventType(C.correlic_event_exec())
+	EventExit   = EventType(C.correlic_event_exit())
+	EventOpen   = EventType(C.correlic_event_open())
+	EventLookup = EventType(C.correlic_event_lookup()) // UINT32_MAX if SDK < macOS 12
+)
+
+// LookupAvailable reports whether ES_EVENT_TYPE_NOTIFY_LOOKUP is supported
+// by the SDK this binary was compiled against (requires macOS 12.0+).
+func LookupAvailable() bool {
+	return EventLookup != EventType(^uint32(0))
+}
+
+// Event is a flattened, Go-native ESF event.
+type Event struct {
+	Type      EventType
+	Timestamp time.Time
+
+	// Process (always populated)
+	PID     uint32
+	PPID    uint32
+	UID     uint32
+	Comm    string
+	ExePath string
+
+	// Exec-specific
+	Args []string
+
+	// File-open-specific
+	FilePath  string
+	OpenFlags int32
+
+	// DNS lookup-specific
+	Domain string
+
+	// Exit-specific
+	ExitCode int32
+}
+
+// Client wraps the ESF client and exposes a Go channel of events.
+type Client struct {
+	handle *C.correlic_es_client_t
+	events chan Event
+}
+
+// NewClient creates a new ESF client.
+// Returns an error if the entitlement is missing, the binary is not signed,
+// or the process is not running as root.
+func NewClient() (*Client, error) {
+	c := &Client{
+		events: make(chan Event, 4096),
+	}
+
+	// Register the Go channel pointer in the global map so the C callback can find it.
+	chanPtr := registerClient(c)
+
+	var outErr *C.char
+	handle := C.correlic_es_new_client(chanPtr, &outErr)
+	if handle == nil {
+		errMsg := "es_new_client failed"
+		if outErr != nil {
+			errMsg = C.GoString(outErr)
+			C.free(unsafe.Pointer(outErr))
+		}
+		unregisterClient(chanPtr)
+		return nil, fmt.Errorf("esf: %s", errMsg)
+	}
+
+	c.handle = handle
+
+	// Mute the agent itself to prevent monitoring our own events (feedback loop).
+	C.correlic_es_mute_self(handle)
+
+	return c, nil
+}
+
+// Subscribe subscribes to the given event types.
+func (c *Client) Subscribe(types []EventType) error {
+	if len(types) == 0 {
+		return nil
+	}
+	cTypes := make([]C.es_event_type_t, len(types))
+	for i, t := range types {
+		cTypes[i] = C.es_event_type_t(t)
+	}
+	rc := C.correlic_es_subscribe(c.handle, &cTypes[0], C.uint32_t(len(cTypes)))
+	if rc != 0 {
+		return fmt.Errorf("esf: es_subscribe failed")
+	}
+	return nil
+}
+
+// Events returns the read-only channel of ESF events.
+func (c *Client) Events() <-chan Event {
+	return c.events
+}
+
+// Close tears down the ESF client and closes the events channel.
+func (c *Client) Close() {
+	if c.handle != nil {
+		C.correlic_es_destroy(c.handle)
+		c.handle = nil
+	}
+	close(c.events)
+}
+
+// ---------------------------------------------------------------------------
+// CGO export: called from C callback into Go
+// ---------------------------------------------------------------------------
+
+// clientRegistry maps unsafe.Pointer keys to *Client so the C callback can
+// dispatch events to the correct Go channel.
+var clientRegistry = newClientRegistry()
+
+func registerClient(c *Client) unsafe.Pointer {
+	return clientRegistry.register(c)
+}
+
+func unregisterClient(ptr unsafe.Pointer) {
+	clientRegistry.unregister(ptr)
+}
+
+//export correlic_send_event
+func correlic_send_event(goChan unsafe.Pointer, cEv *C.correlic_es_event_t) {
+	c := clientRegistry.lookup(goChan)
+	if c == nil {
+		return
+	}
+
+	ev := Event{
+		Type:      EventType(cEv.event_type),
+		Timestamp: time.Now(),
+		PID:       uint32(cEv.pid),
+		PPID:      uint32(cEv.ppid),
+		UID:       uint32(cEv.uid),
+		Comm:      C.GoString(&cEv.comm[0]),
+		ExePath:   C.GoString(&cEv.exe_path[0]),
+		FilePath:  C.GoString(&cEv.file_path[0]),
+		OpenFlags: int32(cEv.open_flags),
+		Domain:    C.GoString(&cEv.domain[0]),
+		ExitCode:  int32(cEv.exit_code),
+	}
+
+	// Parse null-separated args
+	if cEv.args_count > 0 {
+		raw := C.GoStringN(&cEv.args[0], C.int(4096))
+		ev.Args = parseNullSeparated(raw, int(cEv.args_count))
+	}
+
+	// Non-blocking send — drop events if the consumer is behind.
+	select {
+	case c.events <- ev:
+	default:
+	}
+}
+
+func parseNullSeparated(s string, count int) []string {
+	parts := strings.SplitN(s, "\x00", count+1)
+	result := make([]string, 0, count)
+	for _, p := range parts {
+		if p != "" {
+			result = append(result, p)
+		}
+		if len(result) == count {
+			break
+		}
+	}
+	return result
+}

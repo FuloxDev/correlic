@@ -1,0 +1,581 @@
+# Correlic Detection Rules — Supplementary Artifact
+#
+# Paper: "Closing the AI Agent Trust Gap: Kernel-Level Runtime Security
+# Monitoring for AI Coding Agents"
+# Author: Ayush Mishra (Correlic)
+#
+# This file documents the 13 AI-gated detection rules referenced in Section 7
+# of the paper. All rules gate on AI-process attribution (via the Neo4j
+# IsAIProcess() query described in §7.1) before evaluation — they only fire
+# for processes within an AI agent tree.
+#
+# Format: a Sigma/Falco-inspired YAML. Each rule includes:
+#   - id, name, pack
+#   - severity (static; may be overridden per-finding for "dynamic" rules)
+#   - mitre_techniques (ATT&CK IDs)
+#   - event_types (which canonical events trigger this rule)
+#   - ai_gated (always true for the ai.* pack)
+#   - window_seconds (look-back window for temporal context, if any)
+#   - cooldown_seconds (rate-limiting for repeat findings)
+#   - trigger: structured description of the match criteria
+#   - confidence_matrix: per-signal confidence scores produced by this rule
+#
+# All rules are wrapped in safeEvaluate() with panic recovery in the engine.
+
+version: 1
+pack: ai
+schema: correlic-rules/v1
+
+# -----------------------------------------------------------------------------
+rules:
+
+  # 1 --------------------------------------------------------------------------
+  - id: ai.credential_access
+    name: AI Credential Access
+    severity: critical
+    mitre_techniques: [T1552, T1552.004]
+    event_types: [file_open]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 900   # 15 min (elevated from the 600s default)
+
+    description: >
+      Fires when an AI agent reads a credential file. Uses a two-tier
+      sensitivity model. Tier 1 fires standalone at critical; Tier 2 is
+      delegated to ai.data_exfiltration for read-then-send correlation.
+
+    trigger:
+      tier1_files:
+        suffixes: [_rsa, _ed25519, _ecdsa, .pem, .key, .p12, .pfx, .jks, .keystore, .asc, .gpg, .pgp]
+        directory_contains: [/.ssh/, /etc/sudoers.d/, /run/secrets/, /AppData/Roaming/Microsoft/Protect/, /AppData/Local/Microsoft/Credentials/]
+        exact_basenames: [shadow, passwd, sudoers, authorized_keys, krb5.keytab, SAM, SYSTEM, SECURITY, ntds.dit]
+      tier2_files:
+        exact_basenames: [.env, .netrc, .npmrc, .pypirc, .git-credentials, .boto, .s3cfg, .dockercfg, terraform.tfstate]
+        path_pairs: [{dir: /.aws/, basename: credentials}, {dir: /.aws/, basename: config}, {dir: /.kube/, basename: config}, {dir: /.docker/, basename: config.json}]
+      basename_keywords: [token, secret, apikey, password]
+      ignored_dirs: [/.vscode/, /.claude/, /.cursor/, /.continue/, /.copilot/, /.codeium/, /.aider/, /.config/Code/, /.config/cursor/, /.config/Claude/, /.config/gh/, /.config/git/, /.npm/, /.yarn/, /.pnpm/, /.cargo/, /.rustup/, /.local/share/]
+      zero_byte_suppression: true   # FileSize == 0 → drop
+
+    confidence_matrix:
+      - signal: "crypto extension + 100B–10KB"
+        confidence: 0.95
+      - signal: "SSH/path pattern + 100B–10KB"
+        confidence: 0.90
+      - signal: "SSH/path pattern + unknown size (-1)"
+        confidence: 0.80
+      - signal: "SSH/path pattern + size > 100KB"
+        confidence: 0.50   # probably not a private key
+      - signal: "basename keyword match"
+        confidence: 0.60
+
+    finding_context:
+      signal_type: file_pattern
+      pattern: "{dir}/**"
+
+  # 2 --------------------------------------------------------------------------
+  - id: ai.unauthorized_exec
+    name: AI Unauthorized Execution
+    severity: high
+    mitre_techniques: [T1059, T1059.004]
+    event_types: [process_exec]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 600
+
+    description: >
+      Fires when an AI agent executes a network/shell primitive or a process
+      whose cmdline matches suspicious inline-code patterns. Safe-domain
+      allowlisting applies to curl/wget/fetch URL arguments.
+
+    trigger:
+      binary_blocklist: [curl, wget, nc, ncat, socat, ssh, nmap, chmod, chown, useradd, crontab, systemctl, base64, nsenter, mount]
+      cmdline_patterns:
+        - description: "Shell with network primitives"
+          regex: '^(bash|sh|zsh|dash)\s+-[ci].*(/dev/tcp|\b\d+\.\d+\.\d+\.\d+\b|nc\s|curl\s|wget\s)'
+        - description: "Interpreter with inline network code"
+          regex: '^(python3?|node|ruby|perl)\s+-[ce].*(socket|http\.request|fetch\()'
+        - description: "Interactive shell (reverse shell indicator)"
+          regex: '^(bash|sh)\s+-i\b'
+      safe_domain_suppression:
+        applies_to: [curl, wget, fetch]
+        check: cmdline_url_vs_SafeDomainChecker
+
+    confidence_matrix:
+      - signal: "binary blocklist match"
+        confidence: 0.85
+      - signal: "cmdline pattern match"
+        confidence: 0.70
+
+    finding_context:
+      signal_type: binary
+      pattern: "{exe_basename}"
+
+  # 3 --------------------------------------------------------------------------
+  - id: ai.excessive_writes
+    name: AI Excessive File Writes
+    severity: dynamic
+    mitre_techniques: [T1485, T1486]
+    event_types: [file_open]
+    ai_gated: true
+    window_seconds: 30
+    cooldown_seconds: 600
+
+    description: >
+      Detects file-write bursts using path-diversity scoring. Project-only tier
+      requires BOTH count AND rate thresholds (fileRate = files/sec). System
+      scopes and critical system paths elevate severity.
+
+    trigger:
+      scope_classification:
+        project_paths: [/home/*/, /tmp/, relative]
+        system_paths:  [/etc/, /usr/, /var/, /opt/]
+        critical_system_paths: [/etc/, /usr/bin/, /usr/local/bin/]
+      tunable_thresholds:
+        # Overridable per-org via RuleSettingsStore (migration 050)
+        files_in_critical_system_paths: 5
+        system_files_across_multiple_scopes: 10
+        system_files_alongside_project_writes: 3
+        project_only_count_threshold: 20
+
+    confidence_matrix:
+      - signal: "5+ files in critical system paths"
+        severity: critical
+        confidence: 0.90
+      - signal: "10+ system files across 2+ scopes"
+        severity: high
+        confidence: 0.75
+      - signal: "3+ system files alongside project writes"
+        severity: medium
+        confidence: 0.60
+      - signal: "20+ files all within single project scope (+ rate gate)"
+        severity: low
+        confidence: 0.35
+
+    finding_context:
+      signal_type: file_write_burst
+      pattern: "pid:{PID}:{reason}"
+
+  # 4 --------------------------------------------------------------------------
+  - id: ai.data_exfiltration
+    name: AI Data Exfiltration (read-then-send)
+    severity: critical
+    mitre_techniques: [T1041, T1567]
+    event_types: [net_connect]
+    ai_gated: true
+    window_seconds: 900   # 15 min
+    cooldown_seconds: 600
+
+    description: >
+      Fires on net_connect if the AI session read sensitive files (Tier 1 OR
+      Tier 2) within the prior 15 minutes. Session-first correlation; falls
+      back to walking up to 5 ancestor PIDs if session is unavailable.
+
+    trigger:
+      correlation_modes:
+        - mode: session
+          scope_key: "(host_id, session_id)"
+          neo4j_query: GetRecentEventsBySession
+        - mode: pid_tree_fallback
+          max_ancestors: 5
+          neo4j_query: GetRecentEventsMultiPID
+      sensitive_files: tier1 + tier2   # see ai.credential_access
+      safe_domain_allowlist: true
+
+    confidence_matrix:
+      - signal: "session scope + 3+ sensitive files read"
+        confidence: 0.90
+      - signal: "session scope + 1–2 sensitive files read"
+        confidence: 0.75
+      - signal: "PID-tree fallback (no session available)"
+        confidence: 0.65
+
+    finding_context:
+      signal_type: network_dest
+      pattern: "{bgp_prefix}:{port}"
+
+  # 5 --------------------------------------------------------------------------
+  - id: ai.unexpected_network
+    name: AI Unexpected Network Connection
+    severity: dynamic
+    mitre_techniques: [T1071, T1571]
+    event_types: [net_connect]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 300   # 5 min (more permissive for chat noise)
+
+    description: >
+      Three detection paths: external non-standard ports, high-risk internal
+      targets (cloud metadata, SSH/RDP on non-loopback, database ports),
+      and ASN-enriched external.
+
+    trigger:
+      external_non_private:
+        skip_standard_ports: [80, 443, 8080, 8443]
+        safe_domain_allowlist: true
+      internal_high_risk:
+        - target: "169.254.169.254"   # IMDS
+          severity: critical
+          confidence: 0.95
+        - target: "SSH/RDP port 22 or 3389 on non-loopback"
+          severity: high
+          confidence: 0.85
+        - target: "DB ports 5432/3306/27017/6379/9200 on non-loopback"
+          severity: medium
+          confidence: 0.70
+
+    confidence_matrix:
+      - signal: "external non-standard port + ASN enrichment"
+        severity: high
+        confidence: 0.80
+      - signal: "external non-standard port, no enrichment"
+        severity: high
+        confidence: 0.65
+
+    finding_context:
+      signal_type: network_dest
+      pattern: "{bgp_prefix}:{port}"
+
+  # 6 --------------------------------------------------------------------------
+  - id: ai.suspicious_dns
+    name: AI Suspicious DNS Query
+    severity: dynamic
+    mitre_techniques: [T1568, T1071.004]
+    event_types: [net_dns]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 600
+
+    description: >
+      Fires on agent-categorized domains. Tor and suspicious TLDs elevate
+      severity; paste/file-share services are medium.
+
+    trigger:
+      categories:
+        - category: tor
+          severity: critical
+          confidence: 0.95
+          matches_suffix: [.onion]
+        - category: suspicious_tld
+          severity: high
+          confidence: 0.85
+          matches_suffix: [.i2p, ".top", ".xyz", ".click", ".download"]
+        - category: paste_service
+          severity: medium
+          confidence: 0.75
+          matches_suffix: [pastebin.com, paste.ee, ghostbin.com, dpaste.org]
+        - category: file_share
+          severity: medium
+          confidence: 0.70
+          matches_suffix: [transfer.sh, file.io, 0x0.st, anonfiles.com]
+      safe_domain_allowlist: true
+
+    finding_context:
+      signal_type: dns_domain
+      pattern: "{domain}"
+
+  # 7 --------------------------------------------------------------------------
+  - id: ai.persistence
+    name: AI Persistence Mechanism
+    severity: critical
+    mitre_techniques: [T1546, T1053, T1098.004, T1543, T1574.006, T1556.003, T1547.001]
+    event_types: [file_open, process_exec, registry_write]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 600
+
+    description: >
+      Detects writes to persistence-sensitive locations (cron, systemd, SSH
+      authorized_keys, shell rc, Windows Run keys, scheduled tasks) or
+      execution of persistence-related commands. Registry writes detect
+      Run key additions, Defender exclusions, IFEO debugger hijacks.
+
+    trigger:
+      critical_paths:
+        - /etc/cron.*/
+        - /etc/sudoers, /etc/sudoers.d/
+        - ~/.ssh/authorized_keys
+        - /etc/ld.so.preload
+        - /etc/pam.d/
+        - "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
+        - "HKLM\\SYSTEM\\CurrentControlSet\\Services"
+      critical_commands: [crontab, schtasks.exe, sc.exe, reg.exe, "systemctl enable"]
+      high_paths:
+        - /etc/init.d/
+        - /etc/systemd/system/
+        - ~/.bashrc, ~/.zshrc, ~/.profile
+        - ~/.config/autostart/
+        - /.git/hooks/
+        - Windows Startup folder
+      medium_paths:
+        - /etc/profile.d/
+        - /etc/udev/rules.d/
+        - /etc/NetworkManager/dispatcher.d/
+      registry_patterns:
+        defender_exclusion_add: {severity: critical, confidence: 0.90}
+        ifeo_debugger: {severity: critical, confidence: 0.95}
+        applnit_dlls: {severity: critical, confidence: 0.95}
+
+    confidence_matrix:
+      - signal: "critical path write"
+        confidence: 0.95
+      - signal: "critical command exec"
+        confidence: 0.95
+      - signal: "high path write"
+        confidence: 0.85
+      - signal: "medium path write"
+        confidence: 0.70
+      - signal: "read-only open of critical path (demoted)"
+        severity: high
+        confidence: 0.80
+
+    finding_context:
+      signal_type: [persistence_path, persistence_cmd]
+      pattern: "{file_path_or_cmdline}"
+
+  # 8 --------------------------------------------------------------------------
+  - id: ai.privilege_escalation
+    name: AI Privilege Escalation
+    severity: critical
+    mitre_techniques: [T1548, T1548.003, T1068, T1611, T1055.008]
+    event_types: [process_exec, privilege_use]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 600
+
+    description: >
+      Detects escalation binaries (sudo, su, pkexec, nsenter, runas/psexec),
+      LOLBins (PowerShell bypass, mshta, regsvr32, certutil, wmic), capability
+      manipulation (setcap, chmod u+s, chown root), debugger attach, raw disk
+      reads, and Windows sensitive privilege activation (Event 4672).
+
+    trigger:
+      critical_binaries: [sudo, su, pkexec, doas, nsenter, modprobe, "runas.exe", "psexec.exe"]
+      powershell_signatures:
+        - "-ExecutionPolicy Bypass"
+        - "-EncodedCommand"
+      high_binaries: [setcap, capsh, chroot, "powershell.exe", "mshta.exe", "certutil.exe"]
+      capability_manipulation:
+        - "chmod u+s"
+        - "chown root"
+        - "strace -p"
+        - "gdb attach"
+        - "dd if=/dev/sd"
+      medium_binaries: [mount, umount, unshare, firejail]
+      unshare_user_namespace: {severity: critical, confidence: 0.95}
+      windows_privileges:
+        critical: [SeDebugPrivilege, SeTcbPrivilege, SeCreateTokenPrivilege]
+        high:     [SeImpersonatePrivilege, SeBackupPrivilege]
+
+    confidence_matrix:
+      - signal: "critical binary exec"
+        confidence: 0.95
+      - signal: "PowerShell bypass/encoded"
+        confidence: 0.95
+      - signal: "high binary exec"
+        confidence: 0.85
+      - signal: "capability manipulation"
+        confidence: 0.85
+      - signal: "medium binary exec"
+        confidence: 0.70
+      - signal: "SeDebugPrivilege activation (Windows)"
+        confidence: 0.95
+
+    finding_context:
+      signal_type: escalation_cmd
+      pattern: "{cmdline}"
+
+  # 9 --------------------------------------------------------------------------
+  - id: ai.code_tampering
+    name: AI Code / Supply-Chain Tampering
+    severity: high
+    mitre_techniques: [T1195.002, T1554, T1059.006]
+    event_types: [file_open]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 600
+
+    description: >
+      Detects WRITE-mode modifications to CI/CD configs, Dockerfiles,
+      dependency manifests, and auth-related source files. Read-only access
+      excluded to reduce false positives. Overlap guard skips .pem/.key/.crt
+      (handled by ai.credential_access).
+
+    trigger:
+      require_write_mode: true
+      categories:
+        - name: cicd_config
+          paths: [".gitlab-ci.yml", "Jenkinsfile", ".github/workflows/", "azure-pipelines.yml", ".circleci/config.yml"]
+          severity: high
+          confidence: 0.90
+        - name: container_definition
+          paths: ["Dockerfile", "docker-compose.yml", "docker-compose.yaml"]
+          severity: high
+          confidence: 0.90
+        - name: dependency_manifest
+          paths: ["package.json", "package-lock.json", "go.mod", "go.sum", "requirements.txt", "Pipfile", "Cargo.toml", "Gemfile", "pom.xml"]
+          severity: high
+          confidence: 0.80
+        - name: auth_source
+          basename_patterns: ["auth", "login", "session", "token"]
+          severity: medium
+          confidence: 0.70
+      overlap_guard_suffixes: [.pem, .key, .crt]   # skip → ai.credential_access
+
+    finding_context:
+      signal_type: code_tamper
+      pattern: "{file_path}"
+
+  # 10 -------------------------------------------------------------------------
+  - id: ai.container_escape
+    name: AI Container Escape
+    severity: critical
+    mitre_techniques: [T1611, T1610, T1613]
+    event_types: [file_open, process_exec]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 600
+
+    description: >
+      Detects attempts to escape container isolation: runtime sockets, kernel
+      interfaces, host filesystem mounts, cgroup release_agent, namespace
+      files, raw block devices, or container-management tool execution.
+
+    trigger:
+      runtime_sockets: [/var/run/docker.sock, /run/containerd/containerd.sock, /var/run/crio/crio.sock]
+      kernel_interfaces: [/proc/sysrq-trigger, /proc/kcore]
+      host_mounts_or_cgroup: [/host/, /rootfs/, "release_agent", /sys/fs/cgroup/]
+      namespace_files: [/proc/self/ns/, /proc/1/ns/]
+      block_devices: [/dev/sd, /dev/nvme, /dev/vd]
+      container_mgmt_binaries: [docker, kubectl, runc, ctr, crictl, kubelet]
+
+    confidence_matrix:
+      - signal: "runtime socket access"
+        confidence: 0.95
+      - signal: "kernel interface / cgroup release_agent write"
+        confidence: 0.95
+      - signal: "host filesystem / cgroup dir access"
+        confidence: 0.90
+      - signal: "container mgmt tool exec"
+        confidence: 0.90
+      - signal: "namespace file access"
+        confidence: 0.85
+      - signal: "block device access"
+        confidence: 0.85
+
+    finding_context:
+      signal_type: [container_escape, binary]
+      pattern: "{file_path_or_cmdline}"
+
+  # 11 -------------------------------------------------------------------------
+  - id: ai.discovery
+    name: AI Reconnaissance Burst
+    severity: low
+    mitre_techniques: [T1082, T1083, T1057, T1016, T1049, T1033]
+    event_types: [process_exec]
+    ai_gated: true
+    window_seconds: 60
+    cooldown_seconds: 600
+
+    description: >
+      High-value active scanners fire immediately at high severity. Common
+      discovery commands (whoami, id, ps, netstat, ifconfig) require 3+
+      distinct recon binaries in a 60-second window.
+
+    trigger:
+      active_scanners: [nmap, masscan, nikto, linpeas, pspy, bloodhound]
+      burst_commands: [whoami, id, ifconfig, ip, ps, netstat, ss, hostname, uname, pwd, lsb_release, uptime, "cat /proc/version"]
+      burst_threshold: 3   # distinct binaries in 60s → low severity; escalates
+
+    confidence_matrix:
+      - signal: "active scanner exec"
+        severity: high
+        confidence: 0.85
+      - signal: "3–4 distinct recon binaries in 60s"
+        severity: low
+        confidence: 0.55
+      - signal: "5–7 distinct recon binaries in 60s"
+        severity: medium
+        confidence: 0.70
+      - signal: "8+ distinct recon binaries in 60s"
+        severity: high
+        confidence: 0.80
+
+    finding_context:
+      signal_type: [discovery_cmd, discovery_burst]
+      pattern: "{cmdline_or_pid_burst_marker}"
+
+  # 12 -------------------------------------------------------------------------
+  - id: ai.command_activity
+    name: AI Command Activity (catch-all audit)
+    severity: low
+    mitre_techniques: [T1059]
+    event_types: [process_exec]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 600
+
+    description: >
+      Catch-all audit trail for every command an AI agent executes. Filters
+      Electron/Chromium subprocess internals, AI root binaries, Windows system
+      startup noise, build tool internals, and bare runtime invocations.
+      Extracts inner command from shell wrappers (bash -c "source ... && ...")
+      for clean display.
+
+    trigger:
+      filter_noise: true
+      extract_inner_command_from_shell_wrappers: true
+
+    confidence_matrix:
+      - signal: "any non-noise command by AI agent"
+        confidence: 0.30
+      - signal: "script interpreter running a file (secondary)"
+        confidence: 0.25
+
+    finding_context:
+      signal_type: command
+      pattern: "{display_cmd}"
+
+  # 13 -------------------------------------------------------------------------
+  - id: ai.file_activity
+    name: AI File Activity (catch-all audit)
+    severity: low
+    mitre_techniques: [T1083]
+    event_types: [file_open]
+    ai_gated: true
+    window_seconds: 0
+    cooldown_seconds: 600
+
+    description: >
+      Catch-all audit trail for every file an AI agent opens. Filters runtime
+      noise (/proc/, /sys/, /dev/), noisy extensions (.so, .dll, .pyc),
+      VCS probes, temp/build/cache directories, zero-byte files, PATHEXT
+      probes, and files already covered by higher-severity rules to avoid
+      duplicates.
+
+    trigger:
+      filter_noise_paths: [/proc/, /sys/, /dev/]
+      filter_noise_extensions: [.so, .dll, .pyc, .pyo, .class]
+      filter_tmp_build_cache: true
+      overlap_guard_rules: [ai.credential_access, ai.code_tampering, ai.persistence]
+
+    confidence_matrix:
+      - signal: "any non-noise file open by AI agent"
+        confidence: 0.25
+
+    finding_context:
+      signal_type: file_activity
+      pattern: "{file_path}"
+
+# -----------------------------------------------------------------------------
+# Severity dampening — applied by engine after rule evaluation
+# Findings with confidence < 0.60 are downgraded one level:
+#   critical → high
+#   high     → medium
+# Rationale: prevents high-confidence pattern matches from alarming users
+# when contextual confidence is low (e.g., reg.exe matched by binary name
+# but cmdline shows read-only 'query' operation).
+severity_dampening:
+  threshold: 0.60
+  mapping:
+    critical: high
+    high: medium

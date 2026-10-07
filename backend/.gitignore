@@ -1,0 +1,8 @@
+.env
+.certs
+
+backup*
+
+# Binaries
+telemetry
+

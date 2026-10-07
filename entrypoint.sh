@@ -26,27 +26,9 @@ wait_for_neo4j() {
     return 1
 }
 
-# ============================================================
-# Require API key
-# ============================================================
-if [ -z "${API_KEY:-}" ]; then
-    echo ""
-    echo "============================================"
-    echo "  ERROR: API_KEY is required"
-    echo "============================================"
-    echo ""
-    echo "  Usage:"
-    echo "    docker run -d -e API_KEY=your-key \\"
-    echo "      --privileged --pid=host \\"
-    echo "      -v /sys/kernel:/sys/kernel:ro \\"
-    echo "      -v correlic-data:/var/lib/correlic \\"
-    echo "      -p 3001:3001 \\"
-    echo "      ghcr.io/correlic/correlic:latest"
-    echo ""
-    echo "  Get your key at https://correlic.com/register"
-    echo ""
-    exit 1
-fi
+# An API key passed in the environment always wins over a stored one.
+ENV_API_KEY="${API_KEY:-}"
+GENERATED_KEY=""
 
 # ============================================================
 # Ensure log dir is writable (every run, not just first)
@@ -60,7 +42,7 @@ chmod 777 "$LOG_DIR"
 if [ ! -f "$SENTINEL" ]; then
     log "First run detected — initializing Correlic..."
 
-    # 1. Generate secrets (DB + Neo4j passwords only — API key is user-provided)
+    # 1. Generate secrets (DB + Neo4j passwords + LLM key encryption key)
     log "[1/7] Generating secrets..."
     DB_PASSWORD=$(openssl rand -hex 16)
     NEO4J_PASSWORD=$(openssl rand -hex 16)
@@ -79,6 +61,7 @@ EOF
 
     # 3. Initialize PostgreSQL
     log "[3/7] Initializing PostgreSQL..."
+    mkdir -p "$PG_DATA"
     chown -R postgres:postgres "$PG_DATA"
     su - postgres -c "$PG_BIN/initdb -D $PG_DATA" 2>&1 | tail -1
 
@@ -100,7 +83,7 @@ EOF
     export DATABASE_URL="postgres://correlic:$DB_PASSWORD@localhost:5432/correlic?sslmode=disable"
     "$CORRELIC_DIR/bin/correlic-admin" migrate up 2>&1 || log "Migration warning (may already be up to date)"
 
-    # 5. Create default organization
+    # 5. Create default organization and, unless one was supplied, a local API key
     log "[5/7] Creating default organization..."
     "$CORRELIC_DIR/bin/correlic-admin" create-org --name "Default" 2>&1 | tee /tmp/org.log
     ORG_ID=$(grep "org_id=" /tmp/org.log | cut -d= -f2)
@@ -111,6 +94,22 @@ EOF
     "$CORRELIC_DIR/bin/correlic-admin" enroll-client-cert \
         --org-id "$ORG_ID" --name agent-cert \
         --cert-file "$CERTS_DIR/client.crt" 2>&1 || true
+
+    if [ -n "$ENV_API_KEY" ]; then
+        API_KEY="$ENV_API_KEY"
+        log "Using API key from environment"
+    else
+        log "No API_KEY provided — creating a local one"
+        "$CORRELIC_DIR/bin/correlic-admin" create-service-account \
+            --org-id "$ORG_ID" --email agent@localhost --name "Local agent" --role admin 2>&1 | tee /tmp/sa.log
+        USER_ID=$(grep "^user_id=" /tmp/sa.log | cut -d= -f2)
+        "$CORRELIC_DIR/bin/correlic-admin" create-api-key \
+            --org-id "$ORG_ID" --user-id "$USER_ID" --name all-in-one 2>&1 | tee /tmp/key.log
+        API_KEY=$(grep "^api_key=" /tmp/key.log | cut -d= -f2)
+        GENERATED_KEY="$API_KEY"
+        rm -f /tmp/sa.log /tmp/key.log
+    fi
+    echo "API_KEY=$API_KEY" >> "$ENV_FILE"
 
     # Stop PostgreSQL (supervisord will manage it)
     su - postgres -c "$PG_BIN/pg_ctl -D $PG_DATA stop" 2>&1
@@ -135,6 +134,7 @@ file_monitor_enabled: true
 network_monitor_enabled: true
 dns_monitor_enabled: true
 EOF
+    chmod 600 "$CERTS_DIR/agent.yaml"
 
     touch "$SENTINEL"
 
@@ -149,6 +149,19 @@ fi
 set +u
 source "$ENV_FILE"
 set -u
+
+# Environment beats the stored key, and a key supplied later is persisted.
+if [ -n "$ENV_API_KEY" ]; then
+    API_KEY="$ENV_API_KEY"
+    if ! grep -q "^API_KEY=$API_KEY\$" "$ENV_FILE"; then
+        sed -i '/^API_KEY=/d' "$ENV_FILE"
+        echo "API_KEY=$API_KEY" >> "$ENV_FILE"
+    fi
+fi
+if [ -z "${API_KEY:-}" ]; then
+    log "ERROR: no API key available. Pass -e API_KEY=... or remove the data volume to re-initialize."
+    exit 1
+fi
 
 # ============================================================
 # Export environment for all services
@@ -166,13 +179,16 @@ export LLM_ENCRYPTION_KEY="${LLM_ENCRYPTION_KEY}"
 export DEFAULT_ORG_ID="$ORG_ID"
 export SAMPLING_ENABLED="true"
 export ALLOW_API_KEY_AUTH="true"
-export CORRELIC_API_URL="${CORRELIC_API_URL:-https://api.correlic.com}"
+# Optional remote key server. Unset by default: keys are validated locally only.
+if [ -n "${CORRELIC_API_URL:-}" ]; then
+    export CORRELIC_API_URL
+fi
 
 # Agent config (reads from YAML, not env vars)
 export CORRELIC_CONFIG="$CERTS_DIR/agent.yaml"
 
-# UI + Proxy need API_KEY for session management
-export API_KEY="${API_KEY}"
+# UI + Proxy use API_KEY for automatic login
+export API_KEY
 
 # ============================================================
 # Start supervisord (PostgreSQL + Neo4j auto-start)
@@ -199,7 +215,7 @@ wait_for_neo4j && log "Neo4j ready" || true
 log "Starting backend services..."
 supervisorctl start backend-api backend-telemetry 2>/dev/null
 
-# Wait for API to be fully ready (health + pattern endpoint)
+# Wait for API to be fully ready
 log "Waiting for backend API..."
 retries=30
 while [ $retries -gt 0 ]; do
@@ -224,6 +240,13 @@ log "  Correlic is running!"
 log "============================================"
 log "  Dashboard: http://localhost:3001"
 log "  Version:   ${CORRELIC_VERSION:-dev}"
+if [ -n "$GENERATED_KEY" ]; then
+    log ""
+    log "  A local API key was generated for this install. The dashboard"
+    log "  logs in with it automatically; it is stored in $ENV_FILE"
+    log "  and in $CERTS_DIR/agent.yaml. To log in from elsewhere:"
+    log "    $GENERATED_KEY"
+fi
 log ""
 log "  All data stays on this device."
 log "============================================"

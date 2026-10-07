@@ -1,0 +1,19 @@
+[Unit]
+Description=Correlic Telemetry Ingestion
+After=network.target postgresql.service neo4j.service
+Wants=postgresql.service neo4j.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/correlic/correlic.env
+EnvironmentFile=-/etc/correlic/api-key.env
+ExecStart=/usr/bin/correlic-telemetry
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=correlic-telemetry
+
+[Install]
+WantedBy=multi-user.target

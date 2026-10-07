@@ -1,0 +1,20 @@
+[Unit]
+Description=Correlic Dashboard (Next.js)
+After=network.target correlic-api.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/correlic/api-key.env
+Environment=PORT=3001
+Environment=HOSTNAME=0.0.0.0
+Environment=PROXY_BASE_URL=http://localhost:8788
+WorkingDirectory=/usr/share/correlic/ui
+ExecStart=/usr/share/correlic/node/bin/node server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=correlic-ui
+
+[Install]
+WantedBy=multi-user.target

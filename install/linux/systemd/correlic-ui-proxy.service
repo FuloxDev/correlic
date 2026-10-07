@@ -1,0 +1,17 @@
+[Unit]
+Description=Correlic UI Proxy (mTLS termination)
+After=network.target correlic-api.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/correlic/ui-proxy.env
+WorkingDirectory=/usr/share/correlic/ui-proxy
+ExecStart=/usr/share/correlic/node/bin/node index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=correlic-ui-proxy
+
+[Install]
+WantedBy=multi-user.target
