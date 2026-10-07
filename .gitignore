@@ -1,0 +1,63 @@
+# --- secrets & local config ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.csr
+.certs/
+certs/
+agent.yaml
+!install/**/agent.yaml.example
+
+# --- build output ---
+backend/api
+backend/telemetry
+backend/admin
+backend/mcp
+backend/correlic-*
+agent/correlic-agent
+agent/correlic-agent.exe
+agent/agent
+agent/agent.exe
+agent/internal/ebpf/*_bpfel.o
+agent/internal/ebpf/*_bpfel.go
+agent/internal/ebpf/*_bpfeb.o
+agent/internal/ebpf/*_bpfeb.go
+dist/
+build/out/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.coverprofile
+
+# --- node ---
+node_modules/
+.next/
+out/
+.pnp
+.pnp.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tsbuildinfo
+next-env.d.ts
+
+# --- logs & scratch ---
+*.log
+logs/
+tmp/
+uploads/
+
+# --- editors / OS ---
+.DS_Store
+.idea/
+.vscode/
+*.code-workspace
+go.work
+go.work.sum

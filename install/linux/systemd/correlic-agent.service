@@ -1,0 +1,18 @@
+[Unit]
+Description=Correlic eBPF Security Agent
+After=network.target correlic-api.service correlic-telemetry.service
+
+[Service]
+Type=simple
+Environment=CORRELIC_CONFIG=/etc/correlic/agent.yaml
+ExecStart=/usr/bin/correlic-agent
+Restart=on-failure
+RestartSec=5
+AmbientCapabilities=CAP_BPF CAP_SYS_ADMIN CAP_PERFMON CAP_SYS_RESOURCE
+LimitMEMLOCK=infinity
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=correlic-agent
+
+[Install]
+WantedBy=multi-user.target

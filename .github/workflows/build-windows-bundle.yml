@@ -1,0 +1,130 @@
+name: Build Windows bundle
+
+# Produces the self-contained Windows install bundle (zip) with PostgreSQL,
+# Neo4j, a JRE and Node.js alongside the Correlic binaries and dashboard.
+# Everything Correlic-specific is built from this repository.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: true
+
+env:
+  PGSQL_VERSION: "16.8-1"
+  NODE_VERSION: "20.19.0"
+  NEO4J_VERSION: "5.26.0"
+  TEMURIN_VERSION: "17.0.18+8"
+  TEMURIN_VERSION_FILE: "17.0.18_8"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: v
+        run: |
+          V="${{ inputs.version }}"; [ -z "$V" ] && V="${GITHUB_REF_NAME}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: |
+            backend/go.sum
+            agent/go.sum
+
+      - name: Cross-compile Go binaries
+        env: { GOOS: windows, GOARCH: amd64, CGO_ENABLED: '0' }
+        run: |
+          LD="-s -w -X main.version=${{ steps.v.outputs.version }}"
+          (cd backend && go build -ldflags="$LD" -o ../bundle/bin/correlic-api.exe ./cmd/api \
+            && go build -ldflags="$LD" -o ../bundle/bin/correlic-telemetry.exe ./cmd/telemetry \
+            && go build -ldflags="$LD" -o ../bundle/bin/correlic-admin.exe ./cmd/admin)
+          (cd agent && go build -ldflags="$LD" -o ../bundle/bin/correlic-agent.exe ./cmd/agent)
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            ui-proxy/package-lock.json
+
+      - name: Build dashboard (standalone)
+        working-directory: ui
+        env: { NEXT_TELEMETRY_DISABLED: "1" }
+        run: |
+          npm ci
+          npm run build
+          mkdir -p ../bundle/ui/.next
+          cp -r .next/standalone/. ../bundle/ui/
+          cp -r .next/static ../bundle/ui/.next/static
+          cp -r public ../bundle/ui/public
+
+      - name: Build ui-proxy
+        working-directory: ui-proxy
+        run: |
+          npm ci --omit=dev
+          mkdir -p ../bundle/ui-proxy
+          cp -r index.js package.json package-lock.json node_modules ../bundle/ui-proxy/
+
+      - name: Download portable PostgreSQL
+        run: |
+          mkdir -p bundle/pgsql
+          curl -fsSL --retry 3 --retry-delay 2 "https://get.enterprisedb.com/postgresql/postgresql-${PGSQL_VERSION}-windows-x64-binaries.zip" -o pgsql.zip
+          unzip -q pgsql.zip -d pgsql-tmp && mv pgsql-tmp/pgsql/* bundle/pgsql/ && rm -rf pgsql.zip pgsql-tmp
+
+      - name: Download portable Node.js
+        run: |
+          mkdir -p bundle/node
+          curl -fsSL --retry 3 --retry-delay 2 "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o node.zip
+          unzip -q node.zip -d node-tmp && mv node-tmp/node-v${NODE_VERSION}-win-x64/* bundle/node/ && rm -rf node.zip node-tmp
+
+      - name: Download portable Neo4j
+        run: |
+          mkdir -p bundle/neo4j
+          curl -fsSL --retry 3 --retry-delay 2 "https://dist.neo4j.org/neo4j-community-${NEO4J_VERSION}-windows.zip" -o neo4j.zip
+          unzip -q neo4j.zip -d neo4j-tmp && mv neo4j-tmp/neo4j-community-${NEO4J_VERSION}/* bundle/neo4j/ && rm -rf neo4j.zip neo4j-tmp
+
+      - name: Download portable JRE (Eclipse Temurin 17)
+        run: |
+          mkdir -p bundle/jre
+          curl -fsSL --retry 3 --retry-delay 2 "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-${TEMURIN_VERSION}/OpenJDK17U-jre_x64_windows_hotspot_${TEMURIN_VERSION_FILE}.zip" -o jre.zip
+          unzip -q jre.zip -d jre-tmp && mv jre-tmp/jdk-${TEMURIN_VERSION}-jre/* bundle/jre/ && rm -rf jre.zip jre-tmp
+
+      - name: Add migrations, helper scripts and directories
+        run: |
+          cp -r backend/migrations bundle/migrations
+          cp install/start.ps1 install/stop.ps1 install/uninstall.ps1 install/install-agent.ps1 install/uninstall-agent.ps1 bundle/
+          mkdir -p bundle/certs bundle/logs
+
+      - name: Bundle everything
+        run: |
+          (cd bundle && zip -qr ../correlic-windows-${{ steps.v.outputs.version }}.zip .)
+          sha256sum correlic-windows-${{ steps.v.outputs.version }}.zip > SHA256SUMS-windows.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: correlic-windows-${{ steps.v.outputs.version }}
+          path: |
+            correlic-windows-${{ steps.v.outputs.version }}.zip
+            SHA256SUMS-windows.txt
+          retention-days: 14
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            correlic-windows-${{ steps.v.outputs.version }}.zip
+            SHA256SUMS-windows.txt

@@ -1,0 +1,60 @@
+{
+  "pack_id": "endpoint-threats-v1",
+  "name": "Endpoint Threat Correlation",
+  "version": "1.0.0",
+  "description": "Correlate high-risk endpoint behaviors into stronger alerts.",
+  "defaults": {
+    "severity": "medium",
+    "actions": ["alert"]
+  },
+  "policies": [
+    {
+      "id": "curl-pipe-shell",
+      "signal": "curl_pipe_to_shell",
+      "match": { "any": [] },
+      "severity": "high",
+      "actions": ["alert"],
+      "tags": ["endpoint", "execution"]
+    },
+    {
+      "id": "aws-creds-read",
+      "signal": "aws_creds_read",
+      "match": { "any": [] },
+      "severity": "high",
+      "actions": ["alert"],
+      "tags": ["endpoint", "secrets"]
+    },
+    {
+      "id": "sudo-chain",
+      "signal": "sudo_suspicious_chain",
+      "match": { "any": [] },
+      "severity": "high",
+      "actions": ["alert"],
+      "tags": ["endpoint", "privilege"]
+    }
+  ],
+  "correlations": [
+    {
+      "id": "shell-plus-priv",
+      "policy_ids": ["curl-pipe-shell", "sudo-chain"],
+      "window_minutes": 30,
+      "same_actor": false,
+      "same_repo": false,
+      "same_host": true,
+      "threshold": 2,
+      "severity": "high",
+      "actions": ["alert", "require_approval"]
+    },
+    {
+      "id": "secrets-plus-shell-plus-priv",
+      "policy_ids": ["aws-creds-read", "curl-pipe-shell", "sudo-chain"],
+      "window_minutes": 120,
+      "same_actor": false,
+      "same_repo": false,
+      "same_host": true,
+      "threshold": 3,
+      "severity": "critical",
+      "actions": ["alert", "require_approval", "notify_webhook"]
+    }
+  ]
+}

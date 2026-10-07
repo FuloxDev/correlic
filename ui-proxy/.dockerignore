@@ -1,0 +1,21 @@
+# Dependencies
+node_modules
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Certs (mounted at runtime)
+.certs/
+
+# Misc
+*.md
+LICENSE
+.env
+.env.*

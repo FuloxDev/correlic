@@ -1,0 +1,226 @@
+# Correlic Attack Chain Patterns — Supplementary Artifact
+#
+# Paper: "Closing the AI Agent Trust Gap: Kernel-Level Runtime Security
+# Monitoring for AI Coding Agents"
+# Author: Ayush Mishra (Correlic)
+#
+# This file documents the 11 multi-step attack chain patterns referenced in
+# Section 7.3 of the paper. The chain correlator buffers findings per
+# (host_id, session_id) — with host_id:pid:PID fallback when no session is
+# available — and emits a chain finding when a predefined sequence completes
+# within its time window.
+#
+# Chain findings ALWAYS bypass cooldown rate limiting (a multi-step attack
+# is too important to suppress because a constituent finding was recently
+# emitted). They are stored via FindingStore.Insert with deterministic IDs:
+#   chain.<pattern_id>:<host_id>:<session_id>:<window_start_unix>
+#
+# Individual baselines do NOT suppress chain findings: even if a constituent
+# step has been baselined (e.g., user allowed SSH key access), the chain
+# still fires if a subsequent step completes the pattern.
+
+version: 1
+schema: correlic-chains/v1
+
+# -----------------------------------------------------------------------------
+chains:
+
+  # 1 --------------------------------------------------------------------------
+  - id: credential_theft
+    name: Credential Theft
+    description: >
+      Classic exfiltration: AI reads sensitive credential files, then connects
+      to an external destination. The canonical "credential_theft chain" that
+      maps most directly to T1552 → T1041 in ATT&CK.
+    steps:
+      - ai.credential_access
+      - ai.data_exfiltration
+    window_minutes: 20
+    amplified_severity: critical
+    amplified_confidence: 0.95
+    mitre_techniques: [T1552, T1041]
+
+  # 2 --------------------------------------------------------------------------
+  - id: reverse_shell_setup
+    name: Reverse Shell Setup
+    description: >
+      Execution of a network primitive (nc, ncat, socat, bash -i) immediately
+      followed by an outbound network connection — the standard reverse-shell
+      establishment pattern.
+    steps:
+      - ai.unauthorized_exec
+      - ai.unexpected_network
+    window_minutes: 5
+    amplified_severity: critical
+    amplified_confidence: 0.90
+    mitre_techniques: [T1059, T1071]
+
+  # 3 --------------------------------------------------------------------------
+  - id: lateral_movement
+    name: Lateral Movement (internal target)
+    description: >
+      Network primitive execution followed by an INTERNAL network connection
+      (SSH, RDP, database port, cloud metadata on RFC1918). Distinct from
+      reverse_shell_setup in targeting internal rather than external hosts.
+    steps:
+      - ai.unauthorized_exec
+      - ai.unexpected_network
+    step_filters:
+      ai.unexpected_network:
+        require_context_field: internal_threat
+        not_empty: true
+    window_minutes: 10
+    amplified_severity: high
+    amplified_confidence: 0.85
+    mitre_techniques: [T1059, T1021]
+
+  # 4 --------------------------------------------------------------------------
+  - id: full_compromise
+    name: Full Compromise (credential → exec → exfil)
+    description: >
+      Three-stage kill-chain: credential read, then network/shell exec, then
+      outbound exfil or unexpected network. The longest chain pattern; wide
+      30-minute window reflects multi-stage attacker pacing.
+    steps:
+      - ai.credential_access
+      - ai.unauthorized_exec
+      - [ai.data_exfiltration, ai.unexpected_network]   # either completes step 3
+    window_minutes: 30
+    amplified_severity: critical
+    amplified_confidence: 0.95
+    mitre_techniques: [T1552, T1059, T1041]
+
+  # 5 --------------------------------------------------------------------------
+  - id: persistence_backdoor
+    name: Persistence Backdoor
+    description: >
+      Privilege escalation immediately followed by a persistence mechanism
+      write — the canonical "backdoor the box" pattern.
+    steps:
+      - ai.privilege_escalation
+      - ai.persistence
+    window_minutes: 15
+    amplified_severity: critical
+    amplified_confidence: 0.95
+    mitre_techniques: [T1548, T1053, T1546]
+
+  # 6 --------------------------------------------------------------------------
+  - id: supply_chain_attack
+    name: Supply-Chain Attack
+    description: >
+      Modification to a CI/CD config, Dockerfile, or dependency manifest
+      followed by outbound network. Matches the SolarWinds-style pattern:
+      tamper with build inputs, then reach out to attacker infrastructure.
+    steps:
+      - ai.code_tampering
+      - [ai.data_exfiltration, ai.unexpected_network]
+    window_minutes: 20
+    amplified_severity: critical
+    amplified_confidence: 0.90
+    mitre_techniques: [T1195.002, T1041]
+
+  # 7 --------------------------------------------------------------------------
+  - id: data_staging
+    name: Data Staging for Exfiltration
+    description: >
+      Large write burst followed by outbound network — attacker collecting
+      data into a staging location, then exfiltrating.
+    steps:
+      - ai.excessive_writes
+      - [ai.data_exfiltration, ai.unexpected_network]
+    window_minutes: 20
+    amplified_severity: critical
+    amplified_confidence: 0.90
+    mitre_techniques: [T1074, T1041]
+
+  # 8 --------------------------------------------------------------------------
+  - id: credential_persistence
+    name: Credential Theft + Persistence
+    description: >
+      Credential read followed by persistence mechanism installation.
+      Distinct from credential_theft in that the attacker is establishing
+      long-term access rather than immediately exfiltrating.
+    steps:
+      - ai.credential_access
+      - ai.persistence
+    window_minutes: 15
+    amplified_severity: critical
+    amplified_confidence: 0.95
+    mitre_techniques: [T1552, T1546]
+
+  # 9 --------------------------------------------------------------------------
+  - id: privesc_credential_exfil
+    name: Privilege Escalation → Credential Access → Exfil
+    description: >
+      Full post-exploitation sequence: escalate to root/admin, then dump
+      credentials, then exfiltrate. 30-minute window.
+    steps:
+      - ai.privilege_escalation
+      - ai.credential_access
+      - [ai.data_exfiltration, ai.unexpected_network]
+    window_minutes: 30
+    amplified_severity: critical
+    amplified_confidence: 0.95
+    mitre_techniques: [T1548, T1552, T1041]
+
+  # 10 -------------------------------------------------------------------------
+  - id: recon_to_escalation
+    name: Reconnaissance → Escalation
+    description: >
+      Recon command burst followed by privilege escalation attempt. Classic
+      "find the weak spot, then exploit it" pattern.
+    steps:
+      - ai.discovery
+      - ai.privilege_escalation
+    window_minutes: 15
+    amplified_severity: high
+    amplified_confidence: 0.85
+    mitre_techniques: [T1082, T1548]
+
+  # 11 -------------------------------------------------------------------------
+  - id: container_breakout
+    name: Container Breakout
+    description: >
+      Container-escape attempt followed by persistence, credential access, or
+      privilege escalation on the host. Combines the namespace-break with
+      the post-escape action that distinguishes genuine escape attempts from
+      benign container management tool usage.
+    steps:
+      - ai.container_escape
+      - [ai.persistence, ai.credential_access, ai.privilege_escalation]
+    window_minutes: 10
+    amplified_severity: critical
+    amplified_confidence: 0.95
+    mitre_techniques: [T1611, T1552, T1546]
+
+# -----------------------------------------------------------------------------
+# Chain correlator behavior
+#
+# Buffering:
+#   - Keyed on (host_id, session_id). When session_id is empty, falls back
+#     to host_id:pid:PID (NOT "default" — that caused cross-process false
+#     positives in an earlier version).
+#   - Background cleanup every 5 minutes; maxAge = 30-minute buffer retention.
+#
+# Finding emission:
+#   - Chain ID: chain.<pattern_id>:<host_id>:<session_id>:<window_start_unix>
+#   - Chain findings bypass cooldown rate limiting.
+#   - Chain findings bypass individual baseline suppression.
+#   - Stored via FindingStore.Insert (ON CONFLICT DO NOTHING).
+#
+# Incident correlation:
+#   - Chain findings create NEW incidents containing all constituent step
+#     findings (not just the chain finding itself). This ensures the
+#     incident timeline shows the full attack sequence.
+#   - Chain amplification: when a chain is present on an incident, severity
+#     is promoted one level (capped at critical).
+
+correlator:
+  buffer_key: "(host_id, session_id)"
+  fallback_key: "host_id:pid:PID"
+  buffer_max_age_minutes: 30
+  cleanup_interval_minutes: 5
+  bypass_cooldown: true
+  bypass_individual_baselines: true
+  incident_creation: "new incident with all constituent step findings"
+  severity_amplification: "+1 level, capped at critical"

@@ -1,0 +1,267 @@
+# Correlic — self-hosted security observability for AI coding agents
+# All data stays on your machine. Nothing is sent anywhere else.
+#
+# Usage:
+#   cp .env.example .env            # fill in DB_PASSWORD, NEO4J_PASSWORD, LLM_ENCRYPTION_KEY
+#   docker compose up -d
+#   docker compose logs bootstrap   # shows the generated dashboard API key on first start
+#   open http://localhost:3001
+#
+# API_KEY in .env is optional: leave it empty and the bootstrap service creates
+# a local key, or set it to a key you made with `correlic-admin create-api-key`.
+
+services:
+  # ── Init: generate mTLS certs (first run only) ───────────
+  init-certs:
+    image: alpine:3.20
+    command: >
+      sh -c '
+        if [ -f /certs/ca.crt ]; then
+          echo "Certs already exist, skipping"
+          exit 0
+        fi
+        apk add --no-cache openssl > /dev/null 2>&1
+        echo "Generating mTLS certificates..."
+        openssl genrsa -out /certs/ca.key 4096 2>/dev/null
+        openssl req -new -x509 -days 3650 -key /certs/ca.key -out /certs/ca.crt -subj "/CN=Correlic CA" 2>/dev/null
+        openssl genrsa -out /certs/server.key 2048 2>/dev/null
+        openssl req -new -key /certs/server.key -out /certs/server.csr -subj "/CN=correlic-backend" 2>/dev/null
+        printf "authorityKeyIdentifier=keyid,issuer\nbasicConstraints=CA:FALSE\nsubjectAltName=DNS:localhost,DNS:backend-api,DNS:backend-tel,IP:127.0.0.1" > /certs/ext.cnf
+        openssl x509 -req -in /certs/server.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/server.crt -days 3650 -extfile /certs/ext.cnf 2>/dev/null
+        openssl genrsa -out /certs/client.key 2048 2>/dev/null
+        openssl req -new -key /certs/client.key -out /certs/client.csr -subj "/CN=correlic-agent" 2>/dev/null
+        openssl x509 -req -in /certs/client.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/client.crt -days 3650 2>/dev/null
+        rm -f /certs/*.csr /certs/*.cnf /certs/*.srl
+        chmod 644 /certs/*.crt /certs/*.key
+        echo "Certificates generated successfully"
+      '
+    volumes:
+      - correlic-certs:/certs
+
+  # ── Bootstrap: migrations + org + local API key + agent config (first run) ─
+  bootstrap:
+    image: ghcr.io/correlic/correlic-backend:latest
+    entrypoint: [""]
+    command: >
+      sh -c '
+        if [ -f /certs/.bootstrapped ]; then
+          echo "Already bootstrapped, running migrations only..."
+          /app/admin migrate up
+          exit 0
+        fi
+        echo "Running bootstrap..."
+        /app/admin migrate up
+        /app/admin create-org --name "Default" 2>&1 | tee /tmp/org.log
+        ORG_ID=$$(grep "org_id=" /tmp/org.log | cut -d= -f2)
+        if [ -z "$$ORG_ID" ] && [ -f /certs/.org_id ]; then ORG_ID=$$(cat /certs/.org_id); fi
+        if [ -z "$$ORG_ID" ]; then echo "ERROR: could not create or find the organization"; exit 1; fi
+        echo "$$ORG_ID" > /certs/.org_id
+        /app/admin enroll-client-cert --org-id "$$ORG_ID" --name agent-cert --cert-file /certs/client.crt 2>&1 || true
+        if [ -z "$$API_KEY" ]; then
+          echo "No API_KEY provided — creating a local one..."
+          /app/admin create-service-account --org-id "$$ORG_ID" --email agent@localhost --name "Local agent" --role admin 2>&1 | tee /tmp/sa.log
+          USER_ID=$$(grep "^user_id=" /tmp/sa.log | cut -d= -f2)
+          /app/admin create-api-key --org-id "$$ORG_ID" --user-id "$$USER_ID" --name local 2>&1 | tee /tmp/key.log
+          API_KEY=$$(grep "^api_key=" /tmp/key.log | cut -d= -f2)
+          if [ -z "$$API_KEY" ]; then echo "ERROR: could not create a local API key (see output above)"; exit 1; fi
+          GENERATED=1
+        fi
+        printf "%s" "$$API_KEY" > /certs/.api_key
+        chmod 600 /certs/.api_key
+        printf "backend_url: \"https://backend-api:8080\"\ntelemetry_url: \"https://backend-tel:8081\"\napi_key: \"$$API_KEY\"\ntls_ca_file: \"/certs/ca.crt\"\ntls_client_cert_file: \"/certs/client.crt\"\ntls_client_key_file: \"/certs/client.key\"\nprofile: \"developer\"\nlog_level: \"info\"\nprocess_exec_enabled: true\nfile_monitor_enabled: true\nnetwork_monitor_enabled: true\ndns_monitor_enabled: true\n" > /certs/agent.yaml
+        touch /certs/.bootstrapped
+        echo ""
+        echo "============================================"
+        echo "  Correlic ready!"
+        echo "  Dashboard: http://localhost:3001"
+        echo "  Org ID:    $$ORG_ID"
+        if [ -n "$$GENERATED" ]; then
+          echo ""
+          echo "  Dashboard API key (log in with this; also stored in the"
+          echo "  correlic-certs volume as .api_key):"
+          echo "    $$API_KEY"
+        fi
+        echo "============================================"
+      '
+    environment:
+      DATABASE_URL: postgres://correlic:${DB_PASSWORD:?Set DB_PASSWORD in .env (see .env.example)}@db:5432/correlic?sslmode=disable
+      API_KEY: ${API_KEY:-}
+    volumes:
+      - correlic-certs:/certs
+    depends_on:
+      db:
+        condition: service_healthy
+      init-certs:
+        condition: service_completed_successfully
+    networks:
+      - correlic
+
+  # ── PostgreSQL ────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - correlic-pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: correlic
+      POSTGRES_USER: correlic
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env (see .env.example)}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U correlic"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - correlic
+
+  # ── Neo4j ─────────────────────────────────────────────────
+  neo4j:
+    image: neo4j:5-community
+    volumes:
+      - correlic-neo4j:/data
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env (see .env.example)}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      NEO4J_PLUGINS: '[]'
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p $${NEO4J_PASSWORD} 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - correlic
+
+  # ── Backend API ───────────────────────────────────────────
+  backend-api:
+    image: ghcr.io/correlic/correlic-backend:latest
+    command: ["api"]
+    environment:
+      DATABASE_URL: postgres://correlic:${DB_PASSWORD}@db:5432/correlic?sslmode=disable
+      ALLOW_API_KEY_AUTH: "true"
+      DEFAULT_ORG_ID: ${DEFAULT_ORG_ID:-default}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      TLS_CERT_FILE: /certs/server.crt
+      TLS_KEY_FILE: /certs/server.key
+      MTLS_CA_FILE: /certs/ca.crt
+      LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:?Set LLM_ENCRYPTION_KEY in .env (openssl rand -hex 32)}
+      SAMPLING_ENABLED: "true"
+    volumes:
+      - correlic-certs:/certs
+    depends_on:
+      db:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - correlic
+
+  # ── Backend Telemetry ─────────────────────────────────────
+  backend-tel:
+    image: ghcr.io/correlic/correlic-backend:latest
+    command: ["telemetry"]
+    environment:
+      DATABASE_URL: postgres://correlic:${DB_PASSWORD}@db:5432/correlic?sslmode=disable
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      TLS_CERT_FILE: /certs/server.crt
+      TLS_KEY_FILE: /certs/server.key
+      MTLS_CA_FILE: /certs/ca.crt
+      SAMPLING_ENABLED: "true"
+      ALLOW_API_KEY_AUTH: "true"
+      DEFAULT_ORG_ID: ${DEFAULT_ORG_ID:-default}
+    volumes:
+      - correlic-certs:/certs
+    depends_on:
+      db:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - correlic
+
+  # ── eBPF Agent ────────────────────────────────────────────
+  agent:
+    image: ghcr.io/correlic/correlic-agent:latest
+    privileged: true
+    pid: host
+    entrypoint: [""]
+    command: >
+      sh -c '
+        echo "Waiting 15s for backend API to be ready..."
+        sleep 15
+        echo "Starting agent"
+        exec /app/correlic-agent
+      '
+    environment:
+      CORRELIC_CONFIG: /certs/agent.yaml
+    volumes:
+      - correlic-certs:/certs
+      - /sys/kernel:/sys/kernel:ro
+      - /proc:/host/proc:ro
+    depends_on:
+      - backend-api
+      - backend-tel
+    restart: unless-stopped
+    networks:
+      - correlic
+
+  # ── UI Dashboard ──────────────────────────────────────────
+  # With API_KEY set the dashboard logs you in automatically; without it,
+  # log in with the key printed by the bootstrap service.
+  ui:
+    image: ghcr.io/correlic/correlic-ui:latest
+    ports:
+      - "3001:3001"
+    environment:
+      PROXY_BASE_URL: http://ui-proxy:8788
+      PORT: "3001"
+      HOSTNAME: "0.0.0.0"
+      NODE_ENV: production
+      API_KEY: ${API_KEY:-}
+    depends_on:
+      - backend-api
+      - bootstrap
+    restart: unless-stopped
+    networks:
+      - correlic
+
+  # ── UI Proxy (mTLS handler — internal only) ──────────────
+  ui-proxy:
+    image: ghcr.io/correlic/correlic-ui-proxy:latest
+    environment:
+      PORT: 8788
+      BIND_HOST: 0.0.0.0
+      BACKEND_API: https://backend-api:8080
+      API_KEY: ${API_KEY:-}
+      UI_ORIGIN: http://ui:3001
+      MTLS_CA: /certs/ca.crt
+      MTLS_CERT: /certs/client.crt
+      MTLS_KEY: /certs/client.key
+    volumes:
+      - correlic-certs:/certs:ro
+    depends_on:
+      - ui
+      - backend-api
+      - bootstrap
+    restart: unless-stopped
+    networks:
+      - correlic
+
+volumes:
+  correlic-pgdata:
+  correlic-neo4j:
+  correlic-certs:
+
+networks:
+  correlic:
+    driver: bridge
