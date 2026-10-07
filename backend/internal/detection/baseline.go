@@ -28,16 +28,17 @@ const (
 
 // baselineEntry represents a single cached baseline record.
 type baselineEntry struct {
-	ID         int
-	OrgID      string
-	HostID     string
-	AIType     string
-	SignalType string
-	Pattern    string
-	Source     string // "observed" or "user_confirmed"
-	HitCount   int
-	LastSeen   time.Time
-	ExpiresAt  *time.Time // nil = never expires (observed uses TTL, user_confirmed = permanent)
+	ID             int
+	OrgID          string
+	HostID         string
+	AIType         string
+	SignalType     string
+	Pattern        string
+	Source         string // "observed" or "user_confirmed"
+	HitCount       int
+	LastSeen       time.Time
+	ExpiresAt      *time.Time // optional "allow until": the baseline stops matching after this
+	SuspendedUntil *time.Time // optional "suspended until": the baseline does not match before this
 }
 
 // BaselineEntry is the exported view of a baseline record.
@@ -186,12 +187,15 @@ func (bc *BaselineCollector) backgroundRefresh() {
 			if err := bc.reload(context.Background()); err != nil {
 				log.Printf("WARN: baseline_collector refresh failed: %v", err)
 			}
-			// Every 10th tick (~5 minutes), resume baselines whose suspension has expired
-			// by clearing expires_at so they become active again.
+			// Every 10th tick (~5 minutes): resume baselines whose suspension is
+			// over, and drop temporary allows whose period has ended.
 			bc.gcCounter++
 			if bc.gcCounter%10 == 0 {
-				if _, err := bc.db.Exec(`UPDATE behavioral_baselines SET expires_at = NULL WHERE expires_at IS NOT NULL AND expires_at < NOW()`); err != nil {
+				if _, err := bc.db.Exec(`UPDATE behavioral_baselines SET suspended_until = NULL WHERE suspended_until IS NOT NULL AND suspended_until < NOW()`); err != nil {
 					log.Printf("WARN: baseline suspension GC failed: %v", err)
+				}
+				if _, err := bc.db.Exec(`DELETE FROM behavioral_baselines WHERE expires_at IS NOT NULL AND expires_at < NOW()`); err != nil {
+					log.Printf("WARN: expired baseline GC failed: %v", err)
 				}
 			}
 		}
@@ -201,7 +205,7 @@ func (bc *BaselineCollector) backgroundRefresh() {
 func (bc *BaselineCollector) reload(ctx context.Context) error {
 	// Load baselines
 	rows, err := bc.db.QueryContext(ctx,
-		`SELECT id, COALESCE(org_id,'') as org_id, host_id, ai_type, signal_type, pattern, source, hit_count, last_seen, expires_at
+		`SELECT id, COALESCE(org_id,'') as org_id, host_id, ai_type, signal_type, pattern, source, hit_count, last_seen, expires_at, suspended_until
 		 FROM behavioral_baselines`)
 	if err != nil {
 		return fmt.Errorf("query behavioral_baselines: %w", err)
@@ -212,7 +216,7 @@ func (bc *BaselineCollector) reload(ctx context.Context) error {
 	for rows.Next() {
 		var e baselineEntry
 		if err := rows.Scan(&e.ID, &e.OrgID, &e.HostID, &e.AIType,
-			&e.SignalType, &e.Pattern, &e.Source, &e.HitCount, &e.LastSeen, &e.ExpiresAt); err != nil {
+			&e.SignalType, &e.Pattern, &e.Source, &e.HitCount, &e.LastSeen, &e.ExpiresAt, &e.SuspendedUntil); err != nil {
 			continue
 		}
 		orgEntries, ok := byOrg[e.OrgID]
@@ -380,8 +384,8 @@ func (bc *BaselineCollector) Observe(orgID string, evt *event.Event) {
 	}
 
 	// Skip auto-learning files already covered by a parent directory baseline.
-	// e.g. if /home/fulox/go/** is baselined, don't create individual baselines
-	// for /home/fulox/go/pkg/mod/file.go.
+	// e.g. if /home/alice/go/** is baselined, don't create individual baselines
+	// for /home/alice/go/pkg/mod/file.go.
 	if signalType == "file_pattern" {
 		if bc.IsFileBaselined(orgID, hostID, aiType, pattern) {
 			return
@@ -391,29 +395,17 @@ func (bc *BaselineCollector) Observe(orgID string, evt *event.Event) {
 	bc.upsert(orgID, hostID, aiType, signalType, pattern, "observed", nil)
 }
 
-// isExpired checks if a baseline entry should NOT be used for suppression.
-// A baseline is "expired" (inactive) in these cases:
-//  1. It has an expires_at in the FUTURE → it is suspended (temporarily disabled)
-//  2. It has an expires_at in the PAST → the suspension expired AND the GC will
-//     clean it up, but until then treat as expired so it doesn't re-suppress
-//  3. Auto-observed baselines without explicit expiry use a 30-day TTL
-//
-// After a suspension's expires_at passes, the background GC removes the expires_at
-// or deletes the row, and the baseline returns to its normal active state on next reload.
+// isExpired reports whether a cached baseline should currently be ignored.
+// Two independent timers apply: suspended_until (a user paused it) and
+// expires_at (a temporary allow). Auto-observed baselines additionally need a
+// minimum hit count and a recent last_seen.
 func isExpired(entry baselineEntry) bool {
-	if entry.ExpiresAt != nil {
-		// Any baseline with an explicit expires_at is inactive:
-		// - Future expires_at = suspended (user chose to temporarily disable)
-		// - Past expires_at = suspension period over, GC will clean up shortly.
-		//   For suspended baselines (future dates), we clear expires_at on expiry
-		//   so the baseline resumes. Until GC runs, treat as still active after expiry.
-		now := time.Now()
-		if now.Before(*entry.ExpiresAt) {
-			// Suspended: expires_at is in the future → don't match
-			return true
-		}
-		// expires_at is in the past → suspension has ended, baseline is active again
-		return false
+	now := time.Now()
+	if entry.SuspendedUntil != nil && now.Before(*entry.SuspendedUntil) {
+		return true
+	}
+	if entry.ExpiresAt != nil && now.After(*entry.ExpiresAt) {
+		return true
 	}
 	if entry.Source != "user_confirmed" {
 		// Threshold gate: auto-observed baselines require N clean observations
@@ -625,10 +617,10 @@ func (bc *BaselineCollector) IsFileBaselined(orgID, hostID, aiType, filePath str
 
 	// Check 2: Walk up the directory tree checking for glob patterns (/dir/**)
 	// and exact directory paths (/dir/) that may have been confirmed via UI.
-	// e.g. for /home/fulox/.config/Code/settings.json, checks:
-	//   /home/fulox/.config/Code/**  and  /home/fulox/.config/Code/
-	//   /home/fulox/.config/**       and  /home/fulox/.config/
-	//   /home/fulox/**               and  /home/fulox/
+	// e.g. for /home/alice/.config/Code/settings.json, checks:
+	//   /home/alice/.config/Code/**  and  /home/alice/.config/Code/
+	//   /home/alice/.config/**       and  /home/alice/.config/
+	//   /home/alice/**               and  /home/alice/
 	//   /home/**                     and  /home/
 	dir := slashDir(filePath)
 	for dir != "/" && dir != "." {
@@ -636,7 +628,7 @@ func (bc *BaselineCollector) IsFileBaselined(orgID, hostID, aiType, filePath str
 		if bc.checkFileBaseline(orgEntries, dirPattern, hostID, aiType) {
 			return true
 		}
-		// Also check exact directory path (e.g. "/home/fulox/.config/") —
+		// Also check exact directory path (e.g. "/home/alice/.config/") —
 		// baselines confirmed via UI may store the trailing-slash form.
 		dirExact := dir + "/"
 		if bc.checkFileBaseline(orgEntries, dirExact, hostID, aiType) {
@@ -796,7 +788,7 @@ func (bc *BaselineCollector) SuspendBaseline(ctx context.Context, orgID string, 
 		return fmt.Errorf("baseline collector is nil")
 	}
 	res, err := bc.db.ExecContext(ctx,
-		`UPDATE behavioral_baselines SET expires_at = $1 WHERE id = $2 AND org_id = $3`,
+		`UPDATE behavioral_baselines SET suspended_until = $1 WHERE id = $2 AND org_id = $3`,
 		expiresAt, id, orgID)
 	if err != nil {
 		return fmt.Errorf("suspend baseline: %w", err)
@@ -816,7 +808,7 @@ func (bc *BaselineCollector) ConfirmBaseline(ctx context.Context, orgID string, 
 		return fmt.Errorf("baseline collector is nil")
 	}
 	res, err := bc.db.ExecContext(ctx,
-		`UPDATE behavioral_baselines SET source = 'user_confirmed', expires_at = NULL WHERE id = $1 AND org_id = $2`,
+		`UPDATE behavioral_baselines SET source = 'user_confirmed', expires_at = NULL, suspended_until = NULL WHERE id = $1 AND org_id = $2`,
 		id, orgID)
 	if err != nil {
 		return fmt.Errorf("confirm baseline: %w", err)

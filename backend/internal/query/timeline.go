@@ -544,8 +544,10 @@ func nodeToEvent(node neo4jdriver.Node) *event.Event {
 		Type:   getString(props, "type"),
 	}
 
-	// Parse timestamp
-	if tsStr := getString(props, "timestamp"); tsStr != "" {
+	// Parse timestamp (the driver returns time.Time; older nodes may hold strings)
+	if ts := getTime(props, "timestamp"); !ts.IsZero() {
+		evt.Timestamp = ts
+	} else if tsStr := getString(props, "timestamp"); tsStr != "" {
 		if ts, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
 			evt.Timestamp = ts
 		}

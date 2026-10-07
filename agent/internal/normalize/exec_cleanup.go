@@ -29,13 +29,10 @@ func ShouldDropExec(ctx map[string]any) ExecCleanupDecision {
 		return ExecCleanupDecision{Drop: false}
 	}
 
-	// Drop ephemeral shell / runtime helpers
-	if role == "ephemeral" {
-		return ExecCleanupDecision{
-			Drop:   true,
-			Reason: "exec_ephemeral",
-		}
-	}
+	// Ephemeral shells and runtimes (sh -c, python -c) are kept: they are
+	// exactly the execs the backend's pipe-to-shell and unauthorized_exec
+	// rules look at. Only helper bursts are dropped below.
+	_ = role
 
 	// Drop helper forks (gen, fork helpers)
 	if class == "helper" {

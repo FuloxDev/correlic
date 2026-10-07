@@ -345,7 +345,8 @@ CREATE TABLE IF NOT EXISTS behavioral_baselines (
     pattern      TEXT NOT NULL,
     source       TEXT DEFAULT 'observed',
     hit_count    INT DEFAULT 1,
-    expires_at   TIMESTAMPTZ,
+    expires_at   TIMESTAMPTZ,        -- temporary allow: stops matching after this
+    suspended_until TIMESTAMPTZ,     -- user pause: does not match before this
     first_seen   TIMESTAMPTZ DEFAULT NOW(),
     last_seen    TIMESTAMPTZ DEFAULT NOW()
 );
@@ -454,7 +455,7 @@ CREATE TABLE IF NOT EXISTS block_events (
     org_id       TEXT NOT NULL,
     host_id      TEXT NOT NULL,
     agent_id     TEXT NOT NULL DEFAULT '',
-    rule_id      INTEGER NOT NULL REFERENCES block_rules(id) ON DELETE SET NULL,
+    rule_id      INTEGER REFERENCES block_rules(id) ON DELETE SET NULL,
     signal_type  TEXT NOT NULL,
     pid          INTEGER NOT NULL,
     exe_path     TEXT NOT NULL DEFAULT '',

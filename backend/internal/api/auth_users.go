@@ -507,7 +507,13 @@ func (h *PasswordResetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if user == nil {
-		BadRequest(w, "user not found")
+		Unauthorized(w, "invalid credentials")
+		return
+	}
+	// A logged-in user can only rotate their own password. API-key callers
+	// (admins by construction) may reset any account.
+	if actorType, actorID, ok := middleware.ActorFromContext(r.Context()); ok && actorType == "user_session" && actorID != user.ID {
+		Forbidden(w, "you can only change your own password")
 		return
 	}
 

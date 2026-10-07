@@ -120,11 +120,13 @@ func (s *BlockEventStore) List(ctx context.Context, orgID string, hostID string,
 	var out []BlockEvent
 	for rows.Next() {
 		var e BlockEvent
-		if err := rows.Scan(&e.ID, &e.OrgID, &e.HostID, &e.AgentID, &e.RuleID,
+		var ruleID sql.NullInt64 // NULL once the rule has been deleted
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.HostID, &e.AgentID, &ruleID,
 			&e.SignalType, &e.PID, &e.ExePath, &e.Cmdline, &e.Target,
 			&e.AIType, &e.Success, &e.ErrorMsg, &e.LatencyUS, &e.BlockedAt); err != nil {
 			return nil, err
 		}
+		e.RuleID = int(ruleID.Int64)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -163,12 +165,12 @@ func (s *BlockEventStore) CountByRule(ctx context.Context, orgID string, since t
 
 	out := make(map[int]int64)
 	for rows.Next() {
-		var ruleID int
+		var ruleID sql.NullInt64
 		var count int64
 		if err := rows.Scan(&ruleID, &count); err != nil {
 			return nil, err
 		}
-		out[ruleID] = count
+		out[int(ruleID.Int64)] = count
 	}
 	return out, rows.Err()
 }

@@ -150,6 +150,7 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 				"start_time": p.startTime.Format(time.RFC3339Nano),
 				"trace_role": "existing_process",
 				"role":       ebpf.CheckRole(p.comm),
+				"source":     "proc_scanner",
 			}
 			emit("process_exec", payload)
 
@@ -225,6 +226,7 @@ func (s *ProcScanner) harvestAncestors(pid int, emit func(eventType string, payl
 			"start_time": startTime.Format(time.RFC3339Nano),
 			"trace_role": "inferred_ancestor",
 			"role":       ebpf.CheckRole(comm),
+			"source":     "proc_scanner",
 		}
 
 		// Get grandparent for ppid field

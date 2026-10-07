@@ -17,8 +17,8 @@ var escalationCriticalBinaries = map[string]bool{
 	"doas":    true,
 	"nsenter": true,
 	"setpriv": true, // Direct capability/privilege manipulation (util-linux)
-	"runuser": true,  // Run command as another user (RHEL/systemd)
-	"debugfs": true,  // ext filesystem debugger — read/write any file bypassing permissions
+	"runuser": true, // Run command as another user (RHEL/systemd)
+	"debugfs": true, // ext filesystem debugger — read/write any file bypassing permissions
 	// Kernel module loading
 	"modprobe": true,
 	"insmod":   true,
@@ -31,13 +31,13 @@ var escalationCriticalBinaries = map[string]bool{
 
 // escalationHighBinaries are capability/permission manipulation tools.
 var escalationHighBinaries = map[string]bool{
-	"setcap":     true,
-	"capsh":      true,
-	"newgrp":     true, // Switch primary group
-	"sg":         true, // Run command as different group
-	"newuidmap":  true, // User namespace UID mapping — container escape vector
-	"newgidmap":  true, // User namespace GID mapping — container escape vector
-	"chroot":     true, // Filesystem isolation break/escape
+	"setcap":    true,
+	"capsh":     true,
+	"newgrp":    true, // Switch primary group
+	"sg":        true, // Run command as different group
+	"newuidmap": true, // User namespace UID mapping — container escape vector
+	"newgidmap": true, // User namespace GID mapping — container escape vector
+	"chroot":    true, // Filesystem isolation break/escape
 	// Windows LOLBins — legitimate binaries abused for privilege escalation / execution
 	"powershell.exe": true, // PowerShell — especially with -ExecutionPolicy Bypass
 	"pwsh.exe":       true, // PowerShell Core
@@ -292,7 +292,7 @@ func (d *AIPrivilegeEscalation) evaluatePrivilegeUse(ctx *detection.EvalContext)
 		return nil
 	}
 
-	privs, _ := evt.Context["privileges"].([]string)
+	privs := detection.StringSlice(evt.Context["privileges"])
 	if len(privs) == 0 {
 		return nil
 	}
@@ -333,11 +333,13 @@ func (d *AIPrivilegeEscalation) evaluatePrivilegeUse(ctx *detection.EvalContext)
 			Severity:   severity,
 			Confidence: confidence,
 			Context: map[string]any{
-				"ai_type":    aiType,
-				"privileges": allPrivs,
-				"pid":        evt.Process.PID,
-				"user":       evt.Process.User,
-				"mitre":      []string{"T1134", "T1548"},
+				"ai_type":          aiType,
+				"privileges":       allPrivs,
+				"pid":              evt.Process.PID,
+				"user":             evt.Process.User,
+				"signal_type":      "privilege",
+				"pattern":          strings.Join(allPrivs, ","),
+				"mitre_techniques": []string{"T1134", "T1548"},
 			},
 		},
 	}

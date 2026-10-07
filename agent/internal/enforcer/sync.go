@@ -35,7 +35,9 @@ func NewRuleSync(enf *Enforcer, baseURL, apiKey string, interval time.Duration, 
 	cachePath := filepath.Join(homeDir, ".correlic", "block_rules_cache.json")
 
 	if tlsCfg == nil {
-		tlsCfg = &tls.Config{InsecureSkipVerify: true}
+		// No client certificate configured: still verify the server against
+		// the system roots rather than accepting any certificate.
+		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 
 	return &RuleSync{
@@ -80,13 +82,13 @@ func (s *RuleSync) fetchAndUpdate(ctx context.Context) {
 		s.logger.Warn("block rule sync failed, using cached rules", "error", err)
 		return
 	}
-	if version == s.lastVersion {
+	if version != "" && version == s.lastVersion {
 		return // no changes
 	}
 	s.enforcer.UpdateRules(rules)
 	s.lastVersion = version
 	s.saveLocalCache(rules, version)
-	s.logger.Info("block rules synced", "version", version[:20]+"...", "count", len(rules))
+	s.logger.Info("block rules synced", "version", shortVersion(version), "count", len(rules))
 }
 
 func (s *RuleSync) fetchRules(ctx context.Context) ([]BlockRule, string, error) {
@@ -155,4 +157,12 @@ func (s *RuleSync) saveLocalCache(rules []BlockRule, version string) {
 	// Ensure directory exists
 	os.MkdirAll(filepath.Dir(s.cachePath), 0700)
 	os.WriteFile(s.cachePath, data, 0600)
+}
+
+// shortVersion abbreviates a rule-set version for logs.
+func shortVersion(v string) string {
+	if len(v) > 20 {
+		return v[:20] + "..."
+	}
+	return v
 }

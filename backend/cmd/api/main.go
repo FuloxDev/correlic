@@ -692,13 +692,13 @@ func main() {
 		}
 	})))
 
-	mux.Handle("/timeline", api.TimelineHandler(timelineBuilder))
+	mux.Handle("/timeline", wrapAuthed(api.TimelineHandler(timelineBuilder)))
 
 	// Neo4j-powered endpoints (fast graph queries)
 	if timelineService != nil {
-		mux.Handle("/neo4j/timeline", api.TimelineNeo4jHandler(timelineService))
-		mux.Handle("/neo4j/process-tree", api.ProcessTreeHandler(timelineService))
-		mux.Handle("/neo4j/attack-path", api.AttackPathHandler(timelineService))
+		mux.Handle("/neo4j/timeline", wrapAuthed(api.TimelineNeo4jHandler(timelineService)))
+		mux.Handle("/neo4j/process-tree", wrapAuthed(api.ProcessTreeHandler(timelineService)))
+		mux.Handle("/neo4j/attack-path", wrapAuthed(api.AttackPathHandler(timelineService)))
 		// Interactive process timeline (new UI)
 		mux.Handle("/processes/tree", wrapAuthed(api.ProcessTimelineHandler(timelineService)))
 		mux.Handle("/processes/activity", wrapAuthed(api.ProcessActivityHandler(timelineService)))
@@ -710,16 +710,16 @@ func main() {
 		log.Println("Agent activity endpoint enabled: /agents/activity")
 	}
 	if investigationService != nil {
-		mux.Handle("/neo4j/investigation/", api.InvestigationHandler(investigationService))
+		mux.Handle("/neo4j/investigation/", wrapAuthed(api.InvestigationHandler(investigationService)))
 		log.Println("Neo4j investigation endpoints enabled: /neo4j/investigation/*")
 	}
 
-	mux.Handle("/query/containers", api.QueryContainersHandler(queryService))
-	mux.Handle("/query/ports", api.QueryPortsHandler(queryService))
-	mux.Handle("/query/connections", api.QueryConnectionsHandler(queryService))
-	mux.Handle("/query/inbound", api.QueryInboundHandler(queryService))
-	mux.Handle("/query/processes", api.QueryProcessesHandler(queryService))
-	mux.Handle("/process/lifecycles", api.ProcessLifecyclesHandler(canonicalEventStore))
+	mux.Handle("/query/containers", wrapAuthed(api.QueryContainersHandler(queryService)))
+	mux.Handle("/query/ports", wrapAuthed(api.QueryPortsHandler(queryService)))
+	mux.Handle("/query/connections", wrapAuthed(api.QueryConnectionsHandler(queryService)))
+	mux.Handle("/query/inbound", wrapAuthed(api.QueryInboundHandler(queryService)))
+	mux.Handle("/query/processes", wrapAuthed(api.QueryProcessesHandler(queryService)))
+	mux.Handle("/process/lifecycles", wrapAuthed(api.ProcessLifecyclesHandler(canonicalEventStore)))
 
 	mux.Handle(
 		"/agents/",
@@ -751,8 +751,10 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// LLM explain/chat and SSE streams legitimately take longer than the
+		// 15s used by the telemetry plane; provider clients cap at 120s.
+		WriteTimeout: 180 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	tlsEnabled, certFile, keyFile, tlsCfg, err := tlsConfigFromEnv()

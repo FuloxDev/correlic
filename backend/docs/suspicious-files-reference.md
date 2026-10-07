@@ -206,7 +206,7 @@ User watchlist patterns are checked **FIRST**, before built-in patterns, ensurin
 
 ### Code Location
 
-**File:** [`sampling_rules.go`](file:///home/fulox/tmp/correlic/correlic-backend/internal/ingest/sampling_rules.go)
+**File:** [`sampling_rules.go`](../internal/ingest/sampling_rules.go)
 
 **Struct:**
 ```go
@@ -236,7 +236,7 @@ func (r *SamplingRules) IsSuspicious(evt *event.Event) bool {
 
 ### Sampling Order (Security-First)
 
-The sampling logic in [`sampler.go`](file:///home/fulox/tmp/correlic/correlic-backend/internal/ingest/sampler.go) ensures:
+The sampling logic in [`sampler.go`](../internal/ingest/sampler.go) ensures:
 
 1. ✅ Always keep critical event types
 2. ✅ **Check for suspicious activity FIRST** (user watchlist + built-in patterns)

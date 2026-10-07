@@ -46,6 +46,46 @@ func startPlatformCollectors(
 	}
 	go runner.Start(ctx)
 
+	// Process exit is what releases PIDs from the lineage tracker; without it
+	// the tracker only grows and recycled PIDs keep their old AI label.
+	if exitRunner, err := ebpf.NewExitRunner(logger.With("component", "ebpf_exit"), hostID, disp); err != nil {
+		logger.Warn("eBPF exit runner init failed", "error", err)
+	} else {
+		go exitRunner.Start(ctx)
+	}
+
+	if cfg.ForkMonitorEnabled {
+		if forkRunner, err := ebpf.NewForkRunner(emit, logger.With("component", "ebpf_fork"), hostID, disp); err != nil {
+			logger.Warn("eBPF fork runner init failed", "error", err)
+		} else {
+			go forkRunner.Start(ctx)
+		}
+	}
+
+	if cfg.BindMonitorEnabled {
+		if bindRunner, err := ebpf.NewBindRunner(emit, logger.With("component", "ebpf_bind"), hostID, disp); err != nil {
+			logger.Warn("eBPF bind runner init failed", "error", err)
+		} else {
+			go bindRunner.Start(ctx)
+		}
+	}
+
+	if cfg.UnlinkMonitorEnabled {
+		if unlinkRunner, err := ebpf.NewUnlinkRunner(emit, logger.With("component", "ebpf_unlink")); err != nil {
+			logger.Warn("eBPF unlink runner init failed", "error", err)
+		} else {
+			go unlinkRunner.Start(ctx)
+		}
+	}
+
+	if cfg.SetuidMonitorEnabled {
+		if setuidRunner, err := ebpf.NewSetuidRunner(emit, logger.With("component", "ebpf_setuid")); err != nil {
+			logger.Warn("eBPF setuid runner init failed", "error", err)
+		} else {
+			go setuidRunner.Start(ctx)
+		}
+	}
+
 	if cfg.FileMonitorEnabled {
 		if fileRunner, err := ebpf.NewFileRunner(emit, logger.With("component", "ebpf_file"), hostID, disp); err != nil {
 			logger.Warn("eBPF file runner init failed", "error", err)

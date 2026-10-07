@@ -37,12 +37,12 @@ var fileExtNoise = map[string]bool{
 	".a":     true,
 	".dylib": true,
 	// Windows
-	".dll":   true,
-	".pdb":   true,
-	".mui":   true,
-	".nls":   true,
-	".tmp":   true,
-	".log":   true,
+	".dll": true,
+	".pdb": true,
+	".mui": true,
+	".nls": true,
+	".tmp": true,
+	".log": true,
 	// Windows PATHEXT probes — editors check every extension when searching PATH.
 	// Excluded: .js/.jse (legitimate code files that ARE security-relevant)
 	".bat": true,
@@ -84,11 +84,11 @@ type AIFileActivity struct{}
 
 func (d *AIFileActivity) Meta() detection.DetectionMeta {
 	return detection.DetectionMeta{
-		ID:          "ai.file_activity",
-		Pack:        "ai",
-		Name:        "AI File Activity",
-		Severity:    "low",
-		Description: "AI agent accessed a file — tracked for audit visibility until baselined",
+		ID:              "ai.file_activity",
+		Pack:            "ai",
+		Name:            "AI File Activity",
+		Severity:        "low",
+		Description:     "AI agent accessed a file — tracked for audit visibility until baselined",
 		Tags:            []string{"ai", "audit", "file", "activity"},
 		MITRETechniques: []string{"T1083"},
 	}

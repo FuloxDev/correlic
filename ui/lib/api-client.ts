@@ -543,7 +543,8 @@ export interface Baseline {
     hit_count: number
     first_seen: string
     last_seen: string
-    expires_at?: string // ISO 8601, null = permanent
+    expires_at?: string // ISO 8601 "allowed until"; null = permanent
+    suspended_until?: string // ISO 8601 "paused until"; null = active
 }
 
 export async function getBaselines(params: { host_id?: string; signal_type?: string; limit?: number; offset?: number } = {}): Promise<{ baselines: Baseline[]; has_more: boolean }> {
@@ -585,8 +586,8 @@ export async function deleteBaseline(id: number): Promise<void> {
     await fetchJSON(`/api/v1/baselines/${id}`, { method: 'DELETE' })
 }
 
-export async function suspendBaseline(id: number, expiresIn: string): Promise<{ id: number; expires_at: string }> {
-    return fetchJSON<{ id: number; expires_at: string }>(`/api/v1/baselines/${id}`, {
+export async function suspendBaseline(id: number, expiresIn: string): Promise<{ id: number; suspended_until: string }> {
+    return fetchJSON<{ id: number; suspended_until: string }>(`/api/v1/baselines/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ expires_in: expiresIn }),

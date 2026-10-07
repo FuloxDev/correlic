@@ -223,7 +223,7 @@ func extractPatternKey(ctx context.Context, evt *event.Event) string {
 	case "privilege_use":
 		// Dedup by PID + privilege list
 		if evt.Process != nil {
-			if privs, ok := evt.Context["privileges"].([]string); ok {
+			if privs := StringSlice(evt.Context["privileges"]); len(privs) > 0 {
 				return fmt.Sprintf("pid:%d:%s", evt.Process.PID, strings.Join(privs, ","))
 			}
 		}
@@ -238,4 +238,22 @@ func extractPatternKey(ctx context.Context, evt *event.Event) string {
 		}
 	}
 	return ""
+}
+
+// StringSlice returns v as []string, accepting both []string and the []any
+// that encoding/json produces for JSON arrays in Event.Context.
+func StringSlice(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return t
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, x := range t {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }

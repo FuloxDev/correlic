@@ -83,9 +83,13 @@ export default function UserProfileModal({ open, onClose }: UserProfileModalProp
             setProfile(updated)
             setSuccess('Profile updated')
             setTimeout(() => setSuccess(''), 3000)
-        } catch (err: any) {
-            const msg = err?.body ? JSON.parse(err.body)?.error : 'Failed to update profile'
-            setError(msg || 'Failed to update profile')
+        } catch (err: unknown) {
+            let msg = 'Failed to update profile'
+            const body = (err as { body?: string })?.body
+            if (body) {
+                try { msg = JSON.parse(body)?.error || msg } catch { /* non-JSON error body */ }
+            }
+            setError(msg)
         } finally {
             setSaving(false)
         }

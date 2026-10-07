@@ -142,22 +142,22 @@ func (c *UnlinkCollector) Close() error {
 }
 
 // parseUnlinkEvent converts raw bytes from the ring buffer to UnlinkEvent.
-// Layout: pid(4) + ppid(4) + uid(4) + timestamp(8) + dfd(4) + flags(4) + comm(16) + pcomm(16) + path(256) = 316 bytes
+// Layout: pid(4) + ppid(4) + uid(4) + pad(4) + timestamp_ns @16 + dfd @24 + flags @28 + comm @32 + pcomm @48 + path @64 = 320 bytes
 func parseUnlinkEvent(data []byte) (UnlinkEvent, error) {
-	if len(data) < 316 {
-		return UnlinkEvent{}, fmt.Errorf("unlink event too short: %d bytes (expected 316)", len(data))
+	if len(data) < 320 {
+		return UnlinkEvent{}, fmt.Errorf("unlink event too short: %d bytes (expected 320)", len(data))
 	}
 
 	event := UnlinkEvent{
 		PID:         binary.LittleEndian.Uint32(data[0:4]),
 		PPID:        binary.LittleEndian.Uint32(data[4:8]),
 		UID:         binary.LittleEndian.Uint32(data[8:12]),
-		TimestampNs: binary.LittleEndian.Uint64(data[12:20]),
-		DFD:         int32(binary.LittleEndian.Uint32(data[20:24])),
-		Flags:       binary.LittleEndian.Uint32(data[24:28]),
-		Comm:        nullTerminatedString(data[28:44]),
-		ParentComm:  nullTerminatedString(data[44:60]),
-		Path:        nullTerminatedString(data[60:316]),
+		TimestampNs: binary.LittleEndian.Uint64(data[16:24]),
+		DFD:         int32(binary.LittleEndian.Uint32(data[24:28])),
+		Flags:       binary.LittleEndian.Uint32(data[28:32]),
+		Comm:        nullTerminatedString(data[32:48]),
+		ParentComm:  nullTerminatedString(data[48:64]),
+		Path:        nullTerminatedString(data[64:320]),
 	}
 
 	return event, nil

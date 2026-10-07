@@ -97,8 +97,8 @@ func (p *GeminiProvider) Chat(ctx context.Context, req *ChatRequest) (*ChatRespo
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	// Gemini uses API key in URL
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", p.config.BaseURL, model, p.config.APIKey)
+	// Send the API key as a header so it never appears in URLs, logs or error strings.
+	url := fmt.Sprintf("%s/models/%s:generateContent", p.config.BaseURL, model)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -106,6 +106,7 @@ func (p *GeminiProvider) Chat(ctx context.Context, req *ChatRequest) (*ChatRespo
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", p.config.APIKey)
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {

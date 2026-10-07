@@ -124,7 +124,8 @@ func (e *Enforcer) ShouldBlock(signalType, candidate string) (bool, *BlockRule) 
 			}
 			// Also check prefix match for directory globs like "/etc/shadow/**"
 			dir := strings.TrimSuffix(fr.pattern, "/**")
-			if dir != fr.pattern && strings.HasPrefix(candidateLower, strings.ToLower(filepath.ToSlash(dir))) {
+			// A bare "/**" would reduce to an empty prefix and match every file.
+			if dir != fr.pattern && dir != "" && strings.HasPrefix(candidateLower, strings.ToLower(filepath.ToSlash(dir))) {
 				return true, fr.rule
 			}
 		}

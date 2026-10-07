@@ -38,8 +38,11 @@ func (s *DeliveryStore) Enqueue(ctx context.Context, d Delivery) error {
 	return err
 }
 
-// PollPending fetches up to `limit` pending deliveries that are due for delivery.
-// Uses FOR UPDATE SKIP LOCKED to allow concurrent workers without conflicts.
+// PollPending claims up to `limit` pending deliveries that are due. The claim
+// pushes next_attempt_at two minutes ahead in the same statement, so a second
+// worker (the api and telemetry planes both run one) cannot pick the same row;
+// MarkDelivered/MarkFailed/MarkDead then record the outcome. A worker that dies
+// mid-delivery simply lets the row become due again.
 func (s *DeliveryStore) PollPending(ctx context.Context, limit int) ([]Delivery, error) {
 	if s == nil {
 		return nil, nil
@@ -48,13 +51,20 @@ func (s *DeliveryStore) PollPending(ctx context.Context, limit int) ([]Delivery,
 		limit = 10
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, org_id, endpoint_id, reference_type, reference_id, payload, status,
-			   attempts, max_attempts, last_error, next_attempt_at, delivered_at, created_at, updated_at
-		FROM notification_deliveries_v2
-		WHERE status = 'pending' AND next_attempt_at <= now()
-		ORDER BY next_attempt_at ASC
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED
+		WITH due AS (
+			SELECT id
+			FROM notification_deliveries_v2
+			WHERE status = 'pending' AND next_attempt_at <= now()
+			ORDER BY next_attempt_at ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE notification_deliveries_v2 d
+		SET next_attempt_at = now() + interval '2 minutes', updated_at = now()
+		FROM due
+		WHERE d.id = due.id
+		RETURNING d.id, d.org_id, d.endpoint_id, d.reference_type, d.reference_id, d.payload, d.status,
+			   d.attempts, d.max_attempts, d.last_error, d.next_attempt_at, d.delivered_at, d.created_at, d.updated_at
 	`, limit)
 	if err != nil {
 		return nil, err

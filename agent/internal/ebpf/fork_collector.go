@@ -197,11 +197,8 @@ func (c *ForkCollector) updateTree(event ForkEvent) {
 	defer c.mu.Unlock()
 
 	if event.IsExit() {
-		// Mark process as exited
-		if node, ok := c.tree[event.ChildPID]; ok {
-			now := time.Now()
-			node.EndTime = &now
-		}
+		// Forget the process; the tree would otherwise grow without bound.
+		delete(c.tree, event.ChildPID)
 		return
 	}
 

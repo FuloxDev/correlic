@@ -46,7 +46,7 @@ correlic-backend/
 │   ├── config/             # Environment loading
 │   ├── mcp/                # MCP integration
 │   └── tier/               # Tier/subscription logic
-├── migrations/             # 85 SQL migration files
+├── migrations/             # consolidated SQL migrations (schema, seed, incremental)
 ├── docs/                   # Architecture & design docs (start here for AI context)
 │   ├── SYSTEM_REFERENCE.md # Master AI context doc — START HERE
 │   ├── ARCHITECTURE.md     # System design + component overview

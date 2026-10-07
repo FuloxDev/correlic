@@ -289,7 +289,7 @@ func isProjectScope(path string) bool {
 	return strings.HasPrefix(cleanPath, "/home/") ||
 		strings.HasPrefix(cleanPath, "/tmp/") ||
 		strings.HasPrefix(cleanPath, "C:/Users/") || // Windows home directories
-		strings.HasPrefix(cleanPath, "C:/Temp/") ||   // Windows temp
+		strings.HasPrefix(cleanPath, "C:/Temp/") || // Windows temp
 		!strings.HasPrefix(cleanPath, "/")
 }
 

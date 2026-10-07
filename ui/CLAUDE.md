@@ -4,7 +4,7 @@
 Next.js web frontend for security analysts. Displays real-time event timelines, process trees, alerts, and detection rule management.
 
 ## Tech Stack
-- Next.js 14 (App Router), React 18, TypeScript
+- Next.js 16 (App Router), React 19, TypeScript
 - TailwindCSS, React Query (data fetching), Recharts (visualizations), Framer Motion (animations)
 - Auth: session-based (in progress)
 
@@ -47,7 +47,7 @@ const { data } = useQuery(['events'], () =>
 ## Running
 ```bash
 npm install
-npm run dev      # dev server on :3000
+npm run dev      # dev server on :3001
 npm run build    # production build
 npm run lint
 ```

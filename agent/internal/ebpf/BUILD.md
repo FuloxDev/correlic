@@ -17,7 +17,7 @@ Your system already has the required tools:
 This file contains kernel type definitions. Run once per kernel version:
 
 ```bash
-cd /home/fulox/tmp/Correlic-agent
+cd agent
 sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/ebpf/bpf/vmlinux.h
 ```
 
@@ -29,7 +29,7 @@ sudo apt install linux-tools-common linux-tools-$(uname -r)
 ## Step 2: Install Go dependencies
 
 ```bash
-cd /home/fulox/tmp/Correlic-agent
+cd agent
 go mod tidy
 ```
 

@@ -18,7 +18,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-const exitEventSize = 4 + 4 + 4 + 8 + 16 // pid, ppid, exit_code, timestamp_ns, comm[16]
+const exitEventSize = 4 + 4 + 4 + 4 + 8 + 16 // pid, ppid, exit_code, pad(4), timestamp_ns @16, comm[16] @24 = 40
 
 // ExitEvent is a process exit event from the eBPF ring buffer.
 type ExitEvent struct {
@@ -134,12 +134,12 @@ func parseExitEvent(data []byte) (ExitEvent, error) {
 	}
 	// Note: tsNano from eBPF is boot time (bpf_ktime_get_ns), not wall-clock time.
 	// We use time.Now() for wall-clock timestamp, matching exec handler behavior.
-	_ = binary.LittleEndian.Uint64(data[12:20]) // Read but don't use boot time
+	_ = binary.LittleEndian.Uint64(data[16:24]) // Read but don't use boot time
 	return ExitEvent{
 		PID:       int(binary.LittleEndian.Uint32(data[0:4])),
 		PPID:      int(binary.LittleEndian.Uint32(data[4:8])),
 		ExitCode:  int(binary.LittleEndian.Uint32(data[8:12])),
 		Timestamp: time.Now(), // Use wall-clock time, not boot time
-		Comm:      nullTerminatedString(data[20:36]),
+		Comm:      nullTerminatedString(data[24:40]),
 	}, nil
 }

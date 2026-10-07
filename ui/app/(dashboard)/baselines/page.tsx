@@ -106,7 +106,7 @@ interface TreeRowsProps {
     setDeleteTarget: (id: number | null) => void
     setAddDirTarget: (target: { path: string } | null) => void
     formatDate: (dateStr: string) => string
-    formatExpiresAt: (expiresAt?: string) => string | null
+    formatExpiresAt: (expiresAt?: string, suspendedUntil?: string) => string | null
     freshnessColor: (dateStr: string) => string
     isLast?: boolean
 }
@@ -370,7 +370,7 @@ function TreeRows({ node, depth, maxHits, expandedDirs, setExpandedDirs, setSusp
                                         const fileName = baseline.pattern.split('/').pop() || baseline.pattern
                                         const fileHitPct = maxHits > 0 ? (baseline.hit_count / maxHits) * 100 : 0
                                         const fileFresh = freshnessColor(baseline.last_seen)
-                                        const expiryLabel = formatExpiresAt(baseline.expires_at)
+                                        const expiryLabel = formatExpiresAt(baseline.expires_at, baseline.suspended_until)
                                         const isExpiredFile = expiryLabel === 'Expired'
                                         return (
                                             <div
@@ -462,7 +462,7 @@ interface NetworkPortGroupRowProps {
     setSuspendTarget: (id: number) => void
     setDeleteTarget: (id: number | null) => void
     formatDate: (dateStr: string) => string
-    formatExpiresAt: (expiresAt?: string) => string | null
+    formatExpiresAt: (expiresAt?: string, suspendedUntil?: string) => string | null
     freshnessColor: (dateStr: string) => string
     domainMap: Record<string, IPEnrichment>
     domainLoading: Record<string, boolean>
@@ -663,7 +663,7 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                                 {group.subnets.map((entry, i) => {
                                     const subFresh = freshnessColor(entry.baseline.last_seen)
                                     const aiLabel = entry.baseline.ai_type ? aiAgentDisplayName(entry.baseline.ai_type) : null
-                                    const expiryLabel = formatExpiresAt(entry.baseline.expires_at)
+                                    const expiryLabel = formatExpiresAt(entry.baseline.expires_at, entry.baseline.suspended_until)
                                     const isExpired = expiryLabel === 'Expired'
                                     const subHitPct = group.totalHits > 0 ? (entry.baseline.hit_count / group.totalHits) * 100 : 0
                                     return (
@@ -960,7 +960,7 @@ function Baselines() {
     async function handleSuspendBaseline(id: number, expiresIn: string) {
         try {
             const result = await suspendBaseline(id, expiresIn);
-            setBaselines(baselines.map(b => b.id === id ? { ...b, expires_at: result.expires_at } : b));
+            setBaselines(baselines.map(b => b.id === id ? { ...b, suspended_until: result.suspended_until } : b));
         } catch (err) {
             console.error('Failed to suspend baseline:', err);
         }
@@ -1284,10 +1284,22 @@ function Baselines() {
         }
     }
 
-    function formatExpiresAt(expiresAt?: string): string | null {
+    // Label for either timer on a baseline: a user pause (suspended_until) or a
+    // temporary allow (expires_at). Pass the baseline's own fields.
+    function formatExpiresAt(expiresAt?: string, suspendedUntil?: string): string | null {
+        const now = new Date();
+        if (suspendedUntil) {
+            const until = new Date(suspendedUntil);
+            const diff = until.getTime() - now.getTime();
+            if (diff > 0) {
+                const days = Math.ceil(diff / 86400000);
+                if (days <= 1) return 'Suspended until tomorrow';
+                if (days < 7) return `Suspended for ${days}d`;
+                return `Suspended until ${until.toLocaleDateString()}`;
+            }
+        }
         if (!expiresAt) return null;
         const exp = new Date(expiresAt);
-        const now = new Date();
         const diff = exp.getTime() - now.getTime();
         if (diff <= 0) return 'Expired';
         const days = Math.ceil(diff / 86400000);
@@ -1418,7 +1430,7 @@ function Baselines() {
         for (const b of fileBaselines) {
             // Normalize Windows backslash paths to forward-slash
             const normalizedPattern = b.pattern.replace(/\\/g, '/')
-            // Directory wildcard patterns like "/home/fulox/go/**" are directory-level baselines
+            // Directory wildcard patterns like "/home/alice/go/**" are directory-level baselines
             const isDirWildcard = normalizedPattern.endsWith('/**')
             const effectivePath = isDirWildcard ? normalizedPattern.slice(0, -3) : normalizedPattern
             const lastSlash = effectivePath.lastIndexOf('/')
@@ -2142,7 +2154,7 @@ function Baselines() {
                                                     const aiLabel = baseline.ai_type ? aiAgentDisplayName(baseline.ai_type) : null;
                                                     const hitPct = maxHits > 0 ? (baseline.hit_count / maxHits) * 100 : 0;
                                                     const freshColor = freshnessColor(baseline.last_seen);
-                                                    const expiryLabel = formatExpiresAt(baseline.expires_at);
+                                                    const expiryLabel = formatExpiresAt(baseline.expires_at, baseline.suspended_until);
                                                     const isExpired = expiryLabel === 'Expired';
                                                     return (
                                                         <div key={`${section.key}-${baseline.id}-${idx}`} className="flex items-center px-5 py-3 hover:bg-white/[0.03] transition-colors">
@@ -2440,7 +2452,7 @@ function Baselines() {
                                                             <div className="divide-y divide-white/[0.04]">
                                                                 {rows.map((baseline, idx) => {
                                                                     const aiLabel = baseline.ai_type ? aiAgentDisplayName(baseline.ai_type) : null;
-                                                                    const expiryLabel = formatExpiresAt(baseline.expires_at);
+                                                                    const expiryLabel = formatExpiresAt(baseline.expires_at, baseline.suspended_until);
                                                                     return (
                                                                         <div key={`susp-${baseline.id}-${idx}`} className="flex items-center px-5 py-3 hover:bg-white/[0.03] transition-colors">
                                                                             <div className="flex-1 min-w-0">

@@ -101,6 +101,7 @@ func (s *ProcScanner) scanInternal(emit func(eventType string, payload any) bool
 				"start_time": time.Now().Format(time.RFC3339Nano),
 				"trace_role": "existing_process",
 				"role":       classify.CheckRole(p.comm),
+				"source":     "proc_scanner",
 			}
 			emit("process_exec", payload)
 		}

@@ -184,8 +184,8 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
     for (int i = 0; i < 256; i++) {
         e->filename[i] = filename_buf[i];
     }
-    // Ensure null termination
-    e->filename[127] = 0;
+    // Ensure null termination (buffer is 256 bytes)
+    e->filename[255] = 0;
     
     // Submit event
     bpf_ringbuf_submit(e, 0);

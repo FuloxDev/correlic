@@ -420,7 +420,7 @@ This enables Linux-native detection patterns to work on Windows:
 - `/.aws/` matches `C:/Users/admin/.aws/credentials`
 - `.env` matches `C:/projects/app/.env`
 
-**Case-insensitive baseline matching:** The baseline cache uses `strings.ToLower()` on file-related patterns so `C:/Users/Fulox/.claude/**` matches `C:/users/fulox/.claude/file.json`. This is essential because Windows is case-insensitive but different API calls may return different casings.
+**Case-insensitive baseline matching:** The baseline cache uses `strings.ToLower()` on file-related patterns so `C:/Users/alice/.claude/**` matches `C:/users/alice/.claude/file.json`. This is essential because Windows is case-insensitive but different API calls may return different casings.
 
 ---
 

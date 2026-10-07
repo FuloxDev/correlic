@@ -40,7 +40,7 @@ var tier1SensitiveDirs = []string{
 	"/etc/sudoers.d/",
 	"/run/secrets/",
 	// Windows DPAPI and Credential Manager
-	"/AppData/Roaming/Microsoft/Protect/",  // DPAPI master keys
+	"/AppData/Roaming/Microsoft/Protect/",   // DPAPI master keys
 	"/AppData/Local/Microsoft/Credentials/", // Windows Credential Manager
 }
 
@@ -75,14 +75,14 @@ var tier2SensitiveDirs = []string{}
 
 // tier2SensitiveBasenames are exact basenames that are Tier 2 sensitive regardless of directory.
 var tier2SensitiveBasenames = map[string]bool{
-	".env":             true,
-	".netrc":           true,
-	".npmrc":           true,
-	".pypirc":          true,
-	".git-credentials": true, // Git credential store (plaintext)
-	".boto":            true, // GCS credentials
-	".s3cfg":           true, // S3 credentials
-	".dockercfg":       true, // Legacy Docker auth
+	".env":              true,
+	".netrc":            true,
+	".npmrc":            true,
+	".pypirc":           true,
+	".git-credentials":  true, // Git credential store (plaintext)
+	".boto":             true, // GCS credentials
+	".s3cfg":            true, // S3 credentials
+	".dockercfg":        true, // Legacy Docker auth
 	"terraform.tfstate": true, // Contains plaintext secrets
 }
 

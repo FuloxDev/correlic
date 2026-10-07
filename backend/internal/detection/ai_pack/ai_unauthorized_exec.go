@@ -43,17 +43,17 @@ var mitreTechForBinary = map[string][]string{
 	// Data transfer / exfil — T1048 Exfiltration Over Alternative Protocol
 	"rclone": {"T1048"}, "rsync": {"T1048"},
 	// Windows LOLBins
-	"certutil.exe":  {"T1140"},           // Deobfuscate/Decode Files
-	"bitsadmin.exe": {"T1197"},           // BITS Jobs
-	"mshta.exe":     {"T1218"},           // System Binary Proxy Execution
-	"regsvr32.exe":  {"T1218"},           // System Binary Proxy Execution
-	"rundll32.exe":  {"T1218"},           // System Binary Proxy Execution
-	"net.exe":       {"T1136"},           // Create Account
-	"net1.exe":      {"T1136"},           // Create Account
-	"schtasks.exe":  {"T1053.005"},       // Scheduled Task
-	"sc.exe":        {"T1543.003"},       // Windows Service
-	"reg.exe":       {"T1112"},           // Modify Registry
-	"wevtutil.exe":  {"T1070.001"},       // Clear Windows Event Logs
+	"certutil.exe":  {"T1140"},     // Deobfuscate/Decode Files
+	"bitsadmin.exe": {"T1197"},     // BITS Jobs
+	"mshta.exe":     {"T1218"},     // System Binary Proxy Execution
+	"regsvr32.exe":  {"T1218"},     // System Binary Proxy Execution
+	"rundll32.exe":  {"T1218"},     // System Binary Proxy Execution
+	"net.exe":       {"T1136"},     // Create Account
+	"net1.exe":      {"T1136"},     // Create Account
+	"schtasks.exe":  {"T1053.005"}, // Scheduled Task
+	"sc.exe":        {"T1543.003"}, // Windows Service
+	"reg.exe":       {"T1112"},     // Modify Registry
+	"wevtutil.exe":  {"T1070.001"}, // Clear Windows Event Logs
 }
 
 // suspiciousBinaries are binaries that AI agents should not typically run.
@@ -253,13 +253,13 @@ func (d *AIUnauthorizedExec) Evaluate(ctx *detection.EvalContext) []detection.Fi
 					Severity:   "low",
 					Confidence: 0.30,
 					Context: map[string]any{
-						"ai_type":         aiType,
-						"binary":          binaryName,
-						"cmdline":         cmdline,
-						"match_type":      "registry_query",
-						"signal_type":     "command",
-						"pattern":         truncate(cmdline, 200),
-						"mitre":           []string{"T1012"},
+						"ai_type":          aiType,
+						"binary":           binaryName,
+						"cmdline":          cmdline,
+						"match_type":       "registry_query",
+						"signal_type":      "command",
+						"pattern":          truncate(cmdline, 200),
+						"mitre_techniques": []string{"T1012"},
 					},
 				},
 			}

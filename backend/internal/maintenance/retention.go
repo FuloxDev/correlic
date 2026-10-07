@@ -11,20 +11,20 @@ import (
 
 // RetentionConfig controls how long data is kept before cleanup.
 type RetentionConfig struct {
-	EventRetentionDays  int
-	FindingRetentionDays int
+	EventRetentionDays    int
+	FindingRetentionDays  int
 	IncidentRetentionDays int
-	CleanupInterval     time.Duration
+	CleanupInterval       time.Duration
 }
 
 // LoadRetentionConfig reads retention settings from environment variables,
 // falling back to sensible defaults.
 func LoadRetentionConfig() RetentionConfig {
 	cfg := RetentionConfig{
-		EventRetentionDays:   30,
-		FindingRetentionDays: 90,
+		EventRetentionDays:    30,
+		FindingRetentionDays:  90,
 		IncidentRetentionDays: 365,
-		CleanupInterval:      1 * time.Hour,
+		CleanupInterval:       1 * time.Hour,
 	}
 	if v := os.Getenv("RETENTION_EVENTS_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -82,18 +82,20 @@ func runCleanup(ctx context.Context, db *sql.DB, cfg RetentionConfig) {
 		name      string
 		tsColumn  string
 		retention int
+		extra     string // additional predicate
 	}{
-		{"telemetry_events", "received_at", 1}, // 1-day retention — largest table, readers only need recent data
-		{"events", "ts", cfg.EventRetentionDays},
-		{"findings", "created_at", cfg.FindingRetentionDays},
-		{"incidents", "created_at", cfg.IncidentRetentionDays},
-		{"behavioral_baselines", "last_seen", cfg.FindingRetentionDays},
+		{"telemetry_events", "received_at", 1, ""}, // 1-day retention — largest table, readers only need recent data
+		{"events", "ts", cfg.EventRetentionDays, ""},
+		{"findings", "created_at", cfg.FindingRetentionDays, ""},
+		{"incidents", "created_at", cfg.IncidentRetentionDays, ""},
+		// Auto-observed baselines age out; ones a user confirmed are permanent.
+		{"behavioral_baselines", "last_seen", cfg.FindingRetentionDays, " AND source <> 'user_confirmed'"},
 	}
 
 	for _, t := range tables {
 		cutoff := time.Now().AddDate(0, 0, -t.retention)
 		res, err := db.ExecContext(ctx,
-			"DELETE FROM "+t.name+" WHERE "+t.tsColumn+" < $1", cutoff)
+			"DELETE FROM "+t.name+" WHERE "+t.tsColumn+" < $1"+t.extra, cutoff)
 		if err != nil {
 			log.Printf("retention cleanup %s: %v", t.name, err)
 			continue

@@ -184,22 +184,36 @@ func (w *Worker) getActiveHosts(ctx context.Context, since time.Time) []hostEntr
 		return nil
 	}
 
-	// Step 2: look up org_id from ai_agent_sessions (stable, always has org_id)
-	var orgID string
-	err = w.db.QueryRowContext(ctx, `
-		SELECT org_id FROM ai_agent_sessions
-		ORDER BY last_seen_at DESC LIMIT 1
-	`).Scan(&orgID)
-	if err != nil {
-		// Fallback: try organizations table
-		_ = w.db.QueryRowContext(ctx, `
-			SELECT id FROM organizations LIMIT 1
-		`).Scan(&orgID)
+	// Step 2: map each host to its org. The live-ingest path writes
+	// telemetry_events with agent_id = host_id, so that table carries the
+	// per-host org. Fall back to the first org for hosts without a match.
+	orgByHost := make(map[string]string, len(hostIDs))
+	if orgRows, err := w.db.QueryContext(ctx, `
+		SELECT DISTINCT agent_id, org_id::text
+		FROM telemetry_events
+		WHERE received_at >= $1 AND agent_id = ANY($2)
+	`, since, hostIDs); err == nil {
+		for orgRows.Next() {
+			var hid, oid string
+			if err := orgRows.Scan(&hid, &oid); err == nil {
+				orgByHost[hid] = oid
+			}
+		}
+		orgRows.Close()
 	}
+	var fallbackOrg string
+	_ = w.db.QueryRowContext(ctx, `SELECT id::text FROM organizations ORDER BY created_at ASC LIMIT 1`).Scan(&fallbackOrg)
 
 	var hosts []hostEntry
 	for _, hid := range hostIDs {
-		hosts = append(hosts, hostEntry{orgID: orgID, hostID: hid})
+		oid := orgByHost[hid]
+		if oid == "" {
+			oid = fallbackOrg
+		}
+		if oid == "" {
+			continue
+		}
+		hosts = append(hosts, hostEntry{orgID: oid, hostID: hid})
 	}
 	return hosts
 }

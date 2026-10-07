@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -29,7 +30,7 @@ func NewGoogleAuthHandler(store storage.UserStore, googleClientID string) *Googl
 }
 
 type googleTokenInfo struct {
-	Sub           string `json:"sub"`            // Unique Google user ID
+	Sub           string `json:"sub"` // Unique Google user ID
 	Email         string `json:"email"`
 	EmailVerified string `json:"email_verified"` // "true" or "false"
 	Name          string `json:"name"`
@@ -70,6 +71,10 @@ func (h *GoogleAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if info.Email == "" || info.Sub == "" {
 		Unauthorized(w, "missing email or sub in token")
+		return
+	}
+	if info.EmailVerified != "true" {
+		Unauthorized(w, "google account email is not verified")
 		return
 	}
 
@@ -160,7 +165,8 @@ func (h *GoogleAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // verifyGoogleToken validates a Google ID token using Google's tokeninfo endpoint.
 func verifyGoogleToken(idToken string) (*googleTokenInfo, error) {
-	resp, err := http.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + idToken)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.PostForm("https://oauth2.googleapis.com/tokeninfo", url.Values{"id_token": {idToken}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify token: %w", err)
 	}

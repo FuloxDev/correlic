@@ -41,6 +41,12 @@ func (s *HTTPSink) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Best-effort final flush so buffered events survive a shutdown.
+			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			s.mu.Lock()
+			_ = s.flush(flushCtx)
+			s.mu.Unlock()
+			cancel()
 			return
 		case <-ticker.C:
 			s.mu.Lock()

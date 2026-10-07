@@ -9,14 +9,14 @@ import (
 )
 
 func TestParseExitEvent(t *testing.T) {
-	// Layout: pid(4) + ppid(4) + exit_code(4) + timestamp_ns(8) + comm(16) = 36 bytes
+	// Layout: pid(4) + ppid(4) + exit_code(4) + pad(4) + timestamp_ns(8) @16 + comm(16) @24 = 40 bytes
 	base := time.Unix(0, 1706702400000000000) // boot-time placeholder; parser uses wall-clock time
 	data := make([]byte, exitEventSize)
 	binary.LittleEndian.PutUint32(data[0:4], 100)
 	binary.LittleEndian.PutUint32(data[4:8], 1)
 	binary.LittleEndian.PutUint32(data[8:12], 0)
-	binary.LittleEndian.PutUint64(data[12:20], uint64(base.UnixNano()))
-	copy(data[20:36], []byte("sleep\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+	binary.LittleEndian.PutUint64(data[16:24], uint64(base.UnixNano()))
+	copy(data[24:40], []byte("sleep\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
 
 	ev, err := parseExitEvent(data)
 	if err != nil {

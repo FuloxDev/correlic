@@ -198,10 +198,10 @@ func (c *SetuidCollector) Close() error {
 }
 
 // parseSetuidEvent converts raw bytes from the ring buffer to SetuidEvent.
-// Layout: pid(4) + ppid(4) + old_uid(4) + old_euid(4) + new_uid(4) + new_euid(4) + new_suid(4) + timestamp(8) + syscall_type(1) + pad(3) + comm(16) + pcomm(16) = 72 bytes
+// Layout: 7×u32 (0..27) + pad(4) + timestamp_ns @32 + syscall_type @40 + comm @41 + pcomm @57 = 73 bytes, padded to 80
 func parseSetuidEvent(data []byte) (SetuidEvent, error) {
-	if len(data) < 72 {
-		return SetuidEvent{}, fmt.Errorf("setuid event too short: %d bytes (expected 72)", len(data))
+	if len(data) < 73 {
+		return SetuidEvent{}, fmt.Errorf("setuid event too short: %d bytes (expected 80)", len(data))
 	}
 
 	event := SetuidEvent{
@@ -212,10 +212,10 @@ func parseSetuidEvent(data []byte) (SetuidEvent, error) {
 		NewUID:      binary.LittleEndian.Uint32(data[16:20]),
 		NewEUID:     binary.LittleEndian.Uint32(data[20:24]),
 		NewSUID:     binary.LittleEndian.Uint32(data[24:28]),
-		TimestampNs: binary.LittleEndian.Uint64(data[28:36]),
-		SyscallType: data[36],
-		Comm:        nullTerminatedString(data[40:56]),
-		ParentComm:  nullTerminatedString(data[56:72]),
+		TimestampNs: binary.LittleEndian.Uint64(data[32:40]),
+		SyscallType: data[40],
+		Comm:        nullTerminatedString(data[41:57]),
+		ParentComm:  nullTerminatedString(data[57:73]),
 	}
 
 	return event, nil

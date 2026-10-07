@@ -14,8 +14,8 @@ func TestShouldDropExec(t *testing.T) {
 		expectedReason string
 	}{
 		{"primary entrypoint keep", "primary", "entrypoint", true, false, ""},
-		{"shell ephemeral drop", "shell", "ephemeral", true, true, "exec_ephemeral"},
-		{"runtime ephemeral drop", "runtime", "ephemeral", true, true, "exec_ephemeral"},
+		{"shell ephemeral kept (pipe-to-shell visibility)", "shell", "ephemeral", true, false, ""},
+		{"runtime ephemeral kept", "runtime", "ephemeral", true, false, ""},
 		{"helper fork drop", "helper", "fork", true, true, "exec_helper_burst"},
 		{"unknown unknown keep", "unknown", "unknown", true, false, ""},
 		{"not normalized keep", "helper", "fork", false, false, ""},

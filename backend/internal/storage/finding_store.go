@@ -425,7 +425,7 @@ func (s *FindingStore) AutoResolveByBaseline(orgID, hostID, signalType, pattern 
 
 	if dirPrefix != "" && (signalType == "file_pattern" || signalType == "file_activity") {
 		// file directory glob: match across all file-related signal types.
-		// The finding's pattern is the exact file path (e.g. /home/fulox/.next/.../file.js)
+		// The finding's pattern is the exact file path (e.g. /home/alice/.next/.../file.js)
 		// so we match with LIKE dirPrefix% to catch all files under the directory.
 		rows, err = s.db.Query(`
 			WITH resolved AS (

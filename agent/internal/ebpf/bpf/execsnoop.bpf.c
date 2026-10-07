@@ -111,12 +111,14 @@ static __always_inline int __tracepoint__syscalls__sys_enter_exec(struct trace_e
         int sz = 0;
         int offset = e->args_size;
         
-        // Strictly bound the offset for the verifier
-        if (offset > TOTAL_MAX_ARGS_LEN - MAX_ARG_LEN) {
+        // The mask below only preserves offsets up to 511, so stop collecting
+        // once the buffer is past that point instead of wrapping onto argv[0].
+        // (511 + MAX_ARG_LEN = 767 < TOTAL_MAX_ARGS_LEN, so the read stays in bounds.)
+        if (offset > 511) {
             break;
         }
         
-        // Inform verifier that offset is bounded below 512 + 256 = 768 <= 1024
+        // Inform verifier that offset is bounded: 511 + 256 = 767 <= 1024
         offset &= 511;
         
         sz = bpf_probe_read_user_str(&e->args[offset], MAX_ARG_LEN, argp);

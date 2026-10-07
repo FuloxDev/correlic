@@ -240,6 +240,7 @@ services:
     image: ghcr.io/correlic/correlic-ui-proxy:latest
     environment:
       PORT: 8788
+      BIND_HOST: 0.0.0.0
       BACKEND_API: https://backend-api:8080
       API_KEY: ${API_KEY:-}
       UI_ORIGIN: http://ui:3001

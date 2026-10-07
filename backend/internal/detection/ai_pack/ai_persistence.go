@@ -10,9 +10,9 @@ import (
 
 // persistenceCriticalPaths are exact file paths that represent critical persistence mechanisms.
 var persistenceCriticalPaths = map[string]bool{
-	"/etc/crontab":      true,
-	"/etc/sudoers":      true,
-	"/etc/rc.local":     true,
+	"/etc/crontab":       true,
+	"/etc/sudoers":       true,
+	"/etc/rc.local":      true,
 	"/etc/ld.so.preload": true, // LD_PRELOAD hijacking — loads .so into every process (T1574.006)
 	"/etc/ld.so.conf":    true, // Shared library search path manipulation
 	"/etc/environment":   true, // System-wide env vars, persists across reboots
@@ -33,8 +33,8 @@ var persistenceCriticalDirs = []string{
 	"/etc/ld.so.conf.d/",   // Shared library search path directories
 	"/etc/modules-load.d/", // Kernel module autoload at boot
 	// Windows persistence directories (paths normalized to forward slashes by agent)
-	"C:/Windows/System32/Tasks/",         // Scheduled Tasks XML definitions
-	"C:/Windows/System32/GroupPolicy/",   // Group Policy scripts
+	"C:/Windows/System32/Tasks/",       // Scheduled Tasks XML definitions
+	"C:/Windows/System32/GroupPolicy/", // Group Policy scripts
 }
 
 // persistenceHighDirs are directory segments that indicate high-severity persistence.
@@ -43,11 +43,11 @@ var persistenceHighDirs = []string{
 	"/.git/hooks/",
 	"/etc/systemd/system/",
 	"/.config/systemd/user/",
-	"/etc/security/",              // PAM limits/access.conf
-	"/etc/modprobe.d/",            // Kernel module autoload rules
-	"/etc/apt/apt.conf.d/",        // APT hooks — run code on package operations
-	"/etc/xdg/autostart/",         // Desktop autostart (T1547.001)
-	"/.config/autostart/",         // User-level desktop autostart
+	"/etc/security/",       // PAM limits/access.conf
+	"/etc/modprobe.d/",     // Kernel module autoload rules
+	"/etc/apt/apt.conf.d/", // APT hooks — run code on package operations
+	"/etc/xdg/autostart/",  // Desktop autostart (T1547.001)
+	"/.config/autostart/",  // User-level desktop autostart
 	// Windows startup folders (paths normalized to forward slashes by agent)
 	"/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/", // User startup
 	"C:/ProgramData/Microsoft/Windows/Start Menu/Programs/Startup/",   // All-users startup
@@ -87,20 +87,20 @@ var persistenceMediumBasenames = map[string]bool{
 
 // persistenceCriticalCmds are binaries that directly manipulate persistence (critical severity).
 var persistenceCriticalCmds = map[string]bool{
-	"crontab":       true,
-	"update-rc.d":   true,
-	"chkconfig":     true, // RHEL/CentOS service persistence
+	"crontab":     true,
+	"update-rc.d": true,
+	"chkconfig":   true, // RHEL/CentOS service persistence
 	// Windows persistence commands
-	"schtasks.exe":  true, // Windows Task Scheduler CLI
-	"sc.exe":        true, // Service Control manager — create/modify services
-	"reg.exe":       true, // Registry manipulation — Run keys, services
+	"schtasks.exe": true, // Windows Task Scheduler CLI
+	"sc.exe":       true, // Service Control manager — create/modify services
+	"reg.exe":      true, // Registry manipulation — Run keys, services
 }
 
 // persistenceHighCmds are binaries for scheduling (high severity).
 var persistenceHighCmds = map[string]bool{
-	"at":       true,
-	"batch":    true,
-	"at.exe":   true, // Legacy Windows task scheduler
+	"at":     true,
+	"batch":  true,
+	"at.exe": true, // Legacy Windows task scheduler
 }
 
 // AIPersistence detects AI agent access to persistence-sensitive locations
@@ -225,13 +225,15 @@ func (d *AIPersistence) evaluateRegistryWrite(ctx *detection.EvalContext, aiType
 			Severity:   severity,
 			Confidence: confidence,
 			Context: map[string]any{
-				"ai_type":   aiType,
-				"reg_key":   regKey,
-				"reg_value": regValue,
-				"new_value": newVal,
-				"pid":       evt.Process.PID,
-				"comm":      evt.Process.Comm,
-				"mitre":     mitre,
+				"ai_type":          aiType,
+				"reg_key":          regKey,
+				"reg_value":        regValue,
+				"new_value":        newVal,
+				"pid":              evt.Process.PID,
+				"comm":             evt.Process.Comm,
+				"signal_type":      "registry_key",
+				"pattern":          regKey,
+				"mitre_techniques": mitre,
 			},
 		},
 	}

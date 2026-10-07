@@ -59,7 +59,7 @@ func ReadinessHandler(db *sql.DB) http.HandlerFunc {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(ReadinessResponse{
 				Status:   "degraded",
-				Postgres: err.Error(),
+				Postgres: "unavailable",
 			})
 			return
 		}

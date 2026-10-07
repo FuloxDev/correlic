@@ -16,7 +16,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: `
           (function(){
             try {
-              var t = localStorage.getItem('correlix-theme') || 'correlic-purple';
+              var t = localStorage.getItem('correlic-theme') || 'correlic-purple';
               document.documentElement.setAttribute('data-theme', t);
               var f = localStorage.getItem('correlix-font') || 'Space Grotesk';
               document.documentElement.style.setProperty('--active-font', f);

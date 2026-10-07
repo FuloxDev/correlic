@@ -18,10 +18,10 @@ type NeverBaselineChecker interface {
 // SystemNeverBaselineEntry represents a single hardcoded never-baseline rule
 // for display on the Never Baseline management page.
 type SystemNeverBaselineEntry struct {
-	SignalType  string `json:"signal_type"`
+	SignalType string `json:"signal_type"`
 	Pattern    string `json:"pattern"`
-	Category   string `json:"category"`  // "file_suffix", "file_dir", "file_name", "port", "domain", "binary"
-	Source     string `json:"source"`    // always "system"
+	Category   string `json:"category"` // "file_suffix", "file_dir", "file_name", "port", "domain", "binary"
+	Source     string `json:"source"`   // always "system"
 }
 
 // SystemNeverBaselineEntries returns all hardcoded never-baseline rules as structs
@@ -90,7 +90,7 @@ var neverBaselineFileNames = []string{
 
 // neverBaselineExactParentDirs are directories where files directly inside them should
 // never be baselined, but files in deeper subdirectories are OK.
-// E.g. "/home/CLAUDE.md" is blocked but "/home/fulox/project/file.go" is allowed.
+// E.g. "/home/CLAUDE.md" is blocked but "/home/alice/project/file.go" is allowed.
 var neverBaselineExactParentDirs = []string{
 	"/home",
 	"/tmp",
@@ -201,7 +201,7 @@ var neverBaselineBinaries = map[string]bool{
 	"nft":       true,
 
 	// Data transfer tools
-	"rclone": true,
+	"rclone":  true,
 	"sshpass": true,
 }
 
@@ -286,8 +286,14 @@ func isNeverBaselinePatternHardcoded(signalType, pattern string) bool {
 			}
 		}
 
-	case "binary":
-		basename := filepath.Base(pattern)
+	case "binary", "command", "command_binary", "escalation_cmd", "persistence_cmd", "discovery_cmd":
+		// Exec rules store the (truncated) cmdline as the pattern, so look at
+		// the first token; a bare binary name still works.
+		first := pattern
+		if fields := strings.Fields(pattern); len(fields) > 0 {
+			first = fields[0]
+		}
+		basename := strings.ToLower(strings.TrimSuffix(filepath.Base(first), ".exe"))
 		if neverBaselineBinaries[basename] {
 			return true
 		}
@@ -369,8 +375,8 @@ func isNeverBaselineFile(evt *event.Event) bool {
 }
 
 // isDirectlyInUserHome returns true if path is a file sitting directly inside
-// /home/<user>/ (depth=3, e.g. /home/fulox/.npmrc) but NOT deeper paths
-// like /home/fulox/projects/file.go.
+// /home/<user>/ (depth=3, e.g. /home/alice/.npmrc) but NOT deeper paths
+// like /home/alice/projects/file.go.
 func isDirectlyInUserHome(path string) bool {
 	if !strings.HasPrefix(path, "/home/") {
 		return false

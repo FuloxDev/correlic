@@ -17,10 +17,10 @@ const discoveryThreshold = 3 // need at least 3 recon commands in the window
 // Individually low-severity, but a burst indicates pre-attack enumeration.
 var discoveryBinaries = map[string]bool{
 	// System info
-	"whoami":   true,
-	"id":       true,
-	"hostname": true,
-	"uname":    true,
+	"whoami":      true,
+	"id":          true,
+	"hostname":    true,
+	"uname":       true,
 	"hostnamectl": true,
 
 	// Environment enumeration
@@ -28,16 +28,16 @@ var discoveryBinaries = map[string]bool{
 	"printenv": true,
 
 	// Network reconnaissance
-	"ifconfig":  true,
-	"ip":        true,
-	"ss":        true,
-	"netstat":   true,
-	"arp":       true,
-	"route":     true,
+	"ifconfig":   true,
+	"ip":         true,
+	"ss":         true,
+	"netstat":    true,
+	"arp":        true,
+	"route":      true,
 	"traceroute": true,
-	"dig":       true,
-	"nslookup":  true,
-	"host":      true,
+	"dig":        true,
+	"nslookup":   true,
+	"host":       true,
 
 	// Process enumeration
 	"ps":     true,
@@ -59,10 +59,10 @@ var discoveryBinaries = map[string]bool{
 	"getent": true,
 
 	// System capability enumeration
-	"getcap":  true,
-	"find":    true, // only counted, not standalone trigger
-	"cat":     true, // only counted, not standalone trigger
-	"ls":      true, // only counted, not standalone trigger
+	"getcap": true,
+	"find":   true, // only counted, not standalone trigger
+	"cat":    true, // only counted, not standalone trigger
+	"ls":     true, // only counted, not standalone trigger
 
 	// Windows system enumeration equivalents
 	"ipconfig.exe":   true,
@@ -83,15 +83,15 @@ var discoveryBinaries = map[string]bool{
 
 // discoveryHighValueBinaries always fire when run by AI, even standalone.
 var discoveryHighValueBinaries = map[string]bool{
-	"nmap":     true, // Network scanner — always suspicious for AI
-	"masscan":  true, // Fast port scanner
-	"zmap":     true, // Internet-wide scanner
-	"nikto":    true, // Web vulnerability scanner
-	"gobuster": true, // Directory brute-forcer
-	"dirb":     true, // Directory scanner
+	"nmap":       true, // Network scanner — always suspicious for AI
+	"masscan":    true, // Fast port scanner
+	"zmap":       true, // Internet-wide scanner
+	"nikto":      true, // Web vulnerability scanner
+	"gobuster":   true, // Directory brute-forcer
+	"dirb":       true, // Directory scanner
 	"enum4linux": true, // SMB enumeration
-	"linpeas":  true, // Linux privilege escalation scanner
-	"pspy":     true, // Process spy without root
+	"linpeas":    true, // Linux privilege escalation scanner
+	"pspy":       true, // Process spy without root
 }
 
 // discoveryTargetFiles are files commonly read during reconnaissance.
@@ -285,13 +285,13 @@ func (d *AIDiscovery) Evaluate(ctx *detection.EvalContext) []detection.Finding {
 	}
 
 	fctx := map[string]any{
-		"ai_type":           aiType,
-		"pid":               evt.Process.PID,
+		"ai_type":            aiType,
+		"pid":                evt.Process.PID,
 		"discovery_commands": cmds,
-		"command_count":     len(discoveryCommands),
-		"window_secs":       int(discoveryWindow.Seconds()),
-		"signal_type":       "discovery_burst",
-		"pattern":           fmt.Sprintf("pid:%d:discovery:%d", evt.Process.PID, len(discoveryCommands)),
+		"command_count":      len(discoveryCommands),
+		"window_secs":        int(discoveryWindow.Seconds()),
+		"signal_type":        "discovery_burst",
+		"pattern":            fmt.Sprintf("pid:%d:discovery:%d", evt.Process.PID, len(discoveryCommands)),
 	}
 	if evt.Process.SessionID != "" {
 		fctx["session_id"] = evt.Process.SessionID

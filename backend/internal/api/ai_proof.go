@@ -289,6 +289,7 @@ func (h *AIProofHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type aiProofComputed struct {
+	secretIndex  map[string]AIProofResponseFindingsSecrets // latest secret-file hit per path
 	secrets      []AIProofResponseFindingsSecrets
 	exposedPorts []AIProofResponseFindingsExposedPorts
 	execList     []AIProofResponseFindingsExecs
@@ -973,14 +974,10 @@ func addSecretByPath(out *aiProofComputed, path, category, eventID string, ts ti
 	if out == nil {
 		return
 	}
-	if outSecretIndex == nil {
-		outSecretIndex = make(map[*aiProofComputed]map[string]AIProofResponseFindingsSecrets, 4)
+	if out.secretIndex == nil {
+		out.secretIndex = make(map[string]AIProofResponseFindingsSecrets, 64)
 	}
-	m := outSecretIndex[out]
-	if m == nil {
-		m = make(map[string]AIProofResponseFindingsSecrets, 64)
-		outSecretIndex[out] = m
-	}
+	m := out.secretIndex
 	cur, ok := m[path]
 	next := AIProofResponseFindingsSecrets{
 		Path:     path,
@@ -1006,8 +1003,6 @@ func addSecretByPath(out *aiProofComputed, path, category, eventID string, ts ti
 		out.secrets = append(out.secrets, m[path])
 	}
 }
-
-var outSecretIndex map[*aiProofComputed]map[string]AIProofResponseFindingsSecrets
 
 func lastDomainBefore(sorted []dnsObservation, t time.Time, maxAge time.Duration) string {
 	if len(sorted) == 0 {

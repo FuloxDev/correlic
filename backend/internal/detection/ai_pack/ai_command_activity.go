@@ -25,30 +25,30 @@ var aiRootBinaries = map[string]bool{
 // Windows when console apps run. They provide no security insight.
 // Exported so the noise-filters API can return them.
 var SystemStartupNoise = map[string]bool{
-	"conhost":       true, // Console Host — spawned for every console app
-	"conhost.exe":   true,
-	"wsl":           true, // WSL launcher
-	"wsl.exe":       true,
-	"wslhost":       true, // WSL host process
-	"wslhost.exe":   true,
-	"csrss":         true, // Client/Server Runtime Subsystem
-	"csrss.exe":     true,
-	"sihost":        true, // Shell Infrastructure Host
-	"sihost.exe":    true,
-	"fontdrvhost":   true, // Font Driver Host
-	"fontdrvhost.exe": true,
-	"dllhost":       true, // COM Surrogate
-	"dllhost.exe":   true,
-	"WerFault":      true, // Windows Error Reporting
-	"WerFault.exe":  true,
-	"consent":       true, // UAC consent prompt
-	"consent.exe":   true,
-	"RuntimeBroker": true, // Runtime Broker
-	"RuntimeBroker.exe": true,
-	"backgroundTaskHost":     true, // Background Task Host
-	"backgroundTaskHost.exe": true,
-	"SearchProtocolHost":     true, // Windows Search
-	"SearchProtocolHost.exe": true,
+	"conhost":                   true, // Console Host — spawned for every console app
+	"conhost.exe":               true,
+	"wsl":                       true, // WSL launcher
+	"wsl.exe":                   true,
+	"wslhost":                   true, // WSL host process
+	"wslhost.exe":               true,
+	"csrss":                     true, // Client/Server Runtime Subsystem
+	"csrss.exe":                 true,
+	"sihost":                    true, // Shell Infrastructure Host
+	"sihost.exe":                true,
+	"fontdrvhost":               true, // Font Driver Host
+	"fontdrvhost.exe":           true,
+	"dllhost":                   true, // COM Surrogate
+	"dllhost.exe":               true,
+	"WerFault":                  true, // Windows Error Reporting
+	"WerFault.exe":              true,
+	"consent":                   true, // UAC consent prompt
+	"consent.exe":               true,
+	"RuntimeBroker":             true, // Runtime Broker
+	"RuntimeBroker.exe":         true,
+	"backgroundTaskHost":        true, // Background Task Host
+	"backgroundTaskHost.exe":    true,
+	"SearchProtocolHost":        true, // Windows Search
+	"SearchProtocolHost.exe":    true,
 	"SecurityHealthSystray":     true, // Windows Security tray
 	"SecurityHealthSystray.exe": true,
 }
@@ -124,11 +124,11 @@ type AICommandActivity struct{}
 
 func (d *AICommandActivity) Meta() detection.DetectionMeta {
 	return detection.DetectionMeta{
-		ID:          "ai.command_activity",
-		Pack:        "ai",
-		Name:        "AI Command Activity",
-		Severity:    "low",
-		Description: "AI agent executed a command — tracked for audit visibility until baselined",
+		ID:              "ai.command_activity",
+		Pack:            "ai",
+		Name:            "AI Command Activity",
+		Severity:        "low",
+		Description:     "AI agent executed a command — tracked for audit visibility until baselined",
 		Tags:            []string{"ai", "audit", "command", "activity"},
 		MITRETechniques: []string{"T1059"},
 	}

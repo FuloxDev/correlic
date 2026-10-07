@@ -20,12 +20,12 @@ import (
 
 // BaselinesHandler handles HTTP requests for behavioral baselines.
 type BaselinesHandler struct {
-	db                  *sql.DB
-	baselineCollector   *detection.BaselineCollector
-	safeDomainStore     *storage.SafeDomainStore
-	findingStore        *storage.FindingStore
-	incidentStore       *incident.IncidentStore
-	neverBaselineStore  *storage.NeverBaselineStore
+	db                 *sql.DB
+	baselineCollector  *detection.BaselineCollector
+	safeDomainStore    *storage.SafeDomainStore
+	findingStore       *storage.FindingStore
+	incidentStore      *incident.IncidentStore
+	neverBaselineStore *storage.NeverBaselineStore
 }
 
 // NewBaselinesHandler creates a new baselines handler.
@@ -35,16 +35,17 @@ func NewBaselinesHandler(db *sql.DB, baselineCollector *detection.BaselineCollec
 
 // BaselineRow represents a behavioral baseline entry returned by the API.
 type BaselineRow struct {
-	ID         int        `json:"id"`
-	HostID     string     `json:"host_id"`
-	AIType     string     `json:"ai_type"`
-	SignalType string     `json:"signal_type"`
-	Pattern    string     `json:"pattern"`
-	Source     string     `json:"source"`
-	HitCount   int        `json:"hit_count"`
-	FirstSeen  time.Time  `json:"first_seen"`
-	LastSeen   time.Time  `json:"last_seen"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	ID             int        `json:"id"`
+	HostID         string     `json:"host_id"`
+	AIType         string     `json:"ai_type"`
+	SignalType     string     `json:"signal_type"`
+	Pattern        string     `json:"pattern"`
+	Source         string     `json:"source"`
+	HitCount       int        `json:"hit_count"`
+	FirstSeen      time.Time  `json:"first_seen"`
+	LastSeen       time.Time  `json:"last_seen"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	SuspendedUntil *time.Time `json:"suspended_until,omitempty"`
 }
 
 // ListBaselines handles GET /api/v1/baselines?host_id=X&signal_type=Y&limit=N
@@ -77,7 +78,7 @@ func (h *BaselinesHandler) ListBaselines(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	query := `SELECT id, host_id, ai_type, signal_type, pattern, source, hit_count, first_seen, last_seen, expires_at
+	query := `SELECT id, host_id, ai_type, signal_type, pattern, source, hit_count, first_seen, last_seen, expires_at, suspended_until
 		FROM behavioral_baselines WHERE org_id = $1`
 	args := []any{orgID}
 	argN := 2
@@ -115,7 +116,7 @@ func (h *BaselinesHandler) ListBaselines(w http.ResponseWriter, r *http.Request)
 	var baselines []BaselineRow
 	for rows.Next() {
 		var b BaselineRow
-		if err := rows.Scan(&b.ID, &b.HostID, &b.AIType, &b.SignalType, &b.Pattern, &b.Source, &b.HitCount, &b.FirstSeen, &b.LastSeen, &b.ExpiresAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.HostID, &b.AIType, &b.SignalType, &b.Pattern, &b.Source, &b.HitCount, &b.FirstSeen, &b.LastSeen, &b.ExpiresAt, &b.SuspendedUntil); err != nil {
 			log.Printf("baselines scan error: %v", err)
 			continue
 		}
@@ -175,7 +176,7 @@ func (h *BaselinesHandler) CreateBaseline(w http.ResponseWriter, r *http.Request
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]any{
-				"error":        "cannot baseline this pattern — it is on your organization's Never-Baseline list; remove it there first",
+				"error":           "cannot baseline this pattern — it is on your organization's Never-Baseline list; remove it there first",
 				"is_user_defined": true,
 			})
 			return
@@ -367,8 +368,8 @@ func (h *BaselinesHandler) SuspendBaseline(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"id":         id,
-		"expires_at": expiresAt.Format(time.RFC3339),
+		"id":              id,
+		"suspended_until": expiresAt.Format(time.RFC3339),
 	})
 }
 

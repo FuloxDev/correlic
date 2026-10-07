@@ -189,16 +189,17 @@ func runAgent(ctx context.Context, logger *slog.Logger) error {
 
 	if cfg.ProcessExecEnabled {
 		var sink dispatch.DispatcherSink
-		if cfg.TelemetryURL != "" {
+		if telemetryURL != "" {
 			s := dispatch.NewHTTPSink(t, 100)
 			go s.Start(ctx)
 			sink = s
-			logger.Info("live ingestion enabled", "target", cfg.TelemetryURL+"/ingest/events")
+			logger.Info("live ingestion enabled", "target", telemetryURL+"/ingest/events")
 		} else {
 			sink = dispatch.NopSink{}
-			logger.Info("live ingestion disabled (telemetry_url not set); canonical events logged only")
+			logger.Info("live ingestion disabled (no backend URL); canonical events logged only")
 		}
-		d := dispatch.NewBufferedDispatcher(sink, 50000)
+		// Buffer size, rate limits and dedupe come from AGENT_* env vars (see .env.example).
+		d := dispatch.NewBufferedDispatcherFromEnv(sink)
 		d.Start(ctx)
 		disp = d
 	}
@@ -206,11 +207,13 @@ func runAgent(ctx context.Context, logger *slog.Logger) error {
 	emit := func(eventType string, payload any) bool {
 		ok := b.Enqueue(eventType, payload)
 
-		// Convert scanner process_exec events to canonical events for graph dispatch.
+		// Convert the /proc scanner's synthetic process_exec events to canonical
+		// events for graph dispatch. The eBPF, kqueue and ETW runners already
+		// dispatch their own canonical events, so only scanner payloads qualify.
 		if disp != nil && eventType == "process_exec" {
-			if m, ok := payload.(map[string]any); ok {
-				pid, _ := m["pid"].(int)
-				ppid, _ := m["ppid"].(int)
+			if m, ok := payload.(map[string]any); ok && m["source"] == "proc_scanner" {
+				pid := anyToInt(m["pid"])
+				ppid := anyToInt(m["ppid"])
 				comm, _ := m["comm"].(string)
 				exe, _ := m["exe"].(string)
 
@@ -242,6 +245,25 @@ func runAgent(ctx context.Context, logger *slog.Logger) error {
 	startPlatformCollectors(ctx, cfg, logger, hostID, emit, disp)
 
 	return nil
+}
+
+// anyToInt accepts the integer types scanners use for PIDs.
+func anyToInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int32:
+		return int(n)
+	case int64:
+		return int(n)
+	case uint32:
+		return int(n)
+	case uint64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
 }
 
 func safeString(m map[string]any, key string) string {

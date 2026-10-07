@@ -21,12 +21,12 @@ var containerEscapeCriticalPaths = map[string]bool{
 
 // containerEscapeCriticalDirs are directory prefixes for container escape.
 var containerEscapeCriticalDirs = []string{
-	"/proc/1/",         // Host PID 1 namespace — accessing init proc from container
-	"/host/",           // Common host mount convention
-	"/rootfs/",         // Host root filesystem mount
-	"/mnt/host/",       // Another common host mount
-	"/hostroot/",       // Alternative host mount
-	"/sys/fs/cgroup/",  // Cgroup manipulation for escape
+	"/proc/1/",        // Host PID 1 namespace — accessing init proc from container
+	"/host/",          // Common host mount convention
+	"/rootfs/",        // Host root filesystem mount
+	"/mnt/host/",      // Another common host mount
+	"/hostroot/",      // Alternative host mount
+	"/sys/fs/cgroup/", // Cgroup manipulation for escape
 }
 
 // containerEscapeHighPaths are file paths representing high-severity escape vectors.
@@ -39,12 +39,12 @@ var containerEscapeHighPaths = map[string]bool{
 
 // containerEscapeExecBinaries are binaries that indicate container escape when run by AI.
 var containerEscapeExecBinaries = map[string]bool{
-	"runc":        true, // Container runtime — direct escape tool
-	"ctr":         true, // containerd CLI
-	"crictl":      true, // CRI CLI
-	"docker":      true, // Docker CLI from within container
-	"kubectl":     true, // Kubernetes CLI — potential cluster escape
-	"kubelet":     true, // Kubelet — node-level access
+	"runc":    true, // Container runtime — direct escape tool
+	"ctr":     true, // containerd CLI
+	"crictl":  true, // CRI CLI
+	"docker":  true, // Docker CLI from within container
+	"kubectl": true, // Kubernetes CLI — potential cluster escape
+	"kubelet": true, // Kubelet — node-level access
 }
 
 // AIContainerEscape detects AI agent attempts to escape container isolation.

@@ -3,7 +3,6 @@ package middleware
 import (
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/correlic/correlic-backend/internal/storage"
 )
@@ -44,37 +43,9 @@ func (g *RoleGuard) RequireRole(role string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// User session: check via X-User-Email header
-			email := strings.TrimSpace(r.Header.Get("X-User-Email"))
-			log.Printf("[RoleGuard] Checking user email: %s (users store: %v)", email, g.users != nil)
-			if email == "" || g.users == nil {
-				log.Printf("[RoleGuard] Rejecting: no email or no user store")
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			orgID, ok := OrgFromContext(r.Context())
-			if !ok {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			user, err := g.users.GetUserByEmail(email)
-			if err != nil || user == nil {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			rp, ok, err := g.users.GetOrgUserRole(orgID, user.ID)
-			if err != nil || !ok {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			log.Printf("[RoleGuard] User role: %s, required: %s", rp, role)
-			if rp != role {
-				log.Printf("[RoleGuard] Rejecting: role mismatch")
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			log.Printf("[RoleGuard] Allowing request through")
-			next.ServeHTTP(w, r)
+			// No role in the request context: deny. Identity comes from the
+			// authenticated session or key only, never from request headers.
+			http.Error(w, "forbidden", http.StatusForbidden)
 		})
 	}
 }
@@ -93,24 +64,5 @@ func IsAdminRequest(r *http.Request, users storage.UserStore) bool {
 		return true
 	}
 
-	if users == nil {
-		return false
-	}
-	email := strings.TrimSpace(r.Header.Get("X-User-Email"))
-	if email == "" {
-		return false
-	}
-	orgID, ok := OrgFromContext(r.Context())
-	if !ok {
-		return false
-	}
-	user, err := users.GetUserByEmail(email)
-	if err != nil || user == nil {
-		return false
-	}
-	role, ok, err := users.GetOrgUserRole(orgID, user.ID)
-	if err != nil || !ok {
-		return false
-	}
-	return role == "admin"
+	return false
 }

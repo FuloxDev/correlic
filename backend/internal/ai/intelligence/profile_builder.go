@@ -4,9 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"os"
-	"os/user"
-	"runtime"
 	"strings"
 )
 
@@ -24,11 +21,8 @@ func NewProfileBuilder(db *sql.DB, store *Store) *ProfileBuilder {
 func (b *ProfileBuilder) Build(ctx context.Context, orgID, hostID string) error {
 	profile := SystemProfile{}
 
-	// Host info
-	profile.Host.OS = runtime.GOOS + " " + runtime.GOARCH
-	if u, err := user.Current(); err == nil {
-		profile.Host.User = u.Username
-	}
+	// Host info. OS and user are not reported by the agent yet, so they are
+	// left empty rather than filled with the backend process's own values.
 	// Hostname from events
 	var hostname string
 	_ = b.db.QueryRowContext(ctx,
@@ -141,21 +135,8 @@ func (b *ProfileBuilder) Build(ctx context.Context, orgID, hostID string) error 
 		}
 	}
 
-	// PATH directories from environment (helps distinguish PATHEXT probes from real accesses)
-	if pathEnv := os.Getenv("PATH"); pathEnv != "" {
-		sep := ":"
-		if strings.Contains(runtime.GOOS, "windows") || strings.Contains(profile.Host.OS, "windows") {
-			sep = ";"
-		}
-		for _, dir := range strings.Split(pathEnv, sep) {
-			dir = strings.TrimSpace(dir)
-			if dir != "" {
-				// Normalize to forward slash for consistency
-				dir = strings.ReplaceAll(dir, "\\", "/")
-				profile.PathDirs = append(profile.PathDirs, dir)
-			}
-		}
-	}
+	// PATH directories: the backend's own PATH says nothing about the monitored
+	// host, so this stays empty until the agent reports it.
 
 	// Baseline summary counts
 	_ = b.db.QueryRowContext(ctx, `
