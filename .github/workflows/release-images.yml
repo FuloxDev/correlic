@@ -2,6 +2,11 @@ name: Release container images
 
 # Builds and pushes the all-in-one image plus the four component images to
 # GitHub Container Registry. Runs on a version tag (v1.2.3) or on demand.
+#
+# GITHUB_TOKEN can only push to packages this repository owns. If a package was
+# first published from another repository, grant this repository write access
+# in the package's settings ("Manage Actions access") or delete the old package
+# so the first push from here re-creates it.
 
 on:
   push:
