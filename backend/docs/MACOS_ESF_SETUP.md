@@ -168,4 +168,4 @@ is running in polling mode.
   runs the ES client in a launchd daemon inside an app bundle, which is the
   smallest change to the existing agent. If Apple asks for a system
   extension, the `esf` package stays as it is and only the host changes.
-- Local build on a Mac with Xcode: `cd agent && CGO_ENABLED=1 go build -tags esf -o correlic-agent ./cmd/agent`.
+- Local build on a Mac with Xcode: `cd agent && SDKROOT=$(xcrun --sdk macosx --show-sdk-path) CGO_ENABLED=1 go build -tags esf -o correlic-agent ./cmd/agent`. Without `SDKROOT` the link step may report "framework EndpointSecurity not found".

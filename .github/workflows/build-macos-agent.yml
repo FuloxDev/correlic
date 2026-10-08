@@ -52,6 +52,7 @@ jobs:
         env:
           CGO_ENABLED: '1'
         run: |
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
           LD="-s -w -X main.version=${{ steps.v.outputs.version }}"
           mkdir -p ../dist
           GOARCH=arm64 go build -tags esf -ldflags="$LD" -o ../dist/correlic-agent-arm64 ./cmd/agent
