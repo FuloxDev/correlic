@@ -106,7 +106,10 @@ sudo CORRELIC_CONFIG=/etc/correlic/agent.yaml go run ./cmd/agent
 CPATH=<libbpf include> go generate ./internal/ebpf/...
 go build ./... && go vet ./... && go test -race ./...
 GOOS=darwin GOARCH=arm64 go build ./... && GOOS=windows GOARCH=amd64 go build ./...
+# macOS with Endpoint Security (needs a Mac with Xcode; see backend/docs/MACOS_ESF_SETUP.md)
+CGO_ENABLED=1 go build -tags esf ./cmd/agent
 ```
+On macOS an `esf`-tagged binary tries Endpoint Security first (`platform_darwin_esf.go`) and falls back to kqueue/FSEvents/lsof when the entitlement, root or Full Disk Access is missing; builds without the tag always poll.
 Shutdown: SIGTERM cancels the context; main waits up to 10 s for runners, the batcher, the ingest sink and the heartbeat (stopping/stopped) to drain.
 
 ## Key Files

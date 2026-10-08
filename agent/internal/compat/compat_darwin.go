@@ -215,7 +215,7 @@ func checkESF() Check {
 			Name:        "esf",
 			Severity:    SeverityWarn,
 			Supported:   true,
-			Description: "Endpoint Security Framework entitlement present — set esf_enabled: true to activate",
+			Description: "Endpoint Security entitlement present; an esf-tagged build uses it automatically",
 		}
 	}
 

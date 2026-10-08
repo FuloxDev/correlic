@@ -56,6 +56,26 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  agent-macos:
+    name: agent (macOS kqueue + Endpoint Security build)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - run: go build ./... && go vet ./...
+      - run: go test ./...
+      # The Endpoint Security bindings need cgo and the macOS SDK, so this is
+      # the only job that compiles them. Running them needs the entitlement.
+      - name: Build with Endpoint Security (-tags esf)
+        env: { CGO_ENABLED: '1' }
+        run: go build -tags esf ./... && go vet -tags esf ./...
+
   ui:
     name: ui (next.js)
     runs-on: ubuntu-latest

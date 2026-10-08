@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+macOS
+- The Endpoint Security collectors (exec/exit, file open, DNS lookup with
+  real PIDs) are wired into the agent behind the `esf` build tag, with
+  automatic fallback to the kqueue/FSEvents/lsof collectors when the
+  entitlement, root or Full Disk Access is missing. CI compiles the ESF code
+  on a macOS runner; `build-macos-agent` produces a universal app bundle and
+  signs and notarizes it when the Apple secrets are set. The Apple-side steps
+  are in `backend/docs/MACOS_ESF_SETUP.md`.
+
 Build
 - The backend and the agent require Go 1.26 (golang.org/x/crypto 0.57 and
   golang.org/x/sys 0.48 need it); the Docker build stages use golang:1.26.

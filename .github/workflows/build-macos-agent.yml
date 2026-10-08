@@ -1,0 +1,147 @@
+name: Build macOS agent
+
+# Builds the macOS agent with the Endpoint Security bindings (cgo, -tags esf)
+# as a universal binary inside an app bundle. Signing and notarization run
+# only when the Apple secrets exist (see backend/docs/MACOS_ESF_SETUP.md);
+# without them the job still proves the ESF build compiles and publishes an
+# unsigned bundle for local signing.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.2)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: Correlic Agent
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      KEYCHAIN_PATH: /tmp/correlic-signing.keychain-db
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve version
+        id: v
+        run: |
+          V="${{ inputs.version }}"; [ -z "$V" ] && V="${GITHUB_REF_NAME}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "short=${V#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - name: Build universal binary (Endpoint Security, arm64 + x86_64)
+        working-directory: agent
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          LD="-s -w -X main.version=${{ steps.v.outputs.version }}"
+          mkdir -p ../dist
+          GOARCH=arm64 go build -tags esf -ldflags="$LD" -o ../dist/correlic-agent-arm64 ./cmd/agent
+          GOARCH=amd64 go build -tags esf -ldflags="$LD" -o ../dist/correlic-agent-amd64 ./cmd/agent
+          lipo -create -output ../dist/correlic-agent ../dist/correlic-agent-arm64 ../dist/correlic-agent-amd64
+          lipo -info ../dist/correlic-agent
+          rm ../dist/correlic-agent-arm64 ../dist/correlic-agent-amd64
+
+      - name: Assemble app bundle
+        run: |
+          APP="dist/$APP_NAME.app"
+          mkdir -p "$APP/Contents/MacOS"
+          cp dist/correlic-agent "$APP/Contents/MacOS/correlic-agent"
+          sed -e "s/__VERSION__/${{ steps.v.outputs.short }}/g" agent/build/Info.plist > "$APP/Contents/Info.plist"
+          plutil -lint "$APP/Contents/Info.plist"
+          cp agent/build/com.correlic.agent.plist agent/build/correlic-agent.entitlements dist/
+
+      - name: Import signing identity
+        if: ${{ env.APPLE_DEVELOPER_ID_P12 != '' }}
+        run: |
+          echo "$APPLE_DEVELOPER_ID_P12" | base64 --decode > /tmp/developer-id.p12
+          KC_PW=$(openssl rand -hex 16)
+          echo "::add-mask::$KC_PW"
+          echo "KC_PW=$KC_PW" >> "$GITHUB_ENV"
+          security create-keychain -p "$KC_PW" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KC_PW" "$KEYCHAIN_PATH"
+          security import /tmp/developer-id.p12 -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PW" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm -f /tmp/developer-id.p12
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Sign
+        if: ${{ env.APPLE_DEVELOPER_ID_P12 != '' }}
+        run: |
+          APP="dist/$APP_NAME.app"
+          if [ -n "$APPLE_PROVISIONING_PROFILE" ]; then
+            echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode > "$APP/Contents/embedded.provisionprofile"
+          else
+            echo "::warning::APPLE_PROVISIONING_PROFILE is not set. Endpoint Security is a restricted entitlement; without the Developer ID provisioning profile macOS will not honour it at runtime and the agent falls back to kqueue/FSEvents."
+          fi
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+          [ -n "$IDENTITY" ] || { echo "no Developer ID Application identity found in APPLE_DEVELOPER_ID_P12"; exit 1; }
+          codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+            --entitlements agent/build/correlic-agent.entitlements "$APP/Contents/MacOS/correlic-agent"
+          codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+            --entitlements agent/build/correlic-agent.entitlements "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --entitlements - "$APP/Contents/MacOS/correlic-agent"
+
+      - name: Notarize and staple
+        if: ${{ env.APPLE_DEVELOPER_ID_P12 != '' && env.APPLE_APP_PASSWORD != '' }}
+        run: |
+          APP="dist/$APP_NAME.app"
+          ditto -c -k --keepParent "$APP" dist/notarize.zip
+          xcrun notarytool submit dist/notarize.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$APP"
+          rm -f dist/notarize.zip
+
+      - name: Package
+        run: |
+          V=${{ steps.v.outputs.version }}
+          SUFFIX=""; [ -n "$APPLE_DEVELOPER_ID_P12" ] || SUFFIX="-unsigned"
+          cd dist
+          ditto -c -k --keepParent "$APP_NAME.app" "correlic-agent-macos-$V$SUFFIX.zip"
+          tar -czf "correlic-agent-macos-$V-binary$SUFFIX.tar.gz" correlic-agent correlic-agent.entitlements com.correlic.agent.plist
+          shasum -a 256 "correlic-agent-macos-$V$SUFFIX.zip" "correlic-agent-macos-$V-binary$SUFFIX.tar.gz" > SHA256SUMS-macos.txt
+          cat SHA256SUMS-macos.txt
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: correlic-agent-macos-${{ steps.v.outputs.version }}
+          path: |
+            dist/correlic-agent-macos-*.zip
+            dist/correlic-agent-macos-*.tar.gz
+            dist/SHA256SUMS-macos.txt
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.v.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          draft: true
+          files: |
+            dist/correlic-agent-macos-*.zip
+            dist/correlic-agent-macos-*.tar.gz
+            dist/SHA256SUMS-macos.txt
+          overwrite_files: true
+
+      - name: Remove signing keychain
+        if: ${{ always() && env.APPLE_DEVELOPER_ID_P12 != '' }}
+        run: security delete-keychain "$KEYCHAIN_PATH" || true

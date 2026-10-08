@@ -106,13 +106,12 @@ CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -tags esf -o correlic-agent-darw
 
 ## Phase 2: ESF (Endpoint Security Framework)
 
-Requires Apple Developer account + `com.apple.developer.endpoint-security.client` entitlement.
-- Submit entitlement request NOW — takes weeks for Apple approval
-- Code signing with Developer ID certificate
-- System Extension bundled in `.app` wrapper
-- Notarization via `xcrun notarytool`
-- `.pkg` installer for MDM deployment
-- Future package: `internal/darwin/esf/` with cgo wrappers
+Implemented behind the `esf` build tag (`agent/internal/darwin/esf/`, wired in
+`agent/cmd/agent/platform_darwin_esf.go`). An esf-tagged binary opens an
+Endpoint Security client at startup and falls back to the kqueue/FSEvents
+collectors when the entitlement, root or Full Disk Access is missing. The
+Apple side (entitlement request, Developer ID, provisioning profile), the
+signed build and the install steps are in `MACOS_ESF_SETUP.md`.
 
 ## Known Limitations (MVP)
 
