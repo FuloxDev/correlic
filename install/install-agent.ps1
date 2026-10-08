@@ -9,7 +9,7 @@
 # ============================================================
 
 $ErrorActionPreference = "Stop"
-$Version = "v0.1.1"
+$Version = "v1.0.0"
 $SourceDir = $PSScriptRoot  # Shared volume: C:\Correlic\agent
 $InstallDir = "C:\Correlic"
 $TotalSteps = 7

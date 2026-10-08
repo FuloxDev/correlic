@@ -351,14 +351,7 @@ All endpoints in this section are **conditional** -- only registered when Neo4j 
 
 ---
 
-## 19. Tier
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-
----
-
-## 20. Agents
+## 19. Agents
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -368,7 +361,7 @@ All endpoints in this section are **conditional** -- only registered when Neo4j 
 
 ---
 
-## 21. Process Timeline (Legacy)
+## 20. Process Timeline (Legacy)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|

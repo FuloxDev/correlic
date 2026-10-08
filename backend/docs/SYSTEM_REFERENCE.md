@@ -11,9 +11,9 @@ Correlic is a distributed security observability platform that monitors AI codin
 
 | Repo | Language | Purpose |
 |------|----------|---------|
-| `correlic-backend/` | Go 1.24+ | API server — event ingestion, detection engine, incident correlation, 80+ API endpoints |
-| `Correlic-agent/` | Go 1.25+ | Kernel telemetry collector — eBPF (Linux), ESF (macOS), ETW (Windows) |
-| `correlic-ui/` | Next.js 16 / React 19 / TypeScript | Web dashboard — findings, incidents, baselines, block rules, AI chat |
+| `backend/` | Go 1.24+ | API server — event ingestion, detection engine, incident correlation, 80+ API endpoints |
+| `agent/` | Go 1.25+ | Kernel telemetry collector — eBPF (Linux), ETW (Windows), kqueue + polling (macOS, preview) |
+| `ui/` | Next.js 16 / React 19 / TypeScript | Web dashboard — findings, incidents, baselines, block rules, AI chat |
 | `correlic-ui-proxy/` | Node.js | HTTPS reverse proxy — TLS termination, routes /api/* → backend, /* → UI |
 
 ## Architecture (5 Layers)
@@ -206,20 +206,22 @@ Correlic is a distributed security observability platform that monitors AI codin
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `DATABASE_URL` | `postgres://correlic:correlic@localhost:5432/correlic` | PostgreSQL connection |
-| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection (optional) |
+| `NEO4J_URI` | — | Neo4j connection; unset = graph features disabled, detection still runs |
 | `NEO4J_USERNAME` | `neo4j` | Neo4j auth |
-| `NEO4J_PASSWORD` | `correlic123` | Neo4j auth |
+| `NEO4J_PASSWORD` | — | Neo4j auth |
 | `TLS_CERT_FILE` | — | Server TLS certificate |
 | `TLS_KEY_FILE` | — | Server TLS key |
 | `MTLS_CA_FILE` | — | CA cert for client mTLS verification |
 | `ALLOW_API_KEY_AUTH` | `true` | Enable API key auth (vs mTLS-only) |
 | `CORRELIC_RATE_LIMIT_PER_MIN` | `300` | API rate limit |
-| `LLM_ENCRYPTION_KEY` | (default) | Encryption key for BYOK LLM API keys |
+| `LLM_ENCRYPTION_KEY` | — (required by `cmd/api`) | Encryption key for BYOK LLM API keys; any string, hashed to 32 bytes |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID |
-| `FRONTEND_URL` | `https://localhost:3000` | Frontend URL for email links |
+| `FRONTEND_URL` | `http://localhost:3001` | Dashboard URL used in email links |
 | `ENABLE_DEBUG_ENDPOINTS` | `false` | Enable /debug/pprof/* |
 | `SAMPLING_ENABLED` | `true` | Enable event sampling |
 | `RETENTION_EVENTS_DAYS` | `30` | Canonical event retention |
 | `RETENTION_FINDINGS_DAYS` | `90` | Finding retention |
 | `RETENTION_INCIDENTS_DAYS` | `365` | Incident retention |
+| `RETENTION_TELEMETRY_DAYS` | `30` | Raw telemetry retention |
 | `RETENTION_CLEANUP_INTERVAL` | `1h` | Cleanup sweep interval |
+| `TRUST_PROXY_HEADERS` | `false` | Use `X-Forwarded-For` for rate limiting (set when behind the ui-proxy only) |

@@ -272,12 +272,6 @@ if [ -f "$INSTALL_DIR/.env" ]; then
   NEO4J_PASSWORD="${NEO4J_PASSWORD:-}"
   LLM_ENCRYPTION_KEY="${LLM_ENCRYPTION_KEY:-}"
 
-  # Read API_KEY from agent.yaml
-  API_KEY=""
-  if [ -f "$INSTALL_DIR/agent.yaml" ]; then
-    API_KEY=$(grep 'api_key:' "$INSTALL_DIR/agent.yaml" 2>/dev/null | sed 's/.*"\(.*\)"/\1/' || echo "")
-  fi
-
   detail "Reusing existing secrets from .env"
 
   # Stop running services (systemd + stray processes)
@@ -346,10 +340,12 @@ fi
 SIZE_MB=$((FILE_SIZE / 1048576))
 ok "Downloaded (${SIZE_MB}MB)"
 
-# Verify download integrity (non-blocking if checksum unavailable)
+# Verify download integrity against SHA256SUMS-linux.txt from the same release
+# (non-blocking if the checksum file is unavailable).
 log "  Verifying download integrity..."
-CHECKSUM_URL="${BUNDLE_URL}.sha256"
-EXPECTED_SHA=$(curl -fsSL "$CHECKSUM_URL" 2>/dev/null | awk '{print $1}') || true
+CHECKSUM_URL="${CORRELIC_CHECKSUMS_URL:-$(dirname "$BUNDLE_URL")/SHA256SUMS-linux.txt}"
+BUNDLE_NAME=$(basename "$BUNDLE_URL")
+EXPECTED_SHA=$(curl -fsSL "$CHECKSUM_URL" 2>/dev/null | awk -v f="$BUNDLE_NAME" '$2 == f || $2 == "*" f {print $1}') || true
 if [ -n "${EXPECTED_SHA:-}" ]; then
   ACTUAL_SHA=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
   if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
@@ -898,18 +894,9 @@ if [ "$IS_UPGRADE" = false ]; then
   # Fresh install — generate server secrets
   LLM_KEY=$(openssl rand -hex 32)
 
-  # API key is optional: press Enter and the installer creates a local one
-  # after the database is initialized. Read from /dev/tty since stdin may be
-  # a pipe (curl | bash).
-  echo ""
-  echo -e "  ${CYAN}API key (press Enter to generate a local key):${NC}"
-  read -r -p "  API Key: " API_KEY < /dev/tty
-  API_KEY=$(echo "$API_KEY" | tr -d '[:space:]')
-  if [ -n "$API_KEY" ]; then
-    ok "Using the API key you entered"
-  else
-    detail "A local API key will be generated"
-  fi
+  # Keys are created after the database is initialised: one dashboard admin
+  # (API key + password) and one restricted key for the agent.
+  API_KEY=""
 
   log "  Writing backend config (.env)..."
   cat > "$INSTALL_DIR/.env" <<EOF
@@ -931,16 +918,21 @@ EOF
   cat > "$INSTALL_DIR/agent.yaml" <<EOF
 backend_url: "https://localhost:${API_PORT}"
 telemetry_url: "https://localhost:${TELEMETRY_PORT}"
-api_key: "${API_KEY}"
+api_key: ""
+tls_ca_file: "${INSTALL_DIR}/certs/ca.crt"
+tls_client_cert_file: "${INSTALL_DIR}/certs/client.crt"
+tls_client_key_file: "${INSTALL_DIR}/certs/client.key"
+profile: "developer"
+log_level: "info"
+heartbeat_interval: 30s
 ebpf_enabled: true
 process_exec_enabled: true
 file_monitor_enabled: true
 network_monitor_enabled: true
 dns_monitor_enabled: true
-block_enabled: true
-tls_ca_file: "${INSTALL_DIR}/certs/ca.crt"
-tls_client_cert_file: "${INSTALL_DIR}/certs/client.crt"
-tls_client_key_file: "${INSTALL_DIR}/certs/client.key"
+# Block rules (kill matching processes). Off by default; enable after you
+# have reviewed your rules in the dashboard.
+block_enabled: false
 EOF
   chmod 600 "$INSTALL_DIR/agent.yaml"
 
@@ -948,7 +940,6 @@ EOF
   cat > "$INSTALL_DIR/ui-proxy.env" <<EOF
 PORT=${PROXY_PORT}
 BACKEND_API=https://localhost:${API_PORT}
-BACKEND_TELEMETRY=https://localhost:${TELEMETRY_PORT}
 MTLS_CA=${INSTALL_DIR}/certs/ca.crt
 MTLS_CERT=${INSTALL_DIR}/certs/client.crt
 MTLS_KEY=${INSTALL_DIR}/certs/client.key
@@ -997,7 +988,7 @@ else
   ORG_OUTPUT=$("$INSTALL_DIR/bin/correlic-admin" create-org --name default 2>&1) || true
   if echo "$ORG_OUTPUT" | grep -qi "already exists"; then
     detail "Default organization already exists"
-  elif echo "$ORG_OUTPUT" | grep -qi "created\|api.key\|success"; then
+  elif echo "$ORG_OUTPUT" | grep -q "org_id="; then
     detail "Default organization created"
   else
     detail "$ORG_OUTPUT"
@@ -1024,22 +1015,43 @@ if [ -n "${ORG_UUID:-}" ]; then
     fi
   fi
 
-  # Create a local API key when none was entered
-  if [ -z "${API_KEY:-}" ] && [ "$IS_UPGRADE" = false ]; then
-    log "  Creating local API key..."
-    SA_OUTPUT=$("$INSTALL_DIR/bin/correlic-admin" create-service-account --org-id "$ORG_UUID" --email agent@localhost --name "Local agent" --role admin 2>&1) || true
-    SA_USER_ID=$(echo "$SA_OUTPUT" | grep '^user_id=' | cut -d= -f2)
-    if [ -n "$SA_USER_ID" ]; then
-      KEY_OUTPUT=$("$INSTALL_DIR/bin/correlic-admin" create-api-key --org-id "$ORG_UUID" --user-id "$SA_USER_ID" --name local 2>&1) || true
-      API_KEY=$(echo "$KEY_OUTPUT" | grep '^api_key=' | cut -d= -f2)
+  # Create the dashboard admin (API key + password) and a restricted agent key
+  if [ "$IS_UPGRADE" = false ]; then
+    log "  Creating dashboard admin and agent key..."
+    kv() { grep -E "^[[:space:]]*$1=" | head -1 | sed -E "s/^[[:space:]]*$1=//" | tr -d '[:space:]'; }
+    ADMIN_OUTPUT=$("$INSTALL_DIR/bin/correlic-admin" create-user --org-id "$ORG_UUID" --email admin@local.dev --name "Admin" --role admin 2>&1) || true
+    ADMIN_USER_ID=$(echo "$ADMIN_OUTPUT" | kv user_id)
+    ADMIN_PASSWORD=$(echo "$ADMIN_OUTPUT" | kv password)
+    if [ -n "$ADMIN_USER_ID" ]; then
+      KEY_OUTPUT=$("$INSTALL_DIR/bin/correlic-admin" create-api-key --org-id "$ORG_UUID" --user-id "$ADMIN_USER_ID" --name dashboard 2>&1) || true
+      GENERATED_API_KEY=$(echo "$KEY_OUTPUT" | kv api_key)
     fi
-    if [ -n "${API_KEY:-}" ]; then
-      sed -i "s|^api_key:.*|api_key: \"${API_KEY}\"|" "$INSTALL_DIR/agent.yaml"
-      GENERATED_API_KEY="$API_KEY"
-      ok "Local API key created (shown at the end of the install)"
+    SA_OUTPUT=$("$INSTALL_DIR/bin/correlic-admin" create-service-account --org-id "$ORG_UUID" --email agent@local.dev --name "Agent" --role member 2>&1) || true
+    SA_USER_ID=$(echo "$SA_OUTPUT" | kv user_id)
+    AGENT_API_KEY=""
+    if [ -n "$SA_USER_ID" ]; then
+      AKEY_OUTPUT=$("$INSTALL_DIR/bin/correlic-admin" create-api-key --org-id "$ORG_UUID" --user-id "$SA_USER_ID" --name agent --type agent 2>&1) || true
+      AGENT_API_KEY=$(echo "$AKEY_OUTPUT" | kv api_key)
+    fi
+    if [ -n "$AGENT_API_KEY" ]; then
+      sed -i "s|^api_key:.*|api_key: \"${AGENT_API_KEY}\"|" "$INSTALL_DIR/agent.yaml"
+      ok "Agent key created and written to agent.yaml"
     else
-      warn "Could not create a local API key: $SA_OUTPUT $KEY_OUTPUT"
-      detail "Create one later with: correlic-admin create-service-account / create-api-key"
+      warn "Could not create the agent key: $SA_OUTPUT $AKEY_OUTPUT"
+      detail "Create one later: correlic-admin create-api-key --org-id $ORG_UUID --user-id <user_id> --name agent --type agent"
+    fi
+    if [ -n "$GENERATED_API_KEY" ]; then
+      cat > "$INSTALL_DIR/dashboard-credentials" <<EOF
+# Correlic dashboard credentials (generated by the installer). Keep this file private.
+DASHBOARD_URL=http://localhost:${UI_PORT}
+API_KEY=${GENERATED_API_KEY}
+ADMIN_EMAIL=admin@local.dev
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
+EOF
+      chmod 600 "$INSTALL_DIR/dashboard-credentials"
+      ok "Dashboard admin created (credentials shown at the end of the install)"
+    else
+      warn "Could not create the dashboard admin: $ADMIN_OUTPUT $KEY_OUTPUT"
     fi
   fi
 else
@@ -1185,7 +1197,6 @@ patch_configs_for_ports() {
   if [ -f "$INSTALL_DIR/ui-proxy.env" ]; then
     sed -i "s|^PORT=.*|PORT=${PROXY_PORT}|" "$INSTALL_DIR/ui-proxy.env"
     sed -i "s|^BACKEND_API=.*|BACKEND_API=https://localhost:${API_PORT}|" "$INSTALL_DIR/ui-proxy.env"
-    sed -i "s|^BACKEND_TELEMETRY=.*|BACKEND_TELEMETRY=https://localhost:${TELEMETRY_PORT}|" "$INSTALL_DIR/ui-proxy.env"
   fi
 
   detail "Config files updated"
@@ -1305,7 +1316,6 @@ Wants=postgresql.service neo4j.service
 [Service]
 Type=simple
 EnvironmentFile=${INSTALL_DIR}/.env
-Environment=API_KEY=${API_KEY}
 Environment=PORT=${API_PORT}
 ExecStart=${INSTALL_DIR}/bin/correlic-api
 Restart=on-failure
@@ -1327,7 +1337,6 @@ Wants=postgresql.service neo4j.service
 [Service]
 Type=simple
 EnvironmentFile=${INSTALL_DIR}/.env
-Environment=API_KEY=${API_KEY}
 Environment=PORT=${TELEMETRY_PORT}
 ExecStart=${INSTALL_DIR}/bin/correlic-telemetry
 Restart=on-failure
@@ -1368,9 +1377,8 @@ After=network.target correlic-api.service
 [Service]
 Type=simple
 Environment=PORT=${UI_PORT}
-Environment=HOSTNAME=0.0.0.0
-Environment=NEXT_PUBLIC_API_URL=https://localhost:${API_PORT}
-Environment=API_KEY=${API_KEY}
+Environment=HOSTNAME=127.0.0.1
+Environment=NODE_ENV=production
 Environment=PROXY_BASE_URL=http://localhost:${PROXY_PORT}
 WorkingDirectory=${INSTALL_DIR}/ui
 ExecStart=${INSTALL_DIR}/node/bin/node server.js
@@ -1497,15 +1505,18 @@ else
 fi
 echo -e "${BOLD}================================================${NC}"
 echo ""
-if [ -n "$GENERATED_API_KEY" ]; then
-  echo -e "  API key:      ${CYAN}${GENERATED_API_KEY}${NC}  (also in ${INSTALL_DIR}/agent.yaml; log in to the dashboard with it)"
-fi
 echo -e "  Dashboard:    ${CYAN}http://localhost:${UI_PORT}${NC}"
-echo -e "  API Proxy:    ${CYAN}https://localhost:${PROXY_PORT}${NC}"
+if [ -n "$GENERATED_API_KEY" ]; then
+  echo -e "  Log in with:  ${CYAN}${GENERATED_API_KEY}${NC}  (API key)"
+  echo -e "           or:  ${CYAN}admin@local.dev / ${ADMIN_PASSWORD}${NC}"
+  echo -e "                (stored in ${INSTALL_DIR}/dashboard-credentials)"
+fi
+echo -e "  API Proxy:    ${CYAN}http://localhost:${PROXY_PORT}${NC}  (loopback only)"
 echo -e "  API (mTLS):   ${CYAN}https://localhost:${API_PORT}${NC}"
 echo -e "  Install dir:  $INSTALL_DIR"
 echo ""
-echo -e "  ${BOLD}Log in with the API key from your approval email.${NC}"
+echo -e "  The dashboard listens on localhost only. To reach it from another machine,"
+echo -e "  put a reverse proxy with TLS in front of it or use an SSH tunnel."
 echo -e "  ${BOLD}All data stays on this device. Nothing is sent externally.${NC}"
 echo ""
 echo -e "  Commands:"

@@ -126,21 +126,26 @@ organizations (id, name) · users (id, org_id, email, role) · api_keys (id, org
 ```bash
 export DATABASE_URL="postgres://correlic:correlic@localhost:5432/correlic"
 go run ./cmd/admin migrate up
-go run ./cmd/admin org create "MyOrg"   # outputs API key
-go run ./cmd/api                         # starts server on :8080
+go run ./cmd/admin bootstrap --name Local --certs-dir "$PWD/.certs"   # org, admin, keys, certs, agent.yaml
+TLS_CERT_FILE=.certs/server.crt TLS_KEY_FILE=.certs/server.key MTLS_CA_FILE=.certs/ca.crt \
+LLM_ENCRYPTION_KEY=$(openssl rand -hex 32) go run ./cmd/api        # :8080 (mTLS required)
+TLS_CERT_FILE=.certs/server.crt TLS_KEY_FILE=.certs/server.key MTLS_CA_FILE=.certs/ca.crt go run ./cmd/telemetry   # :8081
 
 # Tests
 go test ./...
-go test ./internal/store/postgres -tags=integration  # needs DB
 ```
 
-## Admin CLI
+## Admin CLI (`cmd/admin`)
 ```bash
-go run ./cmd/admin migrate up|down|status
-go run ./cmd/admin org create "Name"
-go run ./cmd/admin org list
-go run ./cmd/admin org create-key <org-id>
+go run ./cmd/admin migrate up|status
+go run ./cmd/admin bootstrap --name <org> --certs-dir <dir>          # everything a fresh install needs
+go run ./cmd/admin create-org --name <name>                           # prints org_id=
+go run ./cmd/admin create-user --org-id <id> --email <e> --name <n> --role admin|member   # prints user_id=, password=
+go run ./cmd/admin create-service-account --org-id <id> --email <e> --name <n> --role member   # prints user_id=
+go run ./cmd/admin create-api-key --org-id <id> --user-id <uid> --name <n> [--type service|agent]   # prints api_key=
+go run ./cmd/admin enroll-client-cert --org-id <id> --name <n> --cert-file <client.crt>
 ```
+Agent keys (`--type agent`) only reach ingest, heartbeat and agent endpoints; dashboard keys and sessions carry the user's role.
 
 ## Docs (read these for deep context)
 - `docs/SYSTEM_REFERENCE.md` — **START HERE** — master AI context doc
