@@ -658,11 +658,11 @@ func countNetworkFindings(findings []incident.FindingSummary) int {
 // renderSensitiveFiles groups credential_access and excessive_writes file paths by category.
 func renderSensitiveFiles(b *strings.Builder, findings []incident.FindingSummary) {
 	categories := map[string][]string{
-		"SSH keys (.ssh/)":            nil,
+		"SSH keys (.ssh/)":                nil,
 		"Cloud creds (.aws/.gcp/.azure/)": nil,
-		"Env files (.env)":            nil,
-		"Config (/etc/)":              nil,
-		"Other":                       nil,
+		"Env files (.env)":                nil,
+		"Config (/etc/)":                  nil,
+		"Other":                           nil,
 	}
 	catOrder := []string{"SSH keys (.ssh/)", "Cloud creds (.aws/.gcp/.azure/)", "Env files (.env)", "Config (/etc/)", "Other"}
 

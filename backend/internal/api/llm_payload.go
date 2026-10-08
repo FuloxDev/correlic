@@ -15,32 +15,32 @@ import (
 // ---------- LLM-specific types (unexported) ----------
 
 type llmPayload struct {
-	ID              string              `json:"id"`
-	Severity        string              `json:"severity"`
-	Confidence      float64             `json:"confidence"`
-	Title           string              `json:"title"`
-	MITRETechniques []string            `json:"mitre_techniques,omitempty"`
-	HostID          string              `json:"host_id"`
-	StartedAt       time.Time           `json:"started_at"`
-	EndedAt         time.Time           `json:"ended_at"`
-	Status          string              `json:"status"`
-	FindingGroups   []llmFindingGroup   `json:"finding_groups,omitempty"`
-	UniqueFindings  []llmFinding        `json:"unique_findings,omitempty"`
-	Timeline        []llmTimelineEntry  `json:"timeline,omitempty"`
-	ProcessTree     *llmProcessNode     `json:"process_tree,omitempty"`
-	EventGraph      *llmEventGraph      `json:"event_graph,omitempty"`
-	DataTruncated   map[string]int      `json:"_data_truncated,omitempty"`
+	ID              string             `json:"id"`
+	Severity        string             `json:"severity"`
+	Confidence      float64            `json:"confidence"`
+	Title           string             `json:"title"`
+	MITRETechniques []string           `json:"mitre_techniques,omitempty"`
+	HostID          string             `json:"host_id"`
+	StartedAt       time.Time          `json:"started_at"`
+	EndedAt         time.Time          `json:"ended_at"`
+	Status          string             `json:"status"`
+	FindingGroups   []llmFindingGroup  `json:"finding_groups,omitempty"`
+	UniqueFindings  []llmFinding       `json:"unique_findings,omitempty"`
+	Timeline        []llmTimelineEntry `json:"timeline,omitempty"`
+	ProcessTree     *llmProcessNode    `json:"process_tree,omitempty"`
+	EventGraph      *llmEventGraph     `json:"event_graph,omitempty"`
+	DataTruncated   map[string]int     `json:"_data_truncated,omitempty"`
 }
 
 type llmFindingGroup struct {
-	DetectionID     string             `json:"detection_id"`
-	Count           int                `json:"count"`
-	Severity        string             `json:"severity"`
-	ConfidenceRange [2]float64         `json:"confidence_range"`
-	Title           string             `json:"title"`
-	Process         *llmProcess        `json:"process,omitempty"`
-	SampleEvidence  []map[string]any   `json:"sample_evidence"`
-	Patterns        []string           `json:"patterns,omitempty"`
+	DetectionID     string           `json:"detection_id"`
+	Count           int              `json:"count"`
+	Severity        string           `json:"severity"`
+	ConfidenceRange [2]float64       `json:"confidence_range"`
+	Title           string           `json:"title"`
+	Process         *llmProcess      `json:"process,omitempty"`
+	SampleEvidence  []map[string]any `json:"sample_evidence"`
+	Patterns        []string         `json:"patterns,omitempty"`
 }
 
 type llmProcess struct {
@@ -66,12 +66,12 @@ type llmTimelineEntry struct {
 }
 
 type llmProcessNode struct {
-	PID        int              `json:"pid"`
-	PPID       int              `json:"ppid"`
-	Comm       string           `json:"comm"`
-	ExePath    string           `json:"exe_path,omitempty"`
-	AIType     string           `json:"ai_type,omitempty"`
-	FindingIDs []string         `json:"finding_ids,omitempty"`
+	PID        int               `json:"pid"`
+	PPID       int               `json:"ppid"`
+	Comm       string            `json:"comm"`
+	ExePath    string            `json:"exe_path,omitempty"`
+	AIType     string            `json:"ai_type,omitempty"`
+	FindingIDs []string          `json:"finding_ids,omitempty"`
 	Children   []*llmProcessNode `json:"children,omitempty"`
 }
 

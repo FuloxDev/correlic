@@ -394,8 +394,10 @@ func main() {
 			"built-in default must set it to \"correlic-default-key-change-in-prod!\" to keep " +
 			"existing provider settings readable, then rotate.")
 	}
+	// A bad key must not silently drop the AI routes (the agent fetches its
+	// pattern list from /api/v1/ai/patterns), so this is fatal.
 	if llmSettingsStore, err := provider.NewSettingsStore(db, llmEncryptionKey); err != nil {
-		log.Printf("WARNING: LLM settings store initialization failed: %v", err)
+		log.Fatalf("LLM settings store initialization failed: %v", err)
 	} else {
 		var graphStoreForAI *neo4j.GraphStore
 		if graphPersister != nil {

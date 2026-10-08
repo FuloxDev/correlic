@@ -51,10 +51,10 @@ type ChatRequest struct {
 
 // Message represents a chat message.
 type Message struct {
-	Role       string     `json:"role"`                    // "system", "user", "assistant", "tool"
+	Role       string     `json:"role"` // "system", "user", "assistant", "tool"
 	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`    // Tool calls made by the assistant
-	ToolCallID string     `json:"tool_call_id,omitempty"`  // ID of the tool call this message responds to
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`   // Tool calls made by the assistant
+	ToolCallID string     `json:"tool_call_id,omitempty"` // ID of the tool call this message responds to
 }
 
 // ChatResponse represents a response from the LLM.

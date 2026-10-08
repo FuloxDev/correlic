@@ -44,8 +44,10 @@ type SettingsStore struct {
 // are NOT readable by this one (acceptable pre-release — re-enter the provider key
 // in Settings).
 func NewSettingsStore(db *sql.DB, encryptionKey string) (*SettingsStore, error) {
-	if len(encryptionKey) < 32 {
-		return nil, fmt.Errorf("encryption key must be at least 32 bytes")
+	// The value is hashed to a 32-byte AES-256 key, so any length works; a
+	// short value is still a weak key, so insist on a minimum.
+	if len(encryptionKey) < 16 {
+		return nil, fmt.Errorf("LLM_ENCRYPTION_KEY must be at least 16 characters (generate one with `openssl rand -hex 32`)")
 	}
 	sum := sha256.Sum256([]byte(encryptionKey))
 	return &SettingsStore{

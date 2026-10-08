@@ -26,12 +26,12 @@ func NewNeverBaselinesHandler(store *storage.NeverBaselineStore) *NeverBaselines
 type NeverBaselineResponse struct {
 	ID          int    `json:"id"`
 	SignalType  string `json:"signal_type"`
-	Pattern    string `json:"pattern"`
-	Category   string `json:"category,omitempty"`
+	Pattern     string `json:"pattern"`
+	Category    string `json:"category,omitempty"`
 	Description string `json:"description"`
-	Source     string `json:"source"` // "system" or "user"
-	CreatedBy  string `json:"created_by,omitempty"`
-	CreatedAt  string `json:"created_at,omitempty"`
+	Source      string `json:"source"` // "system" or "user"
+	CreatedBy   string `json:"created_by,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
 }
 
 // ListNeverBaselines handles GET /api/v1/baselines/never-baselines
@@ -94,7 +94,7 @@ func (h *NeverBaselinesHandler) CreateNeverBaseline(w http.ResponseWriter, r *ht
 
 	var body struct {
 		SignalType  string `json:"signal_type"`
-		Pattern    string `json:"pattern"`
+		Pattern     string `json:"pattern"`
 		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

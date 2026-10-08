@@ -246,9 +246,9 @@ func NewRegistry(q *query.Service, g *neo4j.GraphStore, intStore *intelligence.S
 // These tools use Pattern for granularity, PID for count, and Since for time range
 // rather than the standard query parameters.
 var IntelligenceToolNames = map[string]bool{
-	"get_system_profile":    true,
-	"get_recent_activity":   true,
-	"get_learned_patterns":  true,
+	"get_system_profile":      true,
+	"get_recent_activity":     true,
+	"get_learned_patterns":    true,
 	"get_false_positive_rate": true,
 }
 

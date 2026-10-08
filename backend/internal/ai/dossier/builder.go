@@ -11,7 +11,7 @@ import (
 // DossierData holds all assembled data for a dossier document.
 type DossierData struct {
 	Detail           *incident.IncidentDetail
-	RelatedIncidents []incident.Incident               // same host, last 30 days, excluding current, max 5
+	RelatedIncidents []incident.Incident                  // same host, last 30 days, excluding current, max 5
 	BaselinesByExe   map[string][]detection.BaselineEntry // exe_path → baselines; may be nil
 	BuiltAt          time.Time
 }

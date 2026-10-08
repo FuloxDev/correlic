@@ -36,12 +36,12 @@ type NotificationEmitter interface {
 
 // Nil-safe: pass nil to disable incident correlation.
 type IncidentCorrelator struct {
-	store               *IncidentStore
-	findingStore        *storage.FindingStore
-	mergeWindow         time.Duration
-	summaryInvalidator  SummaryInvalidator  // optional
-	dossierInvalidator  DossierInvalidator  // optional
-	notifEmitter        NotificationEmitter // optional
+	store              *IncidentStore
+	findingStore       *storage.FindingStore
+	mergeWindow        time.Duration
+	summaryInvalidator SummaryInvalidator  // optional
+	dossierInvalidator DossierInvalidator  // optional
+	notifEmitter       NotificationEmitter // optional
 }
 
 // SetSummaryInvalidator sets the summary invalidator.
