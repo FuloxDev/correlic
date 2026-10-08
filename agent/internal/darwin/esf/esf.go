@@ -14,7 +14,9 @@ package esf
 
 /*
 #cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework EndpointSecurity -framework Foundation
+// Endpoint Security is a header-only framework in the SDK; its symbols are
+// exported by /usr/lib/libEndpointSecurity.dylib, so link the library.
+#cgo LDFLAGS: -lEndpointSecurity -framework Foundation
 #include "esf.h"
 #include <stdlib.h>
 */
