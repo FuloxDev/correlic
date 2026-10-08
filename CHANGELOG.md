@@ -13,6 +13,24 @@ macOS
   build-from-source preview; see `backend/docs/MACOS_AGENT.md`.
 - The minimum macOS version is 11 (Big Sur), which Go 1.26 requires.
 
+macOS eslogger
+- Endpoint Security events without an Apple Developer account: on macOS 13
+  or newer the agent runs Apple's `/usr/bin/eslogger` (root plus Full Disk
+  Access for the agent or its terminal) and gets process exec/exit/fork and
+  file open events with real PIDs in real time. Network connections stay on
+  lsof polling and there is no DNS. The kqueue/FSEvents/lsof pollers remain
+  the fallback; `eslogger_enabled: false` turns the new path off.
+- eslogger is supervised: a startup failure falls back to polling with one
+  WARN naming the fix, a later crash is restarted with backoff (up to five
+  times a minute), shutdown sends SIGTERM then SIGKILL, and the agent's own
+  activity is excluded. Lines eslogger prints that the agent cannot parse
+  are counted and logged, never fatal, since Apple reserves the right to
+  change the format.
+- The Endpoint Security runners are shared between the native ESF client
+  and eslogger (`agent/internal/darwin/esevents`, no build tag, tested on
+  Linux), and `check-compat` reports which path a Mac will use.
+  See `backend/docs/MACOS_AGENT.md`.
+
 Build
 - The backend and the agent require Go 1.26 (golang.org/x/crypto 0.57 and
   golang.org/x/sys 0.48 need it); the Docker build stages use golang:1.26.
