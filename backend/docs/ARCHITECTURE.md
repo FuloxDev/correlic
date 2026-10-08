@@ -143,8 +143,9 @@ See `docs/AI_INTELLIGENCE.md` for the complete AI context assembly flow.
 - `net_dns` — DNS queries
 - `file_open` — File open operations
 - `file_write` — File write operations (USN Journal)
+- `ai_tool_call` — One Claude Code / Cursor tool call reported by `correlic-hook` (source `hook`, all platforms, no kernel driver)
 
-See `docs/LINUX_AGENT.md`, `docs/WINDOWS_AGENT.md`, `docs/MACOS_AGENT.md` for platform details.
+See `docs/LINUX_AGENT.md`, `docs/WINDOWS_AGENT.md`, `docs/MACOS_AGENT.md` and `docs/HOOKS.md` for platform details.
 
 ---
 

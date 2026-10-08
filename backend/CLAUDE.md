@@ -63,6 +63,7 @@ correlic-backend/
 │   ├── LINUX_AGENT.md      # eBPF-based Linux agent
 │   ├── WINDOWS_AGENT.md    # ETW + USN Windows agent
 │   ├── MACOS_AGENT.md      # ESF + kqueue macOS agent
+│   ├── HOOKS.md            # correlic-hook: Claude Code / Cursor tool hooks (ai_tool_call)
 │   ├── LAYERS.md           # 4-layer architecture overview
 │   ├── ROADMAP.md          # v0.3 status + planned features
 │   ├── ai_process_tracking.md  # AI process race condition handling

@@ -12,6 +12,7 @@ Runs on monitored hosts. On Linux it loads eBPF programs into the kernel, reads 
 ```
 agent/
 ├── cmd/agent/              # Entry point (main.go), per-platform wiring (platform_*.go), runtime.go (shutdown, enforcer)
+├── cmd/correlic-hook/      # Claude Code / Cursor hook binary (pure Go, all platforms); logic in internal/hook
 ├── internal/
 │   ├── ebpf/
 │   │   ├── bpf/           # eBPF C programs (*.bpf.c) + vmlinux.h

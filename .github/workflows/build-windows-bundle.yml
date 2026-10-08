@@ -50,6 +50,7 @@ jobs:
             && go build -ldflags="$LD" -o ../bundle/bin/correlic-telemetry.exe ./cmd/telemetry \
             && go build -ldflags="$LD" -o ../bundle/bin/correlic-admin.exe ./cmd/admin)
           (cd agent && go build -ldflags="$LD" -o ../bundle/bin/correlic-agent.exe ./cmd/agent)
+          (cd agent && go build -ldflags="$LD" -o ../bundle/bin/correlic-hook.exe ./cmd/correlic-hook)
 
       - uses: actions/setup-node@v6
         with:

@@ -879,6 +879,7 @@ Write-Host "  Commands:" -ForegroundColor White
 Write-Host "    Start:     " -NoNewline; Write-Host "powershell $InstallDir\start.ps1" -ForegroundColor Gray
 Write-Host "    Stop:      " -NoNewline; Write-Host "powershell $InstallDir\stop.ps1" -ForegroundColor Gray
 Write-Host "    Uninstall: " -NoNewline; Write-Host "powershell $InstallDir\uninstall.ps1" -ForegroundColor Gray
+Write-Host "    AI hooks:  " -NoNewline; Write-Host "$InstallDir\bin\correlic-hook.exe setup" -ForegroundColor Gray; Write-Host "  (Claude Code / Cursor; see backend/docs/HOOKS.md)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  The dashboard listens on localhost only." -ForegroundColor Gray
 Write-Host "  All data stays on this device. Nothing is sent externally." -ForegroundColor Green

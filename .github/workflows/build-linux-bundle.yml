@@ -77,6 +77,7 @@ jobs:
           go generate ./internal/ebpf/...
           for ARCH in $ARCHES; do
             CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH go build -ldflags="-s -w -X main.version=${{ steps.v.outputs.version }}" -o ../build/$ARCH/correlic-agent ./cmd/agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH go build -ldflags="-s -w -X main.version=${{ steps.v.outputs.version }}" -o ../build/$ARCH/correlic-hook ./cmd/correlic-hook
           done
 
       # ── UI + proxy (built here, not downloaded; pure JavaScript, shared by both architectures) ──
@@ -137,6 +138,7 @@ jobs:
             rm -rf pkg
             mkdir -p pkg/usr/bin pkg/etc/correlic pkg/usr/share/correlic pkg/var/lib/correlic/certs pkg/var/log/correlic pkg/lib/systemd/system
             cp build/$ARCH/correlic-api build/$ARCH/correlic-telemetry build/$ARCH/correlic-admin build/$ARCH/correlic-agent pkg/usr/bin/
+            cp build/$ARCH/correlic-hook pkg/usr/bin/
             chmod 755 pkg/usr/bin/*
             cp install/gen-certs.sh pkg/etc/correlic/gen-certs.sh && chmod 755 pkg/etc/correlic/gen-certs.sh
             cp -r backend/migrations pkg/usr/share/correlic/migrations
@@ -156,6 +158,7 @@ jobs:
             rm -rf bundle
             mkdir -p bundle/bin bundle/certs bundle/logs
             cp build/$ARCH/correlic-api build/$ARCH/correlic-telemetry build/$ARCH/correlic-admin build/$ARCH/correlic-agent bundle/bin/
+            cp build/$ARCH/correlic-hook bundle/bin/
             cp -r build/$ARCH/node bundle/node
             cp -r build/ui bundle/ui
             cp -r build/ui-proxy bundle/ui-proxy

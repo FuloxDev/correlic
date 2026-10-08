@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+AI tool hooks
+- New `correlic-hook` binary (`agent/cmd/correlic-hook`, pure Go, Linux /
+  macOS / Windows) that Claude Code and Cursor run on every tool call. It
+  records the command, file or URL and the session as an `ai_tool_call`
+  event (source `hook`, same host id and credentials as the agent), denies
+  calls that match the org's `process_exec` / `file_open` block rules before
+  they run and reports the block, fails open on any error within a ~2 s
+  budget, and spools undelivered events (bounded) for the next invocation.
+  `correlic-hook setup` merges the hook entries into `~/.claude/settings.json`
+  and `~/.cursor/hooks.json` (or a project's) idempotently; `test` sends a
+  synthetic event. Config: `~/.correlic/hook.yaml` or `CORRELIC_*` env vars.
+  Only commands, paths, names and ids are sent, never contents or prompts.
+- Backend: `ai_tool_call` is always kept by the sampler, shown in the agent
+  activity stream (hook-only sessions are named `claude-code (hooks)` /
+  `cursor (hooks)`, denied calls are high significance) and evaluated by the
+  new `ai.tool_call_sensitive_path` rule, which fires when a hook command or
+  file path matches the sampler's suspicious-path patterns.
+- UI: `ai_tool_call` renders as "AI tool call" with its command/path in the
+  live activity feed, incident timeline and event graph.
+- Packaging: `correlic-hook` / `correlic-hook.exe` ships next to the agent
+  in the Linux and Windows bundles, the .deb/.rpm and the installers.
+  Documented in `backend/docs/HOOKS.md`.
+
 macOS
 - The Endpoint Security collectors (exec/exit, file open, DNS lookup with
   real PIDs) are wired into the agent behind the `esf` build tag, with

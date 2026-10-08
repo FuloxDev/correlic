@@ -153,3 +153,115 @@ func TestPickRoot_PrefersProcessNamedLikeTheAIType(t *testing.T) {
 		t.Fatalf("pickRoot(windows cursor) = %+v, want pid 2", r)
 	}
 }
+
+func hookEvent(id, host string, ts time.Time, pid int, ctx map[string]any) event.Event {
+	base := map[string]any{"is_ai": true, "ai_type": "claude-code", "ai_session_id": "hook-sess", "hook_event": "PreToolUse", "phase": "pre", "decision": "allowed"}
+	for k, v := range ctx {
+		base[k] = v
+	}
+	evt := event.Event{ID: id, HostID: host, Type: "ai_tool_call", Timestamp: ts, Process: &event.ActorStruct{PID: pid, Comm: "claude", User: "alice"}, Context: base}
+	if fp, ok := base["file_path"].(string); ok {
+		evt.Target = &event.TargetStruct{FilePath: fp}
+	}
+	return evt
+}
+
+func TestBuildActivityStream_HookOnlySessionIsNamedAfterTheTool(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	since := now.Add(-30 * time.Minute)
+	events := []event.Event{
+		// newest first
+		hookEvent("k6", "mac", now.Add(-1*time.Minute), 500, map[string]any{"tool_name": "Bash", "command": "cat /etc/shadow", "decision": "blocked", "block_rule_id": 3, "tool_use_id": "t6"}),
+		hookEvent("k5", "mac", now.Add(-2*time.Minute), 500, map[string]any{"tool_name": "Bash", "command": "git push", "phase": "post", "hook_event": "PostToolUse", "tool_use_id": "t4", "success": true}),
+		hookEvent("k4", "mac", now.Add(-3*time.Minute), 500, map[string]any{"tool_name": "Bash", "command": "git push", "tool_use_id": "t4"}),
+		hookEvent("k3", "mac", now.Add(-4*time.Minute), 500, map[string]any{"tool_name": "Edit", "file_path": "/Users/alice/proj/main.go", "tool_use_id": "t3"}),
+		hookEvent("k2", "mac", now.Add(-5*time.Minute), 500, map[string]any{"tool_name": "Read", "file_path": "/Users/alice/proj/README.md", "tool_use_id": "t2"}),
+		hookEvent("k1", "mac", now.Add(-6*time.Minute), 500, map[string]any{"hook_event": "SessionStart", "phase": "session"}),
+	}
+
+	resp := buildActivityStream(events, nil, since, now, 2)
+	if len(resp.Agents) != 1 {
+		t.Fatalf("agents = %d, want 1", len(resp.Agents))
+	}
+	a := resp.Agents[0]
+	if a.AgentName != "claude-code (hooks)" || a.AIType != "claude-code" || a.HostID != "mac" || a.AgentPID != 500 {
+		t.Errorf("identity = %+v", a)
+	}
+	if !a.StartedAt.Equal(now.Add(-6 * time.Minute)) {
+		t.Errorf("started = %s, want the session start event", a.StartedAt)
+	}
+	// session start is significance 1 (filtered); the post event pairs with its pre; four actions remain.
+	if len(a.Actions) != 4 {
+		t.Fatalf("actions = %d: %+v", len(a.Actions), a.Actions)
+	}
+	ids := []string{a.Actions[0].EventID, a.Actions[1].EventID, a.Actions[2].EventID, a.Actions[3].EventID}
+	if ids[0] != "k2" || ids[1] != "k3" || ids[2] != "k4" || ids[3] != "k6" {
+		t.Errorf("action order = %v", ids)
+	}
+	read, edit, push, blocked := a.Actions[0], a.Actions[1], a.Actions[2], a.Actions[3]
+	if read.Category != "file" || read.Significance != 3 || read.Detail != "Read: /Users/alice/proj/README.md" || read.EventType != "ai_tool_call" {
+		t.Errorf("read action = %+v", read)
+	}
+	if edit.Category != "file" || edit.Significance != 5 || edit.Action != "📝 Edited /Users/alice/proj/main.go" {
+		t.Errorf("edit action = %+v", edit)
+	}
+	if push.Category != "command" || push.Significance != 4 || push.Action != "⚙️ Ran: git push" || push.Detail != "Bash: git push" {
+		t.Errorf("push action = %+v", push)
+	}
+	if blocked.Significance != 5 || blocked.Category != "command" || blocked.Action != "⛔ Blocked: ⚙️ cat /etc/shadow" {
+		t.Errorf("blocked action = %+v", blocked)
+	}
+	if blocked.ProcessPID != 500 || blocked.ProcessComm != "claude" {
+		t.Errorf("blocked actor = %+v", blocked)
+	}
+	if a.Stats.FilesRead != 1 || a.Stats.FilesModified != 1 || a.Stats.CommandsRun != 2 || a.Stats.TotalEvents != 4 {
+		t.Errorf("stats = %+v", a.Stats)
+	}
+	if a.ChildCount != 0 {
+		t.Errorf("child_count = %d", a.ChildCount)
+	}
+}
+
+func TestBuildActivityStream_HookEventsJoinAKernelSession(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	ctx := map[string]any{"ai_session_id": "mixed", "is_ai": true, "ai_type": "claude"}
+	events := []event.Event{
+		activityEvent("m2", "h1", "process_exec", now.Add(-time.Minute), event.ActorStruct{PID: 11, Comm: "git", Cmdline: []string{"git", "push"}}, nil, ctx),
+		hookEvent("m1", "h1", now.Add(-2*time.Minute), 10, map[string]any{"ai_session_id": "mixed", "ai_type": "claude", "tool_name": "WebFetch", "url": "https://pastebin.com/raw/x"}),
+	}
+	roots := map[string][]sessionRoot{"mixed": {{StartedAt: now.Add(-time.Hour), PID: 10, Comm: "claude", ExePath: "/usr/bin/claude"}}}
+	resp := buildActivityStream(events, roots, now.Add(-time.Hour), now, 2)
+	if len(resp.Agents) != 1 {
+		t.Fatalf("agents = %d, want 1 (hook and kernel events share the session)", len(resp.Agents))
+	}
+	a := resp.Agents[0]
+	if a.AgentName != "claude" || a.AgentPID != 10 {
+		t.Errorf("a recorded root keeps its name: %+v", a)
+	}
+	if len(a.Actions) != 2 || a.Actions[0].Category != "network" || a.Actions[0].Action != "🌐 Fetched https://pastebin.com/raw/x" || a.Actions[0].Significance != 3 {
+		t.Errorf("actions = %+v", a.Actions)
+	}
+	if a.Stats.Connections != 1 || a.Stats.CommandsRun != 1 {
+		t.Errorf("stats = %+v", a.Stats)
+	}
+}
+
+func TestBuildToolCallAction_Fallbacks(t *testing.T) {
+	now := time.Now()
+	mcp := hookEvent("x1", "h", now, 1, map[string]any{"tool_name": "mcp__github__create_issue"})
+	if act, write := buildToolCallAction(&mcp); act.Significance != 2 || act.Category != "command" || write || act.Detail != "mcp__github__create_issue: mcp__github__create_issue" {
+		t.Errorf("mcp action = %+v write=%v", act, write)
+	}
+	end := hookEvent("x2", "h", now, 1, map[string]any{"hook_event": "sessionEnd", "phase": "session"})
+	if act, _ := buildToolCallAction(&end); act.Action != "session ended" || act.Significance != 1 {
+		t.Errorf("session end = %+v", act)
+	}
+	bare := hookEvent("x3", "h", now, 1, nil)
+	if act, _ := buildToolCallAction(&bare); act.Action != "AI tool call" || act.Significance != 1 {
+		t.Errorf("bare = %+v", act)
+	}
+	cursorEdit := hookEvent("x4", "h", now, 1, map[string]any{"ai_type": "cursor", "tool_name": "file_edit", "file_path": "/w/app.ts", "phase": "post", "hook_event": "afterFileEdit"})
+	if act, write := buildToolCallAction(&cursorEdit); !write || act.Significance != 5 {
+		t.Errorf("cursor afterFileEdit = %+v write=%v", act, write)
+	}
+}
