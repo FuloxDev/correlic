@@ -1,6 +1,6 @@
 {
   "name": "correlic-ui-proxy",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Correlic UI proxy",
   "main": "index.js",
   "type": "module",

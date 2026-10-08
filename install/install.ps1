@@ -7,7 +7,7 @@
 # ============================================================
 
 $ErrorActionPreference = "Stop"
-$Version = "v1.0.0"
+$Version = "v1.0.1"
 $InstallDir = "C:\Correlic"
 $BaseURL = if ($env:CORRELIC_BUNDLE_BASE_URL) { $env:CORRELIC_BUNDLE_BASE_URL } else { "https://github.com/FuloxDev/correlic/releases/download/$Version" }
 $BundleFile = "correlic-windows-$Version.zip"

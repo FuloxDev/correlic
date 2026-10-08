@@ -7,7 +7,7 @@
 #     -v /sys/kernel:/sys/kernel:ro \
 #     -v correlic-data:/var/lib/correlic \
 #     -p 127.0.0.1:3001:3001 \
-#     ghcr.io/fuloxdev/correlic:latest
+#     ghcr.io/fuloxdev/correlic:v1.0.1
 #
 # On first start the container prints the dashboard API key and an admin
 # email/password (docker logs correlic); they are also stored in

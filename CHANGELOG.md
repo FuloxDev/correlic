@@ -1,6 +1,8 @@
 # Changelog
 
-## v1.0.1 (unreleased)
+## v1.0.1 (2026-10-08)
+
+Release: https://github.com/FuloxDev/correlic/releases/tag/v1.0.1
 
 Security
 - Removed the dashboard's automatic login with a server-side API key and the
@@ -51,7 +53,7 @@ First run
 - The all-in-one image keeps certificates and Neo4j data in the data volume
   and binds the dashboard to 127.0.0.1.
 
-## v1.0.0
+## v1.0.0 (2026-10-07)
 
 First open-source release: single MIT-licensed repository, no hosted
 dependency, no feature tiers.
