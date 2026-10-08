@@ -24,6 +24,7 @@ package esf
 import "C"
 import (
 	"fmt"
+	"runtime/cgo"
 	"strings"
 	"time"
 	"unsafe"
@@ -75,8 +76,9 @@ type Event struct {
 
 // Client wraps the ESF client and exposes a Go channel of events.
 type Client struct {
-	handle *C.correlic_es_client_t
-	events chan Event
+	handle   *C.correlic_es_client_t
+	goHandle cgo.Handle // echoed back by the C callback; never a Go pointer in C memory
+	events   chan Event
 }
 
 // NewClient creates a new ESF client.
@@ -87,18 +89,19 @@ func NewClient() (*Client, error) {
 		events: make(chan Event, 4096),
 	}
 
-	// Register the Go channel pointer in the global map so the C callback can find it.
-	chanPtr := registerClient(c)
+	// Hand C an opaque cgo.Handle rather than a Go pointer; the callback
+	// resolves it back to this Client.
+	c.goHandle = cgo.NewHandle(c)
 
 	var outErr *C.char
-	handle := C.correlic_es_new_client(chanPtr, &outErr)
+	handle := C.correlic_es_new_client(C.uintptr_t(c.goHandle), &outErr)
 	if handle == nil {
 		errMsg := "es_new_client failed"
 		if outErr != nil {
 			errMsg = C.GoString(outErr)
 			C.free(unsafe.Pointer(outErr))
 		}
-		unregisterClient(chanPtr)
+		c.goHandle.Delete()
 		return nil, fmt.Errorf("esf: %s", errMsg)
 	}
 
@@ -136,6 +139,8 @@ func (c *Client) Close() {
 	if c.handle != nil {
 		C.correlic_es_destroy(c.handle)
 		c.handle = nil
+		// No callbacks can arrive once the ES client is deleted.
+		c.goHandle.Delete()
 	}
 	close(c.events)
 }
@@ -144,22 +149,10 @@ func (c *Client) Close() {
 // CGO export: called from C callback into Go
 // ---------------------------------------------------------------------------
 
-// clientRegistry maps unsafe.Pointer keys to *Client so the C callback can
-// dispatch events to the correct Go channel.
-var clientRegistry = newClientRegistry()
-
-func registerClient(c *Client) unsafe.Pointer {
-	return clientRegistry.register(c)
-}
-
-func unregisterClient(ptr unsafe.Pointer) {
-	clientRegistry.unregister(ptr)
-}
-
 //export correlic_send_event
-func correlic_send_event(goChan unsafe.Pointer, cEv *C.correlic_es_event_t) {
-	c := clientRegistry.lookup(goChan)
-	if c == nil {
+func correlic_send_event(goHandle C.uintptr_t, cEv *C.correlic_es_event_t) {
+	c, ok := cgo.Handle(goHandle).Value().(*Client)
+	if !ok || c == nil {
 		return
 	}
 

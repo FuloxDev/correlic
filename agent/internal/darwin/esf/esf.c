@@ -111,7 +111,7 @@ static void esf_message_handler(es_client_t *client, const es_message_t *msg, vo
     }
 
     // Forward to Go via CGO export
-    correlic_send_event(wrapper->go_chan, &ev);
+    correlic_send_event(wrapper->go_handle, &ev);
 
     // Auto-respond to AUTH events (we only subscribe to NOTIFY, but be safe)
     if (msg->action_type == ES_ACTION_TYPE_AUTH) {
@@ -123,13 +123,13 @@ static void esf_message_handler(es_client_t *client, const es_message_t *msg, vo
 // Public API
 // ---------------------------------------------------------------------------
 
-correlic_es_client_t *correlic_es_new_client(void *go_chan, char **out_err) {
+correlic_es_client_t *correlic_es_new_client(uintptr_t go_handle, char **out_err) {
     correlic_es_client_t *wrapper = calloc(1, sizeof(correlic_es_client_t));
     if (!wrapper) {
         if (out_err) *out_err = strdup("out of memory");
         return NULL;
     }
-    wrapper->go_chan = go_chan;
+    wrapper->go_handle = go_handle;
 
     es_new_client_result_t result = es_new_client(&wrapper->es_client, ^(es_client_t *c, const es_message_t *msg) {
         esf_message_handler(c, msg, wrapper);
