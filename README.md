@@ -10,6 +10,11 @@ your own LLM key.
 Everything runs on your own infrastructure. There is no hosted component and
 no telemetry to the project.
 
+**Current release: [v1.0.1](https://github.com/FuloxDev/correlic/releases/tag/v1.0.1)** (2026-10-08).
+Each release ships container images on `ghcr.io/fuloxdev`, a Linux bundle
+(tar.gz, `.deb`, `.rpm`) and a Windows bundle, each with SHA-256 checksums.
+Changes are listed in `CHANGELOG.md`.
+
 ## Layout
 
 | Directory | What it is | Stack |
@@ -36,11 +41,13 @@ docker run -d --name correlic --restart unless-stopped \
   -v /sys/kernel:/sys/kernel:ro \
   -v correlic-data:/var/lib/correlic \
   -p 127.0.0.1:3001:3001 \
-  ghcr.io/fuloxdev/correlic:latest
+  ghcr.io/fuloxdev/correlic:v1.0.1
 docker logs correlic        # first start prints the dashboard API key and admin password
 open http://localhost:3001
 ```
 
+`ghcr.io/fuloxdev/correlic:latest` always points at the newest release; pin
+the version tag for reproducible installs.
 The credentials are also kept in `/var/lib/correlic/dashboard-credentials`
 inside the data volume (`docker exec correlic cat /var/lib/correlic/dashboard-credentials`).
 The agent needs a Linux kernel 5.8+ with BTF (`/sys/kernel/btf/vmlinux`).
@@ -60,15 +67,26 @@ docker compose logs bootstrap   # shows the dashboard API key and admin password
 curl -sSL https://raw.githubusercontent.com/FuloxDev/correlic/main/install/install.sh | sudo bash
 ```
 
-It downloads the release bundle, verifies its checksum, installs PostgreSQL and
-Neo4j if missing, creates the credentials and starts five systemd units. A
-`.deb`/`.rpm` is attached to each release for package-managed hosts.
+It downloads the v1.0.1 bundle (`correlic-linux-v1.0.1.tar.gz`), verifies it
+against `SHA256SUMS-linux.txt`, installs PostgreSQL and Neo4j if missing,
+creates the credentials and starts five systemd units. Set
+`CORRELIC_BUNDLE_URL` to install a different build. For package-managed hosts
+the release also carries
+[`correlic_1.0.1_amd64.deb`](https://github.com/FuloxDev/correlic/releases/download/v1.0.1/correlic_1.0.1_amd64.deb)
+and
+[`correlic-1.0.1-1.x86_64.rpm`](https://github.com/FuloxDev/correlic/releases/download/v1.0.1/correlic-1.0.1-1.x86_64.rpm).
 
 ### Windows
 
 ```powershell
 irm https://raw.githubusercontent.com/FuloxDev/correlic/main/install/install.ps1 | iex
 ```
+
+The script downloads
+[`correlic-windows-v1.0.1.zip`](https://github.com/FuloxDev/correlic/releases/download/v1.0.1/correlic-windows-v1.0.1.zip)
+(PostgreSQL, Neo4j, a Java runtime and Node.js are bundled, about 590 MB),
+installs it and starts Correlic. To add only the agent on another Windows
+machine, run `install/install-agent.ps1` from the same release.
 
 ### From source
 
@@ -145,7 +163,11 @@ policy and deployment notes; `CONTRIBUTING.md` the build and test commands.
 CI (`.github/workflows/ci.yml`) builds, vets and tests `backend/` and
 `agent/` (with eBPF generation) and lints and builds `ui/` and `ui-proxy/`.
 Release workflows build the container images and the Linux and Windows
-install bundles from this repository alone.
+install bundles from this repository alone: dispatch `release-images`,
+`build-linux-bundle` and `build-windows-bundle` on `main` with the version
+(for example `v1.0.1`). The bundle workflows create a draft GitHub release;
+publishing it creates the tag. Bump the version pinned in `install/` and in
+this README in the same change.
 
 ## License
 

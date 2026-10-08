@@ -7,6 +7,9 @@
 #   docker compose logs bootstrap   # shows the dashboard login (API key, admin password) on first start
 #   open http://localhost:3001
 #
+# Images are pinned to the v1.0.1 release (https://github.com/FuloxDev/correlic/releases/tag/v1.0.1);
+# the `latest` tag tracks the newest release.
+#
 # The bootstrap service creates the organisation, a dashboard admin (API key
 # and email/password) and a separate, restricted key for the agent. The
 # credentials are also stored in the correlic-certs volume as
@@ -43,7 +46,7 @@ services:
 
   # ── Bootstrap: migrations + org + admin + agent key + agent config (first run)
   bootstrap:
-    image: ghcr.io/fuloxdev/correlic-backend:latest
+    image: ghcr.io/fuloxdev/correlic-backend:v1.0.1
     entrypoint: [""]
     command: >
       sh -c '
@@ -133,7 +136,7 @@ services:
 
   # ── Backend API ───────────────────────────────────────────
   backend-api:
-    image: ghcr.io/fuloxdev/correlic-backend:latest
+    image: ghcr.io/fuloxdev/correlic-backend:v1.0.1
     command: ["api"]
     environment:
       DATABASE_URL: postgres://correlic:${DB_PASSWORD}@db:5432/correlic?sslmode=disable
@@ -162,7 +165,7 @@ services:
 
   # ── Backend Telemetry ─────────────────────────────────────
   backend-tel:
-    image: ghcr.io/fuloxdev/correlic-backend:latest
+    image: ghcr.io/fuloxdev/correlic-backend:v1.0.1
     command: ["telemetry"]
     environment:
       DATABASE_URL: postgres://correlic:${DB_PASSWORD}@db:5432/correlic?sslmode=disable
@@ -190,7 +193,7 @@ services:
 
   # ── eBPF Agent ────────────────────────────────────────────
   agent:
-    image: ghcr.io/fuloxdev/correlic-agent:latest
+    image: ghcr.io/fuloxdev/correlic-agent:v1.0.1
     privileged: true
     pid: host
     entrypoint: [""]
@@ -218,7 +221,7 @@ services:
   # Log in with the API key or admin password printed by the bootstrap service.
   # Bound to 127.0.0.1 by default; use "3001:3001" to expose it on the network.
   ui:
-    image: ghcr.io/fuloxdev/correlic-ui:latest
+    image: ghcr.io/fuloxdev/correlic-ui:v1.0.1
     ports:
       - "127.0.0.1:3001:3001"
     environment:
@@ -235,7 +238,7 @@ services:
 
   # ── UI Proxy (mTLS handler — internal only) ──────────────
   ui-proxy:
-    image: ghcr.io/fuloxdev/correlic-ui-proxy:latest
+    image: ghcr.io/fuloxdev/correlic-ui-proxy:v1.0.1
     environment:
       PORT: 8788
       BIND_HOST: 0.0.0.0

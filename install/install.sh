@@ -7,7 +7,7 @@ set -euo pipefail
 # Usage: curl -sSL https://raw.githubusercontent.com/FuloxDev/correlic/main/install/install.sh | sudo bash
 # ============================================================
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 INSTALL_DIR="/opt/correlic"
 BUNDLE_URL="${CORRELIC_BUNDLE_URL:-https://github.com/FuloxDev/correlic/releases/download/v${VERSION}/correlic-linux-v${VERSION}.tar.gz}"
 TOTAL_STEPS=10

@@ -1,6 +1,6 @@
 # Correlic roadmap
 
-**Current version:** v1.0.x (open-source, MIT)
+**Current version:** v1.0.1 (open-source, MIT), released 2026-10-08
 
 Correlic is self-hosted software. Nothing in this document refers to a hosted
 service; every feature listed runs on your own machines.
