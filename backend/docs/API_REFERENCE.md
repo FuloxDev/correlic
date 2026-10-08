@@ -338,7 +338,7 @@ All endpoints in this section are **conditional** -- only registered when Neo4j 
 | GET | `/processes/tree` | authed, conditional | Interactive process tree for the UI. |
 | GET | `/processes/activity` | authed, conditional | Process activity stream (file, network, registry events by process). |
 | GET | `/processes/summary` | authed, conditional | Process network summary (per-process connection stats). |
-| GET | `/agents/activity` | authed, conditional | Human-readable agent activity feed (action stream). |
+| GET | `/agents/activity` | authed | Human-readable agent activity feed (action stream). Served from Neo4j when configured, else from the events table using the agent's AI session tags. |
 
 ---
 

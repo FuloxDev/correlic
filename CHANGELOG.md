@@ -27,12 +27,18 @@ Detection
   ...) now match anywhere in the path. Previously they only matched absolute
   prefixes and never fired.
 - Finding ids and cooldown keys are qualified by organisation.
+- The Agent Activity page and the dashboard's live feed work without Neo4j:
+  `/agents/activity` is built from the events table using the agent's AI
+  session tags when the graph is not configured.
 
 Agent
 - Thread exits no longer unregister the whole process.
 - AI tools are matched on executable and argument basenames, not substrings of
-  the whole command line (a branch named `claude/...` no longer makes `git`
-  an AI session).
+  the whole command line (a branch named `claude/...` or a path under a
+  `claude-*` directory no longer makes `git` or `ls` an AI session).
+- The startup `/proc` scan registers a matching process below another
+  matching process as a descendant; one running tree no longer splits into
+  two sessions.
 - Patterns are refreshed periodically and cached on disk; heartbeats are sent;
   the primary ingest path retries with backoff.
 - Missing or invalid config files are an error instead of silent defaults.

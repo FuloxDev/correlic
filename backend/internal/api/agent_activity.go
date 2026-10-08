@@ -11,14 +11,16 @@ import (
 )
 
 // AgentActivityHandler returns the agent activity stream — a human-readable,
-// significance-scored feed of what each AI agent is doing.
+// significance-scored feed of what each AI agent is doing. The source is the
+// Neo4j timeline service when the graph is configured, else the PostgreSQL
+// stream built from the agent's AI session tags.
 //
 // GET /agents/activity?interval=30&min_significance=2
 //
 // Parameters:
-//   - interval: time window in minutes (default: 30)
+//   - interval: time window in minutes (default: 30, max: 10080)
 //   - min_significance: minimum significance score 1-5 (default: 2)
-func AgentActivityHandler(timelineService *query.TimelineService) http.Handler {
+func AgentActivityHandler(source query.AgentActivitySource) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			MethodNotAllowed(w, http.MethodGet)
@@ -30,13 +32,11 @@ func AgentActivityHandler(timelineService *query.TimelineService) http.Handler {
 			Unauthorized(w, "missing org context")
 			return
 		}
-		_ = orgID // Will use for multi-tenant filtering later
-
-		// Parse interval parameter (minutes)
+		// Parse interval parameter (minutes), capped at one week.
 		intervalMinutes := 30 // default 30 minutes
 		if intervalStr := r.URL.Query().Get("interval"); intervalStr != "" {
 			if parsed, err := strconv.Atoi(intervalStr); err == nil && parsed > 0 {
-				intervalMinutes = parsed
+				intervalMinutes = min(parsed, 7*24*60)
 			}
 		}
 		since := time.Now().Add(-time.Duration(intervalMinutes) * time.Minute)
@@ -49,7 +49,7 @@ func AgentActivityHandler(timelineService *query.TimelineService) http.Handler {
 			}
 		}
 
-		response, err := timelineService.GetAgentActivityStream(r.Context(), since, minSignificance)
+		response, err := source.GetAgentActivityStream(r.Context(), orgID, since, minSignificance)
 		if err != nil {
 			InternalErr(w, "agent activity query", err)
 			return

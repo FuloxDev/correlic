@@ -719,12 +719,21 @@ func main() {
 		mux.Handle("/processes/tree", wrapAuthed(api.ProcessTimelineHandler(timelineService)))
 		mux.Handle("/processes/activity", wrapAuthed(api.ProcessActivityHandler(timelineService)))
 		mux.Handle("/processes/summary", wrapAuthed(api.ProcessNetworkSummaryHandler(timelineService)))
-		// Agent activity stream (human-readable action feed)
-		mux.Handle("/agents/activity", wrapAuthed(api.AgentActivityHandler(timelineService)))
 		log.Println("Neo4j timeline endpoints enabled: /neo4j/timeline, /neo4j/process-tree, /neo4j/attack-path")
 		log.Println("Process timeline endpoints enabled: /processes/tree, /processes/activity, /processes/summary")
-		log.Println("Agent activity endpoint enabled: /agents/activity")
 	}
+	// Agent activity stream (human-readable action feed). Always available: the
+	// dashboard feed and the Agent Activity page depend on it. Served from the
+	// graph when Neo4j is configured, else from the events table via the
+	// agent's AI session tags.
+	var activitySource query.AgentActivitySource = query.NewPostgresActivityStream(db)
+	activityBackend := "postgres"
+	if timelineService != nil {
+		activitySource = timelineService
+		activityBackend = "neo4j"
+	}
+	mux.Handle("/agents/activity", wrapAuthed(api.AgentActivityHandler(activitySource)))
+	log.Printf("Agent activity endpoint enabled: /agents/activity (source: %s)", activityBackend)
 	if investigationService != nil {
 		mux.Handle("/neo4j/investigation/", wrapAuthed(api.InvestigationHandler(investigationService)))
 		log.Println("Neo4j investigation endpoints enabled: /neo4j/investigation/*")

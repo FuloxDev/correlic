@@ -630,7 +630,7 @@ function ActivityStreamView({
             {/* Agent cards */}
             {data.agents.map((agent) => (
                 <AgentCard
-                    key={agent.agent_pid}
+                    key={`${agent.host_id}-${agent.ai_type}-${agent.agent_pid}`}
                     agent={agent}
                     isExpanded={expandedAgents.has(agent.agent_pid)}
                     onToggle={() => toggleAgent(agent.agent_pid)}

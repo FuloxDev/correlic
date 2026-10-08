@@ -75,7 +75,7 @@ Use `pahole` to verify layout before parsing. `exit_collector_test.go` / `fork_c
 
 ## AI Process Tracking (internal/lineage)
 - Patterns come from the backend (`GET /api/v1/ai/patterns`), are refreshed every 5 min and cached in the state dir (`/var/lib/correlic/ai_patterns.json`) so detection works at boot without the backend. Patterns shorter than 3 chars or containing a dot are ignored for process matching.
-- Matching is **whole-token**: a pattern matches a token (comm, exe path, each argv element) when the token or one of its path components equals the pattern or starts with it followed by `-`, `.` or `_`. The joined command line is never substring-matched (`cc -o optimized` does not match `zed`).
+- Matching is **whole-token**. Identity tokens (comm, exe path, argv[0]) match when the token or any of its path components equals the pattern or starts with it followed by `-`, `.` or `_`. Arguments (argv[1..]) match only on their final path component (`aider`, `@anthropic-ai/claude-code`), or on a directory component when the argument is an existing regular file (`node .../claude-code/cli.js`), so `git checkout claude/feature` and `ls /tmp/claude-0/x` are not AI processes. The joined command line is never substring-matched (`cc -o optimized` does not match `zed`).
 - **Inheritance first**: a child of a process in an AI session always joins that session, even if its own name matches a pattern. Roots (direct matches without an AI parent) open a new session UUID with `ai_type` = matched pattern.
 - Every event of an AI tree carries `context.ai_session_id`, `context.is_ai=true` and `context.ai_type` (use `tracker.Annotate(ctx, pid)`); this includes the startup `/proc` scan.
 - Exited PIDs stay matchable for a 10 s grace period for late-arriving events.

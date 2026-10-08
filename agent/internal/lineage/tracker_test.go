@@ -1,6 +1,8 @@
 package lineage
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -153,6 +155,36 @@ func TestMatchToken(t *testing.T) {
 	}
 }
 
+func TestMatchArgToken(t *testing.T) {
+	restore := isRegularFile
+	isRegularFile = func(_ uint32, path string) bool {
+		return path == "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+	}
+	defer func() { isRegularFile = restore }()
+	tests := []struct {
+		token   string
+		pattern string
+		want    bool
+	}{
+		{"claude", "claude", true},
+		{"claude.js", "claude", true},
+		{"@anthropic-ai/claude-code", "claude", true},
+		{"/opt/tools/claude", "claude", true},
+		{"/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", "claude", true},
+		{"/usr/lib/node_modules/@anthropic-ai/claude-code/missing.js", "claude", false},
+		{"claude/feature-x", "claude", false},
+		{"/tmp/claude-0/work", "claude", false},
+		{"--claude", "claude", false},
+		{"myclaude", "claude", false},
+		{"", "claude", false},
+	}
+	for _, tt := range tests {
+		if got := MatchArgToken(tt.token, tt.pattern); got != tt.want {
+			t.Errorf("MatchArgToken(%q, %q) = %v, want %v", tt.token, tt.pattern, got, tt.want)
+		}
+	}
+}
+
 func TestMatchCommand(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -168,6 +200,58 @@ func TestMatchCommand(t *testing.T) {
 			exe:      "/usr/bin/git",
 			argv:     []string{"git", "rebase", "--continue"},
 			wantOK:   false,
+		},
+		{
+			name:     "git checkout of a claude/ branch is not AI",
+			patterns: []string{"claude"},
+			exe:      "/usr/bin/git",
+			argv:     []string{"git", "checkout", "claude/feature-x"},
+			wantOK:   false,
+		},
+		{
+			name:     "git push of a claude/ branch is not AI",
+			patterns: []string{"claude"},
+			exe:      "/usr/bin/git",
+			argv:     []string{"git", "push", "-u", "origin", "claude/feature-x"},
+			wantOK:   false,
+		},
+		{
+			name:     "listing a path under a claude-named directory is not AI",
+			patterns: []string{"claude"},
+			exe:      "/usr/bin/ls",
+			argv:     []string{"ls", "/tmp/claude-0/work"},
+			wantOK:   false,
+		},
+		{
+			name:     "shell script string mentioning claude paths is not AI",
+			patterns: []string{"claude"},
+			exe:      "/usr/bin/bash",
+			argv:     []string{"/bin/bash", "-c", "source /root/.claude/snap.sh && ls /tmp/claude-0/x"},
+			wantOK:   false,
+		},
+		{
+			name:     "npx @anthropic-ai/claude-code is AI",
+			patterns: []string{"claude"},
+			exe:      "/usr/bin/node",
+			argv:     []string{"npx", "@anthropic-ai/claude-code"},
+			wantOK:   true,
+			wantType: "claude",
+		},
+		{
+			name:     "python -m aider is AI",
+			patterns: []string{"aider"},
+			exe:      "/usr/bin/python3",
+			argv:     []string{"python3", "-m", "aider", "--model", "x"},
+			wantOK:   true,
+			wantType: "aider",
+		},
+		{
+			name:     "argv0 renamed to claude is AI",
+			patterns: []string{"claude"},
+			exe:      "/usr/bin/bash",
+			argv:     []string{"claude", "-c", "cat x"},
+			wantOK:   true,
+			wantType: "claude",
 		},
 		{
 			name:     "claude code under node is AI",
@@ -214,6 +298,10 @@ func TestMatchCommand(t *testing.T) {
 			wantOK:   false,
 		},
 	}
+	// Only the Claude Code entry point exists as a file in this test.
+	restore := isRegularFile
+	isRegularFile = func(_ uint32, path string) bool { return strings.HasSuffix(path, "/claude-code/cli.js") }
+	defer func() { isRegularFile = restore }()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ResetForTesting()
@@ -234,6 +322,9 @@ func TestRegisterProcessWithCommand_RootViaArgv(t *testing.T) {
 	ResetForTesting()
 	tracker := GetLineageTracker()
 	tracker.UpdatePatterns([]string{"claude"})
+	restore := isRegularFile
+	isRegularFile = func(_ uint32, path string) bool { return strings.HasSuffix(path, "/claude-code/cli.js") }
+	defer func() { isRegularFile = restore }()
 
 	// comm is the generic runtime; the tool name is only in argv.
 	ok := tracker.RegisterProcessWithCommand(10, 1, "node", "/usr/bin/node",
@@ -316,5 +407,41 @@ func TestAnnotate(t *testing.T) {
 	tracker.Annotate(other, 41)
 	if len(other) != 0 {
 		t.Errorf("non-AI pid must not be annotated, got %v", other)
+	}
+}
+
+func TestRegisterProcessWithCommand_RelativeScriptPathResolvedViaPID(t *testing.T) {
+	ResetForTesting()
+	tracker := GetLineageTracker()
+	tracker.UpdatePatterns([]string{"claude"})
+	restore := isRegularFile
+	var gotPID uint32
+	var gotPath string
+	isRegularFile = func(pid uint32, path string) bool { gotPID, gotPath = pid, path; return true }
+	defer func() { isRegularFile = restore }()
+
+	ok := tracker.RegisterProcessWithCommand(77, 1, "node", "/usr/bin/node",
+		[]string{"node", "./node_modules/@anthropic-ai/claude-code/cli.js"})
+	if !ok {
+		t.Fatal("relative claude code entry point should be AI when the file exists")
+	}
+	if gotPID != 77 || gotPath != "./node_modules/@anthropic-ai/claude-code/cli.js" {
+		t.Errorf("file check called with pid=%d path=%q", gotPID, gotPath)
+	}
+}
+
+func TestIsRegularFile_RelativeWithoutPID(t *testing.T) {
+	if isRegularFile(0, "tracker.go") {
+		t.Error("a relative path with no pid must not resolve against the agent's own cwd")
+	}
+	abs, err := filepath.Abs("tracker.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isRegularFile(0, abs) {
+		t.Errorf("absolute path to an existing file should be regular: %s", abs)
+	}
+	if isRegularFile(0, filepath.Dir(abs)) {
+		t.Error("a directory is not a regular file")
 	}
 }

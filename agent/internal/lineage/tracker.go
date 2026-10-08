@@ -4,8 +4,10 @@
 //  1. Its parent was part of an AI lineage (inheritance). This is checked
 //     first: a child of an AI session always joins that session, even if its
 //     own name also matches a pattern.
-//  2. Its name, executable or an argv token matches a known AI agent pattern
-//     (e.g. "cursor", "claude"). Such a process opens a new AI session.
+//  2. Its name, executable, argv[0] or an argument matches a known AI agent
+//     pattern (e.g. "cursor", "claude"). Such a process opens a new AI
+//     session. Arguments match on their final path component only (see
+//     MatchArgToken), so "git checkout claude/feature" is not an AI process.
 //
 // Each AI root process gets a unique AI Session ID (UUID). All child processes
 // inherit the session, enabling cross-PID event correlation. This is critical
@@ -20,6 +22,9 @@ package lineage
 
 import (
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -166,18 +171,83 @@ func MatchToken(token, pattern string) bool {
 	if token == pattern {
 		return true
 	}
+	for _, comp := range splitPathComponents(token) {
+		if nameMatches(comp, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchArgToken reports whether a command-line argument (anything after
+// argv[0]) matches pattern. Arguments name what a program acts on rather than
+// the program itself, so only the final path component counts ("aider",
+// "@anthropic-ai/claude-code", "claude.js"). A directory component matches
+// only when the argument is an existing regular file: "node
+// /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js" is an AI process,
+// "git checkout claude/feature" and "ls /tmp/claude-0/x" are not.
+func MatchArgToken(token, pattern string) bool {
+	return matchArgTokenForPID(0, token, pattern)
+}
+
+// matchArgTokenForPID is MatchArgToken with the process id, so a relative
+// script path can be resolved through /proc/<pid>/cwd on Linux.
+func matchArgTokenForPID(pid uint32, token, pattern string) bool {
+	if pattern == "" {
+		return false
+	}
+	raw := strings.TrimSpace(token)
+	token = strings.ToLower(raw)
+	if token == "" {
+		return false
+	}
+	if token == pattern {
+		return true
+	}
+	comps := splitPathComponents(token)
+	if len(comps) == 0 {
+		return false
+	}
+	if nameMatches(comps[len(comps)-1], pattern) {
+		return true
+	}
+	for _, comp := range comps[:len(comps)-1] {
+		if nameMatches(comp, pattern) {
+			return isRegularFile(pid, raw)
+		}
+	}
+	return false
+}
+
+// isRegularFile reports whether path is an existing regular file. A relative
+// path is resolved against the process's working directory via
+// /proc/<pid>/cwd (Linux); elsewhere a relative path is not resolvable and
+// does not match. It is a variable so tests can run without the filesystem.
+var isRegularFile = func(pid uint32, path string) bool {
+	if !filepath.IsAbs(path) {
+		if pid == 0 {
+			return false
+		}
+		path = filepath.Join("/proc", strconv.Itoa(int(pid)), "cwd", path)
+	}
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// splitPathComponents splits on both path separators and drops empty parts.
+func splitPathComponents(token string) []string {
+	var comps []string
 	start := 0
 	for i := 0; i <= len(token); i++ {
 		if i < len(token) && token[i] != '/' && token[i] != '\\' {
 			continue
 		}
-		comp := token[start:i]
-		start = i + 1
-		if comp != "" && nameMatches(comp, pattern) {
-			return true
+		if comp := token[start:i]; comp != "" {
+			comps = append(comps, comp)
 		}
+		start = i + 1
 	}
-	return false
+	return comps
 }
 
 // nameMatches reports whether a single path component matches the pattern:
@@ -195,8 +265,9 @@ func nameMatches(name, pattern string) bool {
 	return false
 }
 
-// matchTokens returns the first pattern matched by any of the tokens.
-// Caller must hold at least a read lock.
+// matchTokens returns the first pattern matched by any of the identity
+// tokens (process name, executable path, argv[0]). Caller must hold at least
+// a read lock.
 func (t *LineageTracker) matchTokens(tokens []string) (string, bool) {
 	for _, tok := range tokens {
 		for _, p := range t.patterns {
@@ -204,6 +275,42 @@ func (t *LineageTracker) matchTokens(tokens []string) (string, bool) {
 				return p, true
 			}
 		}
+	}
+	return "", false
+}
+
+// matchArgTokens returns the first pattern matched by a command-line
+// argument (see MatchArgToken). Caller must hold at least a read lock.
+func (t *LineageTracker) matchArgTokens(pid uint32, args []string) (string, bool) {
+	for _, arg := range args {
+		for _, p := range t.patterns {
+			if matchArgTokenForPID(pid, arg, p) {
+				return p, true
+			}
+		}
+	}
+	return "", false
+}
+
+// matchProcessLocked matches a process by identity (comm, exe, argv[0])
+// first, then by its arguments. pid (0 if unknown) resolves relative script
+// paths. Caller must hold at least a read lock.
+func (t *LineageTracker) matchProcessLocked(pid uint32, comm, exe string, argv []string) (string, bool) {
+	identity := make([]string, 0, 3)
+	if comm != "" {
+		identity = append(identity, comm)
+	}
+	if exe != "" {
+		identity = append(identity, exe)
+	}
+	if len(argv) > 0 && argv[0] != "" {
+		identity = append(identity, argv[0])
+	}
+	if p, ok := t.matchTokens(identity); ok {
+		return p, true
+	}
+	if len(argv) > 1 {
+		return t.matchArgTokens(pid, argv[1:])
 	}
 	return "", false
 }
@@ -226,18 +333,21 @@ func (t *LineageTracker) MatchString(s string) (string, bool) {
 	return t.matchTokens(strings.Fields(s))
 }
 
-// MatchCommand checks an executable path and argv for an AI pattern and
-// returns the matched pattern (used as ai_type). Each argv element is matched
-// as a single token; the joined command line is never substring-matched.
-func (t *LineageTracker) MatchCommand(exe string, argv []string) (string, bool) {
+// MatchProcess checks a process name, executable path and argv for an AI
+// pattern and returns the matched pattern (used as ai_type). comm, exe and
+// argv[0] identify the program and match on any path component; the
+// remaining arguments match per MatchArgToken, with relative script paths
+// resolved through the process's working directory when pid is known. The
+// joined command line is never substring-matched.
+func (t *LineageTracker) MatchProcess(pid uint32, comm, exe string, argv []string) (string, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if exe != "" {
-		if p, ok := t.matchTokens([]string{exe}); ok {
-			return p, true
-		}
-	}
-	return t.matchTokens(argv)
+	return t.matchProcessLocked(pid, comm, exe, argv)
+}
+
+// MatchCommand is MatchProcess without a process name or id.
+func (t *LineageTracker) MatchCommand(exe string, argv []string) (string, bool) {
+	return t.MatchProcess(0, "", exe, argv)
 }
 
 // RegisterProcess checks if a new process should be tracked as AI based on
@@ -264,9 +374,7 @@ func (t *LineageTracker) RegisterProcessWithCommand(pid, ppid uint32, comm, exe 
 	aiType := ""
 	isDirectMatch := false
 	if !isInherited {
-		if p, ok := t.matchTokens([]string{comm}); ok {
-			aiType, isDirectMatch = p, true
-		} else if p, ok := t.matchTokens(append([]string{exe}, argv...)); ok {
+		if p, ok := t.matchProcessLocked(pid, comm, exe, argv); ok {
 			aiType, isDirectMatch = p, true
 		}
 	}

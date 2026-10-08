@@ -13,6 +13,9 @@
 -- * safe_domains_list.org_id, ai_agent_patterns.org_id — rows seeded by
 --                                migrations keep NULL (built-in, read-only);
 --                                rows created through the API carry the org.
+-- * events(context->>'ai_session_id') — /agents/activity without Neo4j
+--                                groups events by the agent's AI session tag
+--                                and looks up each session's root process.
 --
 -- findings.org_id backfill is intentionally NOT attempted: pre-1.0.1 findings
 -- with an empty org cannot be attributed to a tenant after the fact. The
@@ -30,6 +33,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
 
 ALTER TABLE events ADD COLUMN IF NOT EXISTS org_id UUID;
 CREATE INDEX IF NOT EXISTS idx_events_org_host_ts ON events (org_id, host_id, ts);
+CREATE INDEX IF NOT EXISTS idx_events_ai_session ON events ((context->>'ai_session_id'))
+  WHERE context->>'ai_session_id' IS NOT NULL;
 
 -- NULL org_id = built-in (seeded) row: visible to every org, never deletable via API.
 ALTER TABLE safe_domains_list ADD COLUMN IF NOT EXISTS org_id UUID;

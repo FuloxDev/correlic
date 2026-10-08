@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -96,7 +97,7 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 			exePath:   exePath,
 			startTime: startTime,
 		}
-		if aiType, ok := s.tracker.MatchCommand(exePath, append([]string{comm}, argv...)); ok {
+		if aiType, ok := s.tracker.MatchProcess(uint32(pid), comm, exePath, argv); ok {
 			p.isAI, p.aiType = true, aiType
 		} else if s.dockerResolver != nil {
 			// If comm/cmdline didn't match, check Docker container name/image
@@ -114,10 +115,24 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 		}
 	}
 
-	// Pass 2: BFS from AI roots to mark all descendants. Roots are registered
-	// before their children, so a child that also matches a pattern inherits
-	// the root's session instead of opening its own.
-	queue := append([]int{}, aiRoots...)
+	// Pass 2: BFS from the topmost AI roots to mark all descendants. A matching
+	// process below another matching process is a descendant, not a root: the
+	// walk starts only from roots without an AI ancestor, so parents are
+	// registered before children and a nested match inherits the session
+	// instead of opening its own.
+	rootSet := make(map[int]bool, len(aiRoots))
+	for _, pid := range aiRoots {
+		rootSet[pid] = true
+	}
+	top := make(map[int]bool, len(aiRoots))
+	var queue []int
+	for _, pid := range aiRoots {
+		if !hasAIAncestor(pid, procs, rootSet) {
+			top[pid] = true
+			queue = append(queue, pid)
+		}
+	}
+	sort.Ints(queue)
 	seen := make(map[int]bool)
 
 	count := 0
@@ -138,10 +153,10 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 		// Register with tracker
 		if s.register(p) {
 			count++
-			if p.isAI {
+			if top[curPID] {
 				s.logger.Info("found existing AI root", "pid", p.pid, "comm", p.comm, "ai_type", s.tracker.GetAIType(uint32(p.pid)))
 			} else {
-				s.logger.Debug("found existing AI descendant", "pid", p.pid, "comm", p.comm)
+				s.logger.Debug("found existing AI descendant", "pid", p.pid, "comm", p.comm, "direct_match", p.isAI)
 			}
 
 			// Emit synthetic process_exec event with the AI attribution the
@@ -161,7 +176,7 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 			emit("process_exec", payload)
 
 			// Harvest ancestors for roots to bridge gaps
-			if p.isAI {
+			if top[curPID] {
 				s.harvestAncestors(p.ppid, emit, visitedAncestors)
 			}
 		}
@@ -174,6 +189,26 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 
 	s.logger.Info("proc scan complete", "ai_processes_and_descendants_found", count)
 	return nil
+}
+
+// hasAIAncestor reports whether any ancestor of pid (walking ppid links
+// through procs, bounded) is itself a direct AI match.
+func hasAIAncestor(pid int, procs map[int]procInfo, roots map[int]bool) bool {
+	cur, ok := procs[pid]
+	if !ok {
+		return false
+	}
+	for depth := 0; depth < 64 && cur.ppid > 1; depth++ {
+		if roots[cur.ppid] {
+			return true
+		}
+		parent, ok := procs[cur.ppid]
+		if !ok {
+			return false
+		}
+		cur = parent
+	}
+	return false
 }
 
 // register adds p to the lineage tracker. Container-matched roots have no
