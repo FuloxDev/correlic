@@ -386,6 +386,8 @@ fi
 
 # Make binaries executable
 chmod +x "$INSTALL_DIR/bin/"* 2>/dev/null || true
+# correlic-hook (Claude Code / Cursor hook) ships in bin/ next to the agent.
+chmod +x "$INSTALL_DIR/bin/correlic-hook" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/node/bin/node" 2>/dev/null || true
 mkdir -p "$INSTALL_DIR/logs"
 
@@ -1525,6 +1527,7 @@ echo -e "    Logs:       ${CYAN}journalctl -u correlic-api -f${NC}"
 echo -e "    Stop all:   ${CYAN}systemctl stop correlic-{api,telemetry,agent,ui,ui-proxy}${NC}"
 echo -e "    Start all:  ${CYAN}systemctl start correlic-{api,telemetry,agent,ui,ui-proxy}${NC}"
 echo -e "    Uninstall:  ${CYAN}${INSTALL_DIR}/uninstall.sh${NC}"
+echo -e "    AI hooks:   ${CYAN}${INSTALL_DIR}/bin/correlic-hook setup${NC}  (Claude Code / Cursor; see backend/docs/HOOKS.md)"
 echo ""
 if [ "$API_PORT" -ne 8080 ] || [ "$TELEMETRY_PORT" -ne 8081 ] || [ "$UI_PORT" -ne 3001 ] || [ "$PROXY_PORT" -ne 8788 ]; then
   echo -e "  ${YELLOW}Note: Non-default ports are in use due to port conflict resolution.${NC}"

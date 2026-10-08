@@ -59,6 +59,7 @@ jobs:
         run: |
           go generate ./internal/ebpf/...
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.v.outputs.version }}" -o ../build/correlic-agent ./cmd/agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.v.outputs.version }}" -o ../build/correlic-hook ./cmd/correlic-hook
 
       # ── UI + proxy (built here, not downloaded) ────────────────
       - uses: actions/setup-node@v6
@@ -100,6 +101,7 @@ jobs:
         run: |
           mkdir -p pkg/usr/bin pkg/etc/correlic pkg/usr/share/correlic pkg/var/lib/correlic/certs pkg/var/log/correlic pkg/lib/systemd/system
           cp build/correlic-api build/correlic-telemetry build/correlic-admin build/correlic-agent pkg/usr/bin/
+          cp build/correlic-hook pkg/usr/bin/
           chmod 755 pkg/usr/bin/*
           cp install/gen-certs.sh pkg/etc/correlic/gen-certs.sh && chmod 755 pkg/etc/correlic/gen-certs.sh
           cp -r backend/migrations pkg/usr/share/correlic/migrations
@@ -123,6 +125,7 @@ jobs:
         run: |
           mkdir -p bundle/bin bundle/certs bundle/logs
           cp build/correlic-api build/correlic-telemetry build/correlic-admin build/correlic-agent bundle/bin/
+          cp build/correlic-hook bundle/bin/
           cp -r build/node bundle/node
           cp -r build/ui bundle/ui
           cp -r build/ui-proxy bundle/ui-proxy
