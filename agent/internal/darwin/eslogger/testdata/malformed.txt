@@ -1,0 +1,5 @@
+{"schema_version":1,"event_type":9,"process":{"audit_token":{"pid":1
+not json at all
+[1,2,3]
+{"event_type":"9"}
+{"schema_version":1,"event_type":9,"event":{"exec":{"args":"not-an-array","target":{"audit_token":{"pid":"str"}}}}}
