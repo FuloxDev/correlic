@@ -59,6 +59,7 @@ block_emergency_bypass: false
 etw_enabled: true
 poll_interval: 2s
 fsevents_watch_paths: ["/Users"]
+eslogger_enabled: true
 correlic_api_url: "https://keys.example"
 allow_insecure_http: false
 `)
@@ -131,6 +132,28 @@ func TestValidate_LogLevel(t *testing.T) {
 func TestDefaultHeartbeat(t *testing.T) {
 	if Default().HeartbeatInterval != 30*time.Second {
 		t.Errorf("default heartbeat_interval = %v, want 30s", Default().HeartbeatInterval)
+	}
+}
+
+func TestEsloggerEnabled_DefaultsTrue(t *testing.T) {
+	if !Default().EsloggerEnabled {
+		t.Fatal("eslogger_enabled must default to true")
+	}
+	p := writeTemp(t, "backend_url: \"https://a\"\napi_key: \"k\"\n")
+	cfg, err := LoadRequired(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.EsloggerEnabled {
+		t.Error("eslogger_enabled must stay true when the key is absent")
+	}
+	p = writeTemp(t, "backend_url: \"https://a\"\napi_key: \"k\"\neslogger_enabled: false\n")
+	cfg, err = LoadRequired(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EsloggerEnabled {
+		t.Error("eslogger_enabled: false not honoured")
 	}
 }
 
