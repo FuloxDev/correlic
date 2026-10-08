@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/correlic/correlic-agent/internal/darwin/eslogger"
 )
 
 // MinMacOSMajor and MinMacOSMinor define the minimum supported macOS version.
@@ -45,15 +47,44 @@ func RunChecks() *Result {
 	// 6. lsof availability (needed for network monitoring)
 	r.addCheck(checkLsof())
 
-	// 7. Endpoint Security Framework (Phase 2 — warn if unavailable)
+	// 7. Native Endpoint Security client (esf-tagged build + entitlement;
+	//    warn if unavailable). Tried first at startup.
 	r.addCheck(checkESF())
+
+	// 8. eslogger: Apple's Endpoint Security CLI (macOS 13+). Tried second;
+	//    the kqueue/FSEvents/lsof pollers are the last resort.
+	r.addCheck(checkEslogger())
 
 	r.Remediation = fmt.Sprintf("Minimum supported version: macOS %d.%d+ (Big Sur)\n"+
 		"Run as root: sudo ./correlic-agent\n"+
-		"ESF support (Phase 2) requires Apple developer entitlement.\n",
+		"Endpoint Security events (real PIDs, real-time): on macOS 13 or newer grant correlic-agent\n"+
+		"Full Disk Access in System Settings > Privacy & Security so /usr/bin/eslogger can run.\n"+
+		"The native ESF client needs an Apple entitlement the project does not hold.\n",
 		MinMacOSMajor, MinMacOSMinor)
 
 	return r
+}
+
+// checkEslogger reports whether the free Endpoint Security path is usable:
+// /usr/bin/eslogger present (macOS 13+) and the agent running as root. Full
+// Disk Access cannot be probed without starting eslogger; the agent logs a
+// WARN with the remediation at startup when it is missing.
+func checkEslogger() Check {
+	if err := eslogger.Available(nil); err != nil {
+		return Check{
+			Name:      "eslogger",
+			Severity:  SeverityWarn,
+			Supported: false,
+			Description: fmt.Sprintf("eslogger unavailable (%v); the agent will poll with kqueue/FSEvents/lsof. To fix: %s",
+				err, eslogger.Remediation),
+		}
+	}
+	return Check{
+		Name:        "eslogger",
+		Severity:    SeverityWarn,
+		Supported:   true,
+		Description: "eslogger available: Endpoint Security exec/exit/open events with real PIDs via /usr/bin/eslogger (needs Full Disk Access; network stays lsof)",
+	}
 }
 
 func checkDarwin() Check {
@@ -206,7 +237,7 @@ func checkESF() Check {
 			Name:        "esf",
 			Severity:    SeverityWarn,
 			Supported:   false,
-			Description: "ESF unavailable: binary is not code-signed (sign with build/correlic-agent.entitlements)",
+			Description: "native ESF client unavailable: binary is not code-signed with the Endpoint Security entitlement (expected without an Apple Developer account); eslogger or the kqueue/FSEvents pollers will be used instead",
 		}
 	}
 
@@ -215,7 +246,7 @@ func checkESF() Check {
 			Name:        "esf",
 			Severity:    SeverityWarn,
 			Supported:   true,
-			Description: "Endpoint Security entitlement present; an esf-tagged build uses it automatically",
+			Description: "Endpoint Security entitlement present; an esf-tagged build uses the native client before eslogger",
 		}
 	}
 
@@ -223,6 +254,6 @@ func checkESF() Check {
 		Name:        "esf",
 		Severity:    SeverityWarn,
 		Supported:   false,
-		Description: "ESF entitlement missing: re-sign binary with build/correlic-agent.entitlements",
+		Description: "native ESF client unavailable: entitlement missing (needs an Apple Developer Program Organization account); eslogger or the kqueue/FSEvents pollers will be used instead",
 	}
 }

@@ -1,6 +1,4 @@
-//go:build darwin && esf
-
-package esf
+package esevents
 
 import (
 	"context"
@@ -17,34 +15,41 @@ import (
 	"github.com/correlic/correlic-agent/internal/procinfo"
 )
 
-// ExecRunner converts ESF NOTIFY_EXEC and NOTIFY_EXIT events into canonical events.
-// Compared to the kqueue-based exec runner, ESF provides:
-//   - Child PID directly on fork (no pgrep delay)
-//   - Full cmdline from the kernel (no ps(1) lookup)
-//   - Lower latency (<1ms vs polling)
+// ExecRunner converts Endpoint Security exec, exit and fork events into
+// canonical events. Compared to the kqueue-based exec runner, Endpoint
+// Security provides:
+//   - The parent PID on every event (no ps(1) lookup, no race)
+//   - Full argv from the kernel
+//   - Lower latency than polling
 type ExecRunner struct {
-	collector *Collector
-	emit      collect.EventSink
-	logger    *slog.Logger
-	hostID    string
-	handler   *exechandler.ExecHandler
-	disp      dispatch.Dispatcher
+	src     EventSource
+	source  string
+	emit    collect.EventSink
+	logger  *slog.Logger
+	hostID  string
+	handler *exechandler.ExecHandler
+	disp    dispatch.Dispatcher
 }
 
-// NewExecRunner creates an ESF-based process exec/exit runner.
-func NewExecRunner(collector *Collector, emit collect.EventSink, logger *slog.Logger, hostID string, disp dispatch.Dispatcher) *ExecRunner {
+// NewExecRunner creates a process exec/exit runner over src. source names the
+// collector ("esf" or "eslogger") in the emitted events.
+func NewExecRunner(src EventSource, source string, emit collect.EventSink, logger *slog.Logger, hostID string, disp dispatch.Dispatcher) *ExecRunner {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if hostID == "" {
 		hostID = "localhost"
 	}
+	if source == "" {
+		source = "esf"
+	}
 	return &ExecRunner{
-		collector: collector,
-		emit:      emit,
-		logger:    logger,
-		hostID:    hostID,
-		disp:      disp,
+		src:    src,
+		source: source,
+		emit:   emit,
+		logger: logger,
+		hostID: hostID,
+		disp:   disp,
 		handler: &exechandler.ExecHandler{
 			HostID:     hostID,
 			Dispatcher: disp,
@@ -52,28 +57,29 @@ func NewExecRunner(collector *Collector, emit collect.EventSink, logger *slog.Lo
 	}
 }
 
-// Start processes exec and exit events from the ESF collector.
+// Start processes events until ctx is cancelled or the source closes.
 func (r *ExecRunner) Start(ctx context.Context) {
-	r.logger.Info("esf exec runner started")
+	r.logger.Info("exec runner started", "source", r.source)
 	tracker := lineage.GetLineageTracker()
 
 	for {
 		select {
 		case <-ctx.Done():
-			r.logger.Info("esf exec runner stopping")
+			r.logger.Info("exec runner stopping", "source", r.source)
 			return
 
-		case ev, ok := <-r.collector.ExecEvents():
+		case ev, ok := <-r.src.Events():
 			if !ok {
 				return
 			}
-			r.handleExec(ev, tracker)
-
-		case ev, ok := <-r.collector.ExitEvents():
-			if !ok {
-				return
+			switch ev.Type {
+			case EventExec:
+				r.handleExec(ev, tracker)
+			case EventExit:
+				r.handleExit(ev, tracker)
+			case EventFork:
+				r.handleFork(ev, tracker)
 			}
-			r.handleExit(ev, tracker)
 		}
 	}
 }
@@ -101,7 +107,7 @@ func (r *ExecRunner) handleExec(ev Event, tracker *lineage.LineageTracker) {
 			"comm":   comm,
 			"exe":    ev.ExePath,
 			"args":   ev.Args,
-			"source": "esf",
+			"source": r.source,
 			"is_ai":  true,
 		})
 	}
@@ -138,7 +144,7 @@ func (r *ExecRunner) handleExit(ev Event, tracker *lineage.LineageTracker) {
 			Type:          "process_exit",
 			Timestamp:     ts,
 			HostID:        r.hostID,
-			Source:        "esf",
+			Source:        r.source,
 			Actor: &event.Actor{
 				PID:       int(pid),
 				PPID:      int(ev.PPID),
@@ -150,9 +156,21 @@ func (r *ExecRunner) handleExit(ev Event, tracker *lineage.LineageTracker) {
 			},
 		}
 		tracker.Annotate(exitEvt.Context, pid)
-		exitEvt.ID = event.GenerateID(r.hostID, ts.UnixNano(), "esf", "process_exit", int(pid), "")
+		exitEvt.ID = event.GenerateID(r.hostID, ts.UnixNano(), r.source, "process_exit", int(pid), "")
 		r.disp.Enqueue(exitEvt)
 	}
 
 	tracker.UnregisterProcess(pid)
+}
+
+// handleFork lets a child of an AI process join the parent's session at
+// fork time, so a forked worker that never execs (multiprocessing pools,
+// fork servers) still has its file and network activity attributed. Nothing
+// is dispatched here; the exec event does that. Only sources that subscribe
+// to fork (eslogger) deliver these.
+func (r *ExecRunner) handleFork(ev Event, tracker *lineage.LineageTracker) {
+	if ev.PID == 0 || !tracker.IsAI(ev.PPID) {
+		return
+	}
+	tracker.RegisterProcess(ev.PID, ev.PPID, ev.Comm)
 }

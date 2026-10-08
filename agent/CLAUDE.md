@@ -1,7 +1,7 @@
 # Correlic Agent — Claude Code Context
 
 ## Purpose
-Runs on monitored hosts. On Linux it loads eBPF programs into the kernel, reads events from ring buffers, parses/enriches them, attributes them to AI process sessions and ships them to the backend over HTTPS (macOS: kqueue/FSEvents/ESF, Windows: ETW).
+Runs on monitored hosts. On Linux it loads eBPF programs into the kernel, reads events from ring buffers, parses/enriches them, attributes them to AI process sessions and ships them to the backend over HTTPS (macOS: Endpoint Security via `/usr/bin/eslogger` on 13+, else kqueue/FSEvents polling, lsof for network; Windows: ETW).
 
 ## Tech Stack
 - Go 1.26+, cilium/ebpf, libbpf headers, clang
@@ -31,7 +31,10 @@ agent/
 │   ├── config/            # agent.yaml loading + validation
 │   ├── logging/           # slog level handling
 │   ├── identity/, hostid/ # Agent id / host id + state dir
-│   ├── darwin/, windows/  # Non-Linux collectors
+│   ├── darwin/            # macOS: kqueue/FSEvents/lsof pollers, scanner; esevents/ (shared Endpoint Security
+│   │                      #   event shape + exec/file/DNS runners, no build tag), eslogger/ (free ES collector
+│   │                      #   over /usr/bin/eslogger, no build tag), esf/ (native cgo client, `esf` tag)
+│   ├── windows/           # Windows ETW collectors
 │   └── ...
 ```
 
@@ -85,7 +88,7 @@ Use `pahole` to verify layout before parsing. `exit_collector_test.go` / `fork_c
 ## Configuration
 `agent.yaml` is found via `--config <path>` (also `-config`), else `$CORRELIC_CONFIG`, else `agent.yaml` next to the executable, else `~/.correlic/agent.yaml`. An explicit path must exist and parse. Unknown keys are rejected; the removed keys (`approvals_*`, `notify_enabled`, `disable_proc_fallback`, `process_exec_interval`, `process_exec_emit_initial`, `esf_enabled`, `service_name`) log a WARN and are ignored.
 
-Keys: `backend_url`, `telemetry_url`, `api_key` (agent-type key), `tls_ca_file`, `tls_client_cert_file`, `tls_client_key_file`, `allow_insecure_http` (https is required otherwise), `profile`, `log_level` (debug|info|warn|error), `heartbeat_interval` (default 30s, min 10s), `ebpf_enabled`, `process_exec_enabled`, `file_monitor_enabled`, `network_monitor_enabled`, `dns_monitor_enabled`, `bind_monitor_enabled`, `unlink_monitor_enabled`, `setuid_monitor_enabled`, `fork_monitor_enabled`, `block_enabled`, `block_sync_interval`, `block_emergency_bypass`, `etw_enabled`, `poll_interval`, `fsevents_watch_paths`, `correlic_api_url`.
+Keys: `backend_url`, `telemetry_url`, `api_key` (agent-type key), `tls_ca_file`, `tls_client_cert_file`, `tls_client_key_file`, `allow_insecure_http` (https is required otherwise), `profile`, `log_level` (debug|info|warn|error), `heartbeat_interval` (default 30s, min 10s), `ebpf_enabled`, `process_exec_enabled`, `file_monitor_enabled`, `network_monitor_enabled`, `dns_monitor_enabled`, `bind_monitor_enabled`, `unlink_monitor_enabled`, `setuid_monitor_enabled`, `fork_monitor_enabled`, `block_enabled`, `block_sync_interval`, `block_emergency_bypass`, `etw_enabled`, `eslogger_enabled` (macOS, default true: Endpoint Security events via `/usr/bin/eslogger` on macOS 13+ when root and Full Disk Access are present, else polling), `poll_interval`, `fsevents_watch_paths`, `correlic_api_url`.
 
 Environment variables actually read:
 - `CORRELIC_CONFIG` — config path (overridden by `--config`)
@@ -112,7 +115,7 @@ GOOS=darwin GOARCH=arm64 go build ./... && GOOS=windows GOARCH=amd64 go build ./
 # macOS with Endpoint Security (compile check only; needs a Mac with Xcode)
 SDKROOT=$(xcrun --sdk macosx --show-sdk-path) CGO_ENABLED=1 go build -tags esf ./cmd/agent
 ```
-On macOS an `esf`-tagged binary tries Endpoint Security first (`platform_darwin_esf.go`) and falls back to kqueue/FSEvents/lsof when the entitlement, root or Full Disk Access is missing; builds without the tag always poll. Running the ESF path needs the `com.apple.developer.endpoint-security.client` entitlement, which Apple only grants to a paid Developer Program Organization account, so the project does not ship it: macOS is a best-effort, build-from-source preview (see `backend/docs/MACOS_AGENT.md`).
+On macOS the collectors are tried in order (`platform_darwin.go`): the native Endpoint Security client (only in an `esf`-tagged binary signed with the `com.apple.developer.endpoint-security.client` entitlement, which Apple grants only to paid Developer Program Organization accounts, so the project does not ship it), then `/usr/bin/eslogger` (macOS 13+, root, Full Disk Access for the agent/terminal, `eslogger_enabled`), then kqueue/FSEvents polling. Both Endpoint Security sources give exec/exit/open events with real PIDs through the shared runners in `internal/darwin/esevents`; network always comes from lsof and there is no DNS without the native client. When eslogger cannot run the agent logs one WARN with the remediation and polls. `internal/darwin/eslogger` (parser + supervisor) and `internal/darwin/esevents` have no build tag and are tested on Linux with a fake eslogger script; the cgo `esf` package is only compiled by the macOS CI job with `-tags esf`. macOS stays a best-effort, build-from-source preview (see `backend/docs/MACOS_AGENT.md`).
 Shutdown: SIGTERM cancels the context; main waits up to 10 s for runners, the batcher, the ingest sink and the heartbeat (stopping/stopped) to drain.
 
 ## Key Files
