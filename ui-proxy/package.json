@@ -21,7 +21,7 @@
   },
   "homepage": "https://github.com/FuloxDev/correlic/tree/main/ui-proxy#readme",
   "dependencies": {
-    "cors": "^2.8.5",
+    "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "node-fetch": "^3.3.2"
