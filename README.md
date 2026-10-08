@@ -22,7 +22,7 @@ Changes are listed in `CHANGELOG.md`.
 | `backend/` | API server (:8080), telemetry ingest (:8081), `correlic-admin` CLI, MCP server. Detection engine, correlation, incidents, notifications, BYOK AI layer. Design docs in `backend/docs/`. | Go 1.26, PostgreSQL 14+, Neo4j 5 (optional) |
 | `agent/` | Host agent. Linux eBPF (complete), Windows ETW + Security audit, macOS kqueue + polling (early). | Go 1.26, cilium/ebpf |
 | `ui/` | Dashboard: findings, incidents with AI chat, baselines, block rules, timeline. | Next.js 16, React 19 |
-| `ui-proxy/` | Small Express service that holds the mTLS client certificate between the dashboard and the backend. Loopback only. | Node 20 |
+| `ui-proxy/` | Small Express service that holds the mTLS client certificate between the dashboard and the backend. Loopback only. | Node 24 LTS |
 | `install/` | `docker-compose.yml`, Linux installer and `.deb`/`.rpm` scaffolding, Windows installer scripts, cert generation. | bash, PowerShell |
 | `Dockerfile`, `entrypoint.sh`, `supervisord.conf` | All-in-one image bundling PostgreSQL, Neo4j, backend, agent, dashboard and proxy. | Debian |
 | `paper-supplementary/` | Machine-readable rule set, chain patterns and never-baseline list from the accompanying paper. | YAML (CC BY 4.0) |
@@ -90,7 +90,7 @@ machine, run `install/install-agent.ps1` from the same release.
 
 ### From source
 
-Needs Go 1.26+, Node 20+, PostgreSQL, `openssl`, and on Linux `clang`, `llvm`
+Needs Go 1.26+, Node 22+ (the bundles ship Node 24 LTS), PostgreSQL, `openssl`, and on Linux `clang`, `llvm`
 and `libbpf-dev` for the eBPF objects. Neo4j is optional: detection works
 without it; process-tree views and graph-based incident context need it.
 

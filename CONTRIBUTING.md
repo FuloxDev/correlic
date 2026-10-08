@@ -12,7 +12,7 @@ cd backend && go build ./... && go vet ./... && go test ./...
 # agent (Go 1.26+, clang/llvm/libbpf-dev for the eBPF objects)
 cd agent && go generate ./internal/ebpf/... && go build ./... && go test ./...
 
-# dashboard and proxy (Node 20+)
+# dashboard and proxy (Node 22+)
 cd ui && npm ci && npx tsc --noEmit && npm run lint && npm run build
 cd ui-proxy && npm ci && node --check index.js
 ```

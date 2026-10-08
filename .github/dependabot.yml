@@ -25,3 +25,8 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule: { interval: monthly }
+    ignore:
+      # The Node line follows the active LTS (currently 24); odd/new majors are
+      # not LTS and are bumped by hand together with CI and the bundles.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]

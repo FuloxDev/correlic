@@ -7,7 +7,12 @@ Build
   golang.org/x/sys 0.48 need it); the Docker build stages use golang:1.26.
 - Dependency updates: pgx 5.11, neo4j-go-driver 5.28.5, ulid 2.1.2,
   cilium/ebpf 0.22, React 19.3, framer-motion 14, Tailwind CSS 4.3,
-  tailwind-merge 3.7; GitHub Actions on their Node 24 releases.
+  tailwind-merge 3.7, dotenv 18, cors 2.8.6, React type packages 19.3;
+  GitHub Actions on their Node 24 releases.
+- The dashboard and proxy run on Node 24 LTS: CI, the container images and
+  the portable Node in the Linux and Windows bundles move from Node 20
+  (end of life since April 2026) to 24.21.0. Building from source needs
+  Node 22 or newer.
 
 ## v1.0.1 (2026-10-08)
 
