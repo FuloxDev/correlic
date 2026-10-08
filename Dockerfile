@@ -52,7 +52,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic
 # ============================================================
 # Stage 3: Build Next.js UI
 # ============================================================
-FROM node:20-alpine AS builder-ui
+FROM node:26-alpine AS builder-ui
 
 WORKDIR /build
 COPY ui/package.json ui/package-lock.json ./
@@ -66,7 +66,7 @@ RUN npm run build
 # ============================================================
 # Stage 4: Build UI Proxy
 # ============================================================
-FROM node:20-alpine AS builder-proxy
+FROM node:26-alpine AS builder-proxy
 
 WORKDIR /build
 COPY ui-proxy/package.json ui-proxy/package-lock.json ./
