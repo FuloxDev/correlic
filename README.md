@@ -76,6 +76,14 @@ the release also carries
 and
 [`correlic-1.0.1-1.x86_64.rpm`](https://github.com/FuloxDev/correlic/releases/download/v1.0.1/correlic-1.0.1-1.x86_64.rpm).
 
+Linux is supported on x86_64 (amd64) and arm64 (aarch64): Apple Silicon
+Linux VMs, AWS Graviton, Raspberry Pi 5 with a BTF-enabled kernel, and any
+other arm64 machine running Linux 5.8+ with BTF. The installer picks the
+bundle for the machine it runs on. The arm64 assets
+(`correlic-linux-<version>-arm64.tar.gz`, `correlic_<version>_arm64.deb`,
+`correlic-<version>-1.aarch64.rpm`) and the linux/arm64 container images are
+published from the first release after v1.0.1.
+
 ### Windows
 
 ```powershell
@@ -143,15 +151,16 @@ user's role (`admin` or `member`), and configuration changes require `admin`.
 
 ## Status
 
-- Linux agent: eBPF collectors for exec, exit, fork, file open, connect, bind,
-  unlink, setuid and DNS; tested on kernels 5.8 to 6.18.
+- Linux agent (amd64 and arm64): eBPF collectors for exec, exit, fork, file
+  open, connect, bind, unlink, setuid and DNS; tested on kernels 5.8 to 6.18.
 - Windows agent: ETW and Security audit log; block rules enforced.
 - macOS agent: best-effort preview. kqueue process events plus polling for
   files and network, built from source; there are no signed or notarized
   macOS builds and no Endpoint Security support, because both require a paid
   Apple Developer Program membership that the project does not maintain. For
   full coverage on a Mac, run the coding agent inside a Linux VM or container
-  with the Linux agent, and run the backend and dashboard with Docker.
+  with the Linux agent (on Apple Silicon that VM is arm64, which the Linux
+  agent supports), and run the backend and dashboard with Docker.
 - Detection: 13 AI-gated rules and 11 chain patterns; see
   `backend/docs/DETECTION_ENGINE.md`.
 

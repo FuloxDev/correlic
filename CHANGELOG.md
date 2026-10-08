@@ -26,6 +26,28 @@ Build
   (end of life since April 2026) to 24.21.0. Building from source needs
   Node 22 or newer.
 
+Linux arm64
+- The Linux agent, backend and dashboard now build and ship for arm64
+  (aarch64) alongside amd64: Apple Silicon Linux VMs, AWS Graviton,
+  Raspberry Pi 5 and other arm64 hosts with a BTF-enabled Linux 5.8+
+  kernel. One `go generate` emits the eBPF objects for both architectures
+  (`bpf2go -target amd64,arm64`); the kprobe programs (`dns`, `bind`)
+  include `bpf/arch_arm64.h`, which declares the arm64 register file that
+  libbpf's `PT_REGS_*` / `BPF_KPROBE` macros read. The unlink collector no
+  longer fails on kernels without the `unlink(2)` syscall (arm64's generic
+  syscall table) and monitors `unlinkat` there.
+- Release artifacts: the container images are linux/amd64 + linux/arm64
+  manifests (the Go stages cross-compile, QEMU covers the rest); the Linux
+  release adds `correlic-linux-<v>-arm64.tar.gz`, `correlic_<v>_arm64.deb`
+  and `correlic-<v>-1.aarch64.rpm` next to the unchanged amd64 assets, with
+  apt (`binary-arm64`) and yum (`aarch64`) repository trees, all listed in
+  `SHA256SUMS-linux.txt`. `install/install.sh` accepts aarch64 and downloads
+  the matching bundle.
+- CI: a new `agent-linux-arm64` job on GitHub's `ubuntu-24.04-arm` runner
+  generates, builds, vets and tests the agent and loads the arm64 eBPF
+  objects into the runner's kernel; `CORRELIC_BPF_LOAD_REQUIRED=1` makes the
+  load test fail instead of skipping when BTF or privileges are missing.
+
 ## v1.0.1 (2026-10-08)
 
 Release: https://github.com/FuloxDev/correlic/releases/tag/v1.0.1

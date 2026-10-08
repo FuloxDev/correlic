@@ -259,8 +259,24 @@ All detection rules work identically on Linux and Windows thanks to path normali
 
 ### Requirements
 - Linux 5.8+ with BTF (`/sys/kernel/btf/vmlinux`)
+- x86_64 (amd64) or arm64 (aarch64); see Architectures below
 - Root or `CAP_BPF` + `CAP_PERFMON` + `CAP_SYS_ADMIN` capabilities
 - Go 1.26+ and clang/llvm/libbpf-dev (build time)
+
+### Architectures
+The agent is built and released for linux/amd64 and linux/arm64 from the
+same sources: Apple Silicon Linux VMs (Lima, OrbStack, UTM), AWS Graviton,
+Raspberry Pi 5 and other arm64 hosts work with the same kernel 5.8+ and BTF
+requirements (Raspberry Pi OS needs a kernel built with
+`CONFIG_DEBUG_INFO_BTF=y`). `go generate ./internal/ebpf/...` emits the eBPF
+objects for both architectures (`bpf2go -target amd64,arm64`) and `GOARCH`
+selects the embedded set, so `GOOS=linux GOARCH=arm64 go build ./cmd/agent`
+cross-compiles from an x86_64 host. CO-RE keeps the kernel-struct accesses
+architecture independent; the only arch-specific code is
+`bpf/arch_arm64.h`, which declares the arm64 register file for the kprobe
+programs (`dns`, `bind`). arm64's generic syscall table has no `unlink(2)`,
+so the unlink collector monitors `unlinkat` only there. Details:
+`agent/internal/ebpf/BUILD.md`.
 
 ### Running
 The agent reads one YAML file, located by `CORRELIC_CONFIG` or `--config`
