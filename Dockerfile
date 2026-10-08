@@ -13,13 +13,22 @@
 # email/password (docker logs correlic); they are also stored in
 # /var/lib/correlic/dashboard-credentials inside the data volume.
 # Dashboard: http://localhost:3001
+#
+# Built for linux/amd64 and linux/arm64 (.github/workflows/release-images.yml).
+# The Go stages are pinned to $BUILDPLATFORM and cross-compile with
+# GOARCH=$TARGETARCH; the Node.js build stages and the runtime stage run per
+# platform (under QEMU when cross-building). Every apt source used by the
+# runtime stage publishes arm64 packages: Debian bookworm (openjdk-17),
+# PostgreSQL pgdg (amd64/arm64), NodeSource (amd64/arm64) and Neo4j
+# (architecture-independent deb).
 
 ARG VERSION=dev
 
 # ============================================================
 # Stage 1: Build backend Go binaries
 # ============================================================
-FROM golang:1.26-alpine AS builder-backend
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder-backend
+ARG TARGETARCH
 
 RUN apk add --no-cache git
 
@@ -28,14 +37,15 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
 COPY backend/ .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-api ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-telemetry ./cmd/telemetry
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-admin ./cmd/admin
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /correlic-api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /correlic-telemetry ./cmd/telemetry
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /correlic-admin ./cmd/admin
 
 # ============================================================
 # Stage 2: Build agent Go binary (needs eBPF toolchain)
 # ============================================================
-FROM golang:1.26-bookworm AS builder-agent
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder-agent
+ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang llvm libbpf-dev linux-headers-generic \
@@ -46,8 +56,9 @@ COPY agent/go.mod agent/go.sum ./
 RUN go mod download
 
 COPY agent/ .
+# go generate emits the eBPF objects for amd64 and arm64; GOARCH picks the set.
 RUN go generate ./internal/ebpf/...
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic-agent ./cmd/agent
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /correlic-agent ./cmd/agent
 
 # ============================================================
 # Stage 3: Build Next.js UI

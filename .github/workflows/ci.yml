@@ -56,6 +56,44 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  agent-linux-arm64:
+    name: agent (go + eBPF, linux/arm64)
+    # Mirrors the `agent` job on GitHub's arm64 runner (free for public
+    # repositories) and, in addition, loads the arm64 eBPF objects into the
+    # runner's arm64 kernel, which exercises CO-RE relocation and the verifier
+    # for that architecture.
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Install eBPF toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-headers-generic
+      - name: Generate eBPF objects
+        run: go generate ./internal/ebpf/...
+      - name: Build (linux/arm64)
+        run: |
+          uname -m
+          GOOS=linux GOARCH=arm64 go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      # `go test` above runs unprivileged, so TestLoadBPFObjects skips there.
+      # Run it as root to load every arm64 object into the arm64 kernel.
+      # CORRELIC_BPF_LOAD_REQUIRED turns the test's skips (no BTF, no memlock,
+      # no CAP_BPF) into failures so a silent skip cannot pass as a check.
+      - name: Load eBPF objects into the arm64 kernel
+        run: |
+          uname -r
+          ls -l /sys/kernel/btf/vmlinux
+          sudo -E env "PATH=$PATH" GOTOOLCHAIN=local CORRELIC_BPF_LOAD_REQUIRED=1 go test ./internal/ebpf/ -run TestLoadBPFObjects -v
+
   agent-macos:
     name: agent (macOS kqueue + Endpoint Security build)
     runs-on: macos-latest
