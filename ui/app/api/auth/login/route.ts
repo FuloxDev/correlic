@@ -1,29 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  PROXY_BASE,
+  SESSION_COOKIE,
+  authorizationHeader,
+  errorMessageFrom,
+  sessionCookieOptions,
+} from '@/lib/server/session'
 
-// All backend traffic goes through ui-proxy (it holds the mTLS client cert).
-const PROXY_BASE = process.env.PROXY_BASE_URL || 'http://localhost:8788'
 // Optional remote key server. Empty (the default) means keys are validated
 // only against the local backend.
 const CORRELIC_API = (process.env.CORRELIC_API_URL || '').trim()
-const SESSION_COOKIE = 'correlic_session'
-const EMAIL_COOKIE = 'correlic_user_email'
 
 type LoginBody =
-  | { mode: 'api_key'; apiKey: string }
-  | { mode: 'email'; email: string; password: string }
-
-const cookieOpts = {
-  httpOnly: true,
-  sameSite: 'lax' as const,
-  secure: process.env.NODE_ENV === 'production',
-  path: '/',
-}
+  | { mode: 'api_key'; apiKey?: string }
+  | { mode: 'email'; email?: string; password?: string }
 
 /** Ask the local backend whether this key is valid for some org. */
 async function validateLocally(apiKey: string): Promise<boolean> {
   try {
     const res = await fetch(`${PROXY_BASE}/orgs/me`, {
-      headers: { Authorization: apiKey },
+      headers: { Authorization: authorizationHeader(apiKey) },
     })
     return res.ok
   } catch {
@@ -34,7 +30,7 @@ async function validateLocally(apiKey: string): Promise<boolean> {
 /** Ask the optional remote key server. Returns null when not configured or unreachable. */
 async function validateRemotely(
   apiKey: string
-): Promise<{ ok: boolean; expired?: boolean; expiresAt?: string | null } | null> {
+): Promise<{ ok: boolean; expired?: boolean } | null> {
   if (!CORRELIC_API) return null
   try {
     const res = await fetch(`${CORRELIC_API}/keys/verify`, {
@@ -44,7 +40,7 @@ async function validateRemotely(
     if (!res.ok) {
       return { ok: false, expired: body?.code === 'KEY_EXPIRED' }
     }
-    return { ok: true, expiresAt: (body?.expiresAt as string) || null }
+    return { ok: true }
   } catch {
     return null
   }
@@ -64,15 +60,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'api_key required' }, { status: 400 })
     }
 
-    // Local backend first; the remote key server is only a fallback when one
-    // is configured.
+    // Local backend first; the remote key server is only a fallback when configured.
     let valid = await validateLocally(apiKey)
-    let expiresAt: string | null = null
     if (!valid) {
       const remote = await validateRemotely(apiKey)
       if (remote?.ok) {
         valid = true
-        expiresAt = remote.expiresAt ?? null
       } else if (remote?.expired) {
         return NextResponse.json(
           { error: 'Your API key has expired. Ask your administrator for a new one.' },
@@ -85,48 +78,38 @@ export async function POST(request: NextRequest) {
     }
 
     const response = NextResponse.json({ ok: true })
-    response.cookies.set(SESSION_COOKIE, apiKey, cookieOpts)
-    if (expiresAt) {
-      response.cookies.set('correlic_key_expires', expiresAt, cookieOpts)
-    }
-    response.cookies.delete(EMAIL_COOKIE)
+    response.cookies.set(SESSION_COOKIE, apiKey, sessionCookieOptions(request))
     return response
   }
 
+  if (body.mode !== 'email') {
+    return NextResponse.json({ error: 'unknown login mode' }, { status: 400 })
+  }
+
   const email = body.email?.trim()
-  const password = body.password?.trim()
+  // Passwords are sent exactly as typed; trimming would reject valid passwords.
+  const password = body.password
   if (!email || !password) {
-    return NextResponse.json(
-      { error: 'email and password required' },
-      { status: 400 }
-    )
+    return NextResponse.json({ error: 'email and password required' }, { status: 400 })
   }
 
-  const headers: HeadersInit = { 'Content-Type': 'application/json' }
-  const apiKey = process.env.API_KEY
-  if (apiKey && apiKey.trim() !== '' && apiKey !== '<RAW_API_KEY>') {
-    headers['Authorization'] = apiKey
+  let sessionRes: Response
+  try {
+    sessionRes = await fetch(`${PROXY_BASE}/auth/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+  } catch {
+    return NextResponse.json({ error: 'Backend unreachable' }, { status: 502 })
   }
 
-  const sessionRes = await fetch(`${PROXY_BASE}/auth/sessions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ email, password }),
-  })
   const text = await sessionRes.text()
   if (!sessionRes.ok) {
-    let errorMessage = text || 'invalid credentials'
-    try {
-      const parsed = JSON.parse(text)
-      if (parsed?.error) {
-        errorMessage = parsed.error
-      }
-    } catch {
-      // keep text as-is
-    }
+    const status = sessionRes.status >= 500 ? 502 : sessionRes.status
     return NextResponse.json(
-      { error: errorMessage },
-      { status: sessionRes.status }
+      { error: errorMessageFrom(text, 'invalid credentials') },
+      { status }
     )
   }
 
@@ -145,7 +128,6 @@ export async function POST(request: NextRequest) {
     ok: true,
     password_reset_required: !!session?.user?.password_reset_required,
   })
-  response.cookies.set(SESSION_COOKIE, session.token, cookieOpts)
-  response.cookies.set(EMAIL_COOKIE, email, cookieOpts)
+  response.cookies.set(SESSION_COOKIE, session.token, sessionCookieOptions(request))
   return response
 }

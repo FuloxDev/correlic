@@ -19,7 +19,7 @@ export default function DashboardError({
             <div className="text-center space-y-4">
                 <AlertTriangle className="w-12 h-12 text-orange-500/60 mx-auto" />
                 <h2 className="text-xl font-semibold text-gray-300">Something went wrong</h2>
-                <p className="text-sm text-gray-500 max-w-md">
+                <p className="text-sm text-dim max-w-md">
                     {error.message || 'An unexpected error occurred while loading this page.'}
                 </p>
                 <button

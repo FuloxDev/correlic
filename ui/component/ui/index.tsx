@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from 'react'
+import { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes, useId } from 'react'
 
 // =============================================================================
 // Severity Badge
@@ -118,15 +118,20 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   description?: string
 }
 
-export function Input({ label, description, className = '', ...props }: InputProps) {
+export function Input({ label, description, className = '', id, ...props }: InputProps) {
+  const generatedId = useId()
+  const inputId = id ?? generatedId
+  const descriptionId = description ? `${inputId}-description` : undefined
   return (
     <div className="space-y-1.5">
       {label && (
-        <label className="block text-xs font-medium" style={{ color: 'var(--foreground-muted)' }}>
+        <label htmlFor={inputId} className="block text-xs font-medium" style={{ color: 'var(--foreground-muted)' }}>
           {label}
         </label>
       )}
       <input
+        id={inputId}
+        aria-describedby={descriptionId}
         className={`w-full px-3 py-2 rounded-lg text-sm outline-none transition-all ${className}`}
         style={{
           background: 'var(--input-bg)',
@@ -138,7 +143,7 @@ export function Input({ label, description, className = '', ...props }: InputPro
         {...props}
       />
       {description && (
-        <p className="text-xs" style={{ color: 'var(--foreground-subtle)' }}>
+        <p id={descriptionId} className="text-xs" style={{ color: 'var(--foreground-subtle)' }}>
           {description}
         </p>
       )}
@@ -154,15 +159,18 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   options: { value: string; label: string; disabled?: boolean }[]
 }
 
-export function Select({ label, options, className = '', ...props }: SelectProps) {
+export function Select({ label, options, className = '', id, ...props }: SelectProps) {
+  const generatedId = useId()
+  const selectId = id ?? generatedId
   return (
     <div className="space-y-1.5">
       {label && (
-        <label className="block text-xs font-medium" style={{ color: 'var(--foreground-muted)' }}>
+        <label htmlFor={selectId} className="block text-xs font-medium" style={{ color: 'var(--foreground-muted)' }}>
           {label}
         </label>
       )}
       <select
+        id={selectId}
         className={`px-3 py-2 rounded-lg text-sm outline-none transition-all cursor-pointer ${className}`}
         style={{
           background: 'var(--input-bg)',
@@ -386,6 +394,7 @@ export function Toggle({ label, description, checked, onChange, disabled = false
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={label ? undefined : 'Toggle'}
         disabled={disabled}
         onClick={() => !disabled && onChange(!checked)}
         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${

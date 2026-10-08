@@ -38,9 +38,20 @@ export default function UserProfileModal({ open, onClose }: UserProfileModalProp
     const modalRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
-        if (open) {
-            fetchProfile()
-        }
+        if (!open) return
+        let cancelled = false
+        getUserProfile()
+            .then(data => {
+                if (cancelled) return
+                setProfile(data)
+                setName(data.name || '')
+                setUsername(data.username || '')
+                setAvatarUrl(data.avatar_url || '')
+                setError('')
+            })
+            .catch(() => { if (!cancelled) setError('Failed to load profile') })
+            .finally(() => { if (!cancelled) setLoading(false) })
+        return () => { cancelled = true }
     }, [open])
 
     // Close on Escape
@@ -53,22 +64,6 @@ export default function UserProfileModal({ open, onClose }: UserProfileModalProp
             return () => document.removeEventListener('keydown', handleKeyDown)
         }
     }, [open, onClose])
-
-    async function fetchProfile() {
-        setLoading(true)
-        setError('')
-        try {
-            const data = await getUserProfile()
-            setProfile(data)
-            setName(data.name || '')
-            setUsername(data.username || '')
-            setAvatarUrl(data.avatar_url || '')
-        } catch (err: any) {
-            setError('Failed to load profile')
-        } finally {
-            setLoading(false)
-        }
-    }
 
     async function handleSave() {
         setSaving(true)
@@ -167,7 +162,7 @@ export default function UserProfileModal({ open, onClose }: UserProfileModalProp
         .toUpperCase()
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center" role="dialog" aria-modal="true" aria-label="Profile">
             {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -186,11 +181,13 @@ export default function UserProfileModal({ open, onClose }: UserProfileModalProp
             >
                 {/* Close button */}
                 <button
+                    type="button"
                     onClick={onClose}
                     className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-all z-10"
                     style={{ color: 'var(--theme-text-muted)' }}
+                    aria-label="Close profile"
                 >
-                    <X className="w-5 h-5" />
+                    <X className="w-5 h-5" aria-hidden="true" />
                 </button>
 
                 {loading ? (

@@ -32,7 +32,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
     investigating: { label: 'Investigating', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/30' },
     resolved: { label: 'Resolved', color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/30' },
     dismissed: { label: 'Dismissed', color: 'text-gray-400', bg: 'bg-gray-500/10 border-gray-500/30' },
-    auto_resolved: { label: 'Auto-resolved', color: 'text-gray-500', bg: 'bg-gray-500/10 border-gray-500/30' },
+    auto_resolved: { label: 'Auto-resolved', color: 'text-dim', bg: 'bg-gray-500/10 border-gray-500/30' },
 };
 
 const cardVariants = {
@@ -548,7 +548,7 @@ export default function IncidentsPage() {
 
                 {/* Search */}
                 <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                     <input
                         type="text"
                         placeholder="Search incidents..."
@@ -557,14 +557,14 @@ export default function IncidentsPage() {
                         className="pl-8 pr-8 py-2 text-sm bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-2xl text-gray-200 placeholder-gray-500 focus:outline-none focus:border-orange-500/40 focus:ring-1 focus:ring-orange-500/20 w-56"
                     />
                     {searchQuery && (
-                        <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                        <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dim hover:text-white">
                             <X className="w-3.5 h-3.5" />
                         </button>
                     )}
                 </div>
 
                 {searchQuery && (
-                    <span className="text-sm text-gray-500 tabular-nums">{filteredIncidents.length} results</span>
+                    <span className="text-sm text-dim tabular-nums">{filteredIncidents.length} results</span>
                 )}
             </div>
 
@@ -707,7 +707,7 @@ export default function IncidentsPage() {
                                                             {aiTypes.join(', ')}
                                                         </span>
                                                     )}
-                                                    <span className="text-xs text-gray-500 tabular-nums ml-1 flex items-center gap-1">
+                                                    <span className="text-xs text-dim tabular-nums ml-1 flex items-center gap-1">
                                                         <Clock className="w-3 h-3" />
                                                         {formatRelativeTime(inc.created_at)}
                                                     </span>
@@ -716,7 +716,7 @@ export default function IncidentsPage() {
 
                                             {/* Row 2: summary (compact) */}
                                             {inc.summary && (
-                                                <p className="text-xs text-gray-500 font-mono mt-2 ml-10 truncate">
+                                                <p className="text-xs text-dim font-mono mt-2 ml-10 truncate">
                                                     {inc.summary}
                                                 </p>
                                             )}
@@ -742,7 +742,7 @@ export default function IncidentsPage() {
                                                 {inc.host_id && (
                                                     <>
                                                         <span className="text-white/10">|</span>
-                                                        <span className="text-xs font-mono text-gray-500">{inc.host_id.slice(0, 12)}</span>
+                                                        <span className="text-xs font-mono text-dim">{inc.host_id.slice(0, 12)}</span>
                                                     </>
                                                 )}
 
@@ -758,7 +758,7 @@ export default function IncidentsPage() {
                                                             </span>
                                                         ))}
                                                         {mitre.length > 4 && (
-                                                            <span className="text-[10px] text-gray-500">+{mitre.length - 4}</span>
+                                                            <span className="text-[10px] text-dim">+{mitre.length - 4}</span>
                                                         )}
                                                     </>
                                                 )}

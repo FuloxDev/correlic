@@ -3,12 +3,11 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Filter, Database, FileText, Cpu, Globe, Wifi, ShieldCheck, Bot, UserCheck, ChevronDown, ChevronRight, Folder, Loader2, Plus, Trash2, Search, X, Clock, Terminal, Sparkles, Ban, AlertTriangle, ShieldOff, Eye } from 'lucide-react';
+import { RefreshCw, Filter, Database, FileText, Cpu, Globe, Wifi, ShieldCheck, Bot, UserCheck, ChevronDown, ChevronRight, Folder, Loader2, Plus, Trash2, Search, X, Clock, Terminal, Ban, AlertTriangle, ShieldOff, Eye } from 'lucide-react';
 import { getBaselines, getBaselineSummary, getSafeDomains, addSafeDomain, deleteSafeDomain, deleteBaseline, suspendBaseline, confirmBaseline, createBaseline, getBaselineExclusions, deleteBaselineExclusion, getNeverBaselines, createNeverBaseline, deleteNeverBaseline, getBlockRules, createBlockRule, updateBlockRule, deleteBlockRule, getSuppressedSummary, getNoiseFilters, aiAgentDisplayName, AI_AGENT_NAMES, resolveIP, type Baseline, type SafeDomain, type BaselineSummary, type BaselineExclusion, type NeverBaselineEntry, type BlockRule, type SuppressedGroup, type NoiseFilters, type IPEnrichment } from '@/lib/api-client';
 import { ApiError } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { PageHeading } from '@/components/ui/page-heading';
-import AnimatedNumber from '@/components/dashboard/AnimatedNumber';
 
 const PAGE_SIZE = 100;
 
@@ -208,13 +207,13 @@ function TreeRows({ node, depth, maxHits, expandedDirs, setExpandedDirs, setSusp
                 <motion.div
                     animate={{ rotate: isExpanded ? 90 : 0 }}
                     transition={{ duration: 0.15 }}
-                    className={`shrink-0 ${isExpanded ? 'text-blue-400' : 'text-gray-600 group-hover:text-gray-400'}`}
+                    className={`shrink-0 ${isExpanded ? 'text-blue-400' : 'text-dim group-hover:text-gray-400'}`}
                 >
                     <ChevronRight className="w-4 h-4" />
                 </motion.div>
 
                 {/* Folder icon */}
-                <Folder className={`w-4 h-4 shrink-0 ${isExpanded ? 'text-blue-400' : 'text-gray-500 group-hover:text-blue-400'} transition-colors`} />
+                <Folder className={`w-4 h-4 shrink-0 ${isExpanded ? 'text-blue-400' : 'text-dim group-hover:text-blue-400'} transition-colors`} />
 
                 {/* Path name */}
                 <span className={`font-mono text-[13px] truncate ${isExpanded ? 'text-blue-300' : 'text-gray-200 group-hover:text-white'} transition-colors`} title={node.fullPath}>
@@ -224,8 +223,8 @@ function TreeRows({ node, depth, maxHits, expandedDirs, setExpandedDirs, setSusp
                 {/* File count pill — shows direct files only */}
                 <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-semibold tabular-nums ${
                     node.directFiles > 0
-                        ? isExpanded ? 'bg-blue-500/20 text-blue-300' : 'bg-white/[0.06] text-gray-500'
-                        : 'bg-transparent text-gray-600'
+                        ? isExpanded ? 'bg-blue-500/20 text-blue-300' : 'bg-white/[0.06] text-dim'
+                        : 'bg-transparent text-dim'
                 }`}>
                     {node.directFiles > 0 ? node.directFiles : ''}
                 </span>
@@ -250,7 +249,7 @@ function TreeRows({ node, depth, maxHits, expandedDirs, setExpandedDirs, setSusp
                                 {node.latestFile || '\u2014'}
                             </span>
                         ) : (
-                            <span className="text-xs text-gray-600">&mdash;</span>
+                            <span className="text-xs text-dim">&mdash;</span>
                         )}
                     </div>
 
@@ -289,11 +288,11 @@ function TreeRows({ node, depth, maxHits, expandedDirs, setExpandedDirs, setSusp
                             ))
                         )}
                         {node.globAgents.size > 2 && (
-                            <span className="text-[10px] text-gray-500 shrink-0">+{node.globAgents.size - 2}</span>
+                            <span className="text-[10px] text-dim shrink-0">+{node.globAgents.size - 2}</span>
                         )}
                         <button
                             onClick={(e) => { e.stopPropagation(); setAddDirTarget({ path: node.fullPath }); }}
-                            className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-gray-500 border border-transparent hover:bg-green-500/10 hover:text-green-400 hover:border-green-500/20 transition-all opacity-0 group-hover:opacity-100"
+                            className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-dim border border-transparent hover:bg-green-500/10 hover:text-green-400 hover:border-green-500/20 transition-all opacity-0 group-hover:opacity-100"
                             title={node.agents.size > 0 ? `Add agent for ${node.fullPath}` : `Allow ${node.fullPath}`}
                         >
                             <Plus className="w-3 h-3" />
@@ -302,8 +301,8 @@ function TreeRows({ node, depth, maxHits, expandedDirs, setExpandedDirs, setSusp
 
                     {/* Hits — direct only */}
                     <span className={`w-[60px] text-right text-sm font-bold tabular-nums ${
-                        node.directFiles === 0 ? 'text-gray-600' :
-                        node.directHits > 100 ? 'text-green-400' : node.directHits > 10 ? 'text-yellow-400' : 'text-gray-500'
+                        node.directFiles === 0 ? 'text-dim' :
+                        node.directHits > 100 ? 'text-green-400' : node.directHits > 10 ? 'text-yellow-400' : 'text-dim'
                     }`}>
                         {node.directFiles > 0 ? node.directHits.toLocaleString() : ''}
                     </span>
@@ -313,10 +312,10 @@ function TreeRows({ node, depth, maxHits, expandedDirs, setExpandedDirs, setSusp
                         {node.directFiles > 0 && node.maxLastSeen ? (
                             <>
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: freshColor }} />
-                                <span className="text-xs text-gray-500 tabular-nums whitespace-nowrap">{formatDate(node.maxLastSeen)}</span>
+                                <span className="text-xs text-dim tabular-nums whitespace-nowrap">{formatDate(node.maxLastSeen)}</span>
                             </>
                         ) : (
-                            <span className="text-xs text-gray-600">&mdash;</span>
+                            <span className="text-xs text-dim">&mdash;</span>
                         )}
                     </div>
                 </div>
@@ -426,19 +425,19 @@ function TreeRows({ node, depth, maxHits, expandedDirs, setExpandedDirs, setSusp
                                                                 {aiAgentDisplayName(baseline.ai_type)}
                                                             </span>
                                                         ) : (
-                                                            <span className="text-xs text-gray-600 italic">Any</span>
+                                                            <span className="text-xs text-dim italic">Any</span>
                                                         )}
                                                     </div>
 
                                                     {/* Hits */}
-                                                    <span className={`w-[60px] text-right text-xs tabular-nums ${baseline.hit_count > 100 ? 'text-green-400/70' : baseline.hit_count > 10 ? 'text-yellow-400/70' : 'text-gray-600'}`}>
+                                                    <span className={`w-[60px] text-right text-xs tabular-nums ${baseline.hit_count > 100 ? 'text-green-400/70' : baseline.hit_count > 10 ? 'text-yellow-400/70' : 'text-dim'}`}>
                                                         {baseline.hit_count}
                                                     </span>
 
                                                     {/* Last seen */}
                                                     <div className="w-[140px] flex items-center gap-1.5 justify-end">
                                                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: fileFresh }} />
-                                                        <span className="text-xs text-gray-600 tabular-nums whitespace-nowrap">{formatDate(baseline.last_seen)}</span>
+                                                        <span className="text-xs text-dim tabular-nums whitespace-nowrap">{formatDate(baseline.last_seen)}</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -504,7 +503,7 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                     <motion.div
                         animate={{ rotate: isExpanded ? 90 : 0 }}
                         transition={{ duration: 0.15, ease: 'easeOut' }}
-                        className={`shrink-0 ${isExpanded ? 'text-orange-400' : 'text-gray-600 group-hover:text-gray-400'}`}
+                        className={`shrink-0 ${isExpanded ? 'text-orange-400' : 'text-dim group-hover:text-gray-400'}`}
                     >
                         <ChevronRight className="w-4 h-4" />
                     </motion.div>
@@ -521,12 +520,12 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                         {portDisplay}
                     </code>
                     {group.portLabel && (
-                        <span className={`text-[10px] font-semibold uppercase tracking-wider ${isExpanded ? 'text-orange-400/60' : 'text-gray-600'}`}>{group.portLabel}</span>
+                        <span className={`text-[10px] font-semibold uppercase tracking-wider ${isExpanded ? 'text-orange-400/60' : 'text-dim'}`}>{group.portLabel}</span>
                     )}
                 </div>
 
                 {/* Subnet count */}
-                <span className="text-[12px] text-gray-500 tabular-nums">
+                <span className="text-[12px] text-dim tabular-nums">
                     {group.subnets.length} {group.subnets.length === 1 ? 'subnet' : 'subnets'}
                 </span>
 
@@ -539,14 +538,14 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                     const asnName = enrichment?.asn_name || ''
                     return (
                         <>
-                            <code className="text-[12px] text-gray-500/80 font-mono">{cidr}</code>
+                            <code className="text-[12px] text-dim/80 font-mono">{cidr}</code>
                             {displayDomain ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium bg-cyan-500/8 text-cyan-300/90 border border-cyan-500/15" title={`${displayDomain}${asnName ? ` (${asnName})` : ''}`}>
                                     <Globe className="w-3 h-3 text-cyan-400/50" />
                                     {displayDomain}
                                 </span>
                             ) : asnName ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] text-gray-500 bg-white/[0.03] border border-white/[0.06]" title={asnName}>
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] text-dim bg-white/[0.03] border border-white/[0.06]" title={asnName}>
                                     {asnName.length > 30 ? asnName.slice(0, 28) + '...' : asnName}
                                 </span>
                             ) : (
@@ -598,13 +597,13 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                                 </span>
                             ))
                         ) : (
-                            <span className="text-xs text-gray-600 italic">Any</span>
+                            <span className="text-xs text-dim italic">Any</span>
                         )}
                     </div>
 
                     {/* Hits with bar */}
                     <div className="w-[90px] flex flex-col items-end gap-0.5">
-                        <span className={`text-sm font-bold tabular-nums ${group.totalHits > 100 ? 'text-green-400' : group.totalHits > 10 ? 'text-yellow-400' : 'text-gray-500'}`}>
+                        <span className={`text-sm font-bold tabular-nums ${group.totalHits > 100 ? 'text-green-400' : group.totalHits > 10 ? 'text-yellow-400' : 'text-dim'}`}>
                             {group.totalHits.toLocaleString()}
                         </span>
                         <div className="w-full h-[2px] bg-white/[0.04] rounded-full overflow-hidden">
@@ -629,14 +628,14 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                         <div className="w-[80px] flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                                 onClick={(e) => { e.stopPropagation(); setSuspendTarget(group.subnets[0].baseline.id); }}
-                                className="p-1.5 rounded-lg hover:bg-amber-500/15 text-gray-600 hover:text-amber-400 transition-all"
+                                className="p-1.5 rounded-lg hover:bg-amber-500/15 text-dim hover:text-amber-400 transition-all"
                                 title="Suspend"
                             >
                                 <Clock className="w-3.5 h-3.5" />
                             </button>
                             <button
                                 onClick={(e) => { e.stopPropagation(); setDeleteTarget(group.subnets[0].baseline.id); }}
-                                className="p-1.5 rounded-lg hover:bg-red-500/15 text-gray-600 hover:text-red-400 transition-all"
+                                className="p-1.5 rounded-lg hover:bg-red-500/15 text-dim hover:text-red-400 transition-all"
                                 title="Remove"
                             >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -698,7 +697,7 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                                                                 {displayDomain}
                                                             </span>
                                                         ) : asnName ? (
-                                                            <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] text-gray-500 bg-white/[0.03] border border-white/[0.06]" title={asnName}>
+                                                            <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] text-dim bg-white/[0.03] border border-white/[0.06]" title={asnName}>
                                                                 {asnName.length > 30 ? asnName.slice(0, 28) + '...' : asnName}
                                                             </span>
                                                         ) : (
@@ -750,13 +749,13 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                                                             {aiAgentDisplayName(entry.baseline.ai_type)}
                                                         </span>
                                                     ) : (
-                                                        <span className="text-xs text-gray-600 italic">Any</span>
+                                                        <span className="text-xs text-dim italic">Any</span>
                                                     )}
                                                 </div>
 
                                                 {/* Hits */}
                                                 <div className="w-[90px] flex items-center justify-end">
-                                                    <span className={`text-[12px] tabular-nums ${entry.baseline.hit_count > 100 ? 'text-green-400/70' : entry.baseline.hit_count > 10 ? 'text-yellow-400/70' : 'text-gray-600'}`}>
+                                                    <span className={`text-[12px] tabular-nums ${entry.baseline.hit_count > 100 ? 'text-green-400/70' : entry.baseline.hit_count > 10 ? 'text-yellow-400/70' : 'text-dim'}`}>
                                                         {entry.baseline.hit_count.toLocaleString()}
                                                     </span>
                                                 </div>
@@ -764,21 +763,21 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
                                                 {/* Last seen */}
                                                 <div className="w-[150px] flex items-center gap-1.5 justify-end">
                                                     <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: subFresh }} />
-                                                    <span className="text-[11px] text-gray-500 tabular-nums whitespace-nowrap">{formatDate(entry.baseline.last_seen)}</span>
+                                                    <span className="text-[11px] text-dim tabular-nums whitespace-nowrap">{formatDate(entry.baseline.last_seen)}</span>
                                                 </div>
 
                                                 {/* Actions on hover */}
                                                 <div className="w-[80px] flex items-center justify-end gap-1 opacity-0 group-hover/sub:opacity-100 transition-opacity">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); setSuspendTarget(entry.baseline.id); }}
-                                                        className="p-1.5 rounded-lg hover:bg-amber-500/15 text-gray-600 hover:text-amber-400 transition-all"
+                                                        className="p-1.5 rounded-lg hover:bg-amber-500/15 text-dim hover:text-amber-400 transition-all"
                                                         title="Suspend"
                                                     >
                                                         <Clock className="w-3.5 h-3.5" />
                                                     </button>
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); setDeleteTarget(entry.baseline.id); }}
-                                                        className="p-1.5 rounded-lg hover:bg-red-500/15 text-gray-600 hover:text-red-400 transition-all"
+                                                        className="p-1.5 rounded-lg hover:bg-red-500/15 text-dim hover:text-red-400 transition-all"
                                                         title="Remove"
                                                     >
                                                         <Trash2 className="w-3.5 h-3.5" />
@@ -799,7 +798,7 @@ function NetworkPortGroupRow({ group, maxHits, expandedDirs, setExpandedDirs, se
 
 export default function BaselinesPage() {
     return (
-        <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-gray-500" /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-dim" /></div>}>
             <Baselines />
         </Suspense>
     )
@@ -873,14 +872,17 @@ function Baselines() {
 
     const sentinelRef = useRef<HTMLDivElement>(null);
 
-    // Handle ?tab=files query param from findings/incidents "Allow Directory" link
-    useEffect(() => {
-        const tab = searchParams.get('tab');
-        if (tab === 'files') {
+    // Handle ?tab=files from the findings/incidents "Allow Directory" link.
+    // Applied as a state adjustment during render (once per distinct param value).
+    const tabParam = searchParams.get('tab');
+    const [appliedTabParam, setAppliedTabParam] = useState<string | null>(null);
+    if (tabParam !== appliedTabParam) {
+        setAppliedTabParam(tabParam);
+        if (tabParam === 'files') {
             setActiveTab('learned');
             setFilter('file_pattern');
         }
-    }, [searchParams]);
+    }
 
     useEffect(() => {
         if (activeTab === 'learned') {
@@ -1663,7 +1665,7 @@ function Baselines() {
                 }
             >
                 {!loading && (
-                    <span className="flex items-center gap-1.5 text-xs text-gray-500 bg-white/5 px-2.5 py-1 rounded-full border border-white/5">
+                    <span className="flex items-center gap-1.5 text-xs text-dim bg-white/5 px-2.5 py-1 rounded-full border border-white/5">
                         <Database className="w-3 h-3" />
                         {totalAll.toLocaleString()} total patterns
                     </span>
@@ -1690,7 +1692,7 @@ function Baselines() {
                                         onChange={(e) => setAddPattern(e.target.value)}
                                         onKeyDown={(e) => e.key === 'Enter' && handleAddBaseline()}
                                         placeholder="e.g. /home/user/.config/Code/** or 10.0.0.0/8:443"
-                                        className="w-full px-3 py-2 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-gray-200 font-mono placeholder:text-gray-600 focus:outline-none focus:border-green-500/40 focus:bg-green-500/[0.03] transition-all"
+                                        className="w-full px-3 py-2 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-gray-200 font-mono placeholder:text-dim focus:outline-none focus:border-green-500/40 focus:bg-green-500/[0.03] transition-all"
                                     />
                                 </div>
                                 <div>
@@ -1705,7 +1707,7 @@ function Baselines() {
                                                     className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition-all duration-200 border flex items-center gap-1.5 ${
                                                         addSignalType === key
                                                             ? `${cfg.bg} ${cfg.border} ${cfg.color}`
-                                                            : 'bg-white/[0.03] border-white/[0.06] text-gray-500 hover:text-gray-300 hover:bg-white/[0.06]'
+                                                            : 'bg-white/[0.03] border-white/[0.06] text-dim hover:text-gray-300 hover:bg-white/[0.06]'
                                                     }`}
                                                 >
                                                     <Icon className="w-3.5 h-3.5" />
@@ -1716,7 +1718,7 @@ function Baselines() {
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="text-[11px] text-gray-400 uppercase tracking-widest font-semibold mb-1.5 block">Agent <span className="text-gray-600 normal-case">(optional)</span></label>
+                                    <label className="text-[11px] text-gray-400 uppercase tracking-widest font-semibold mb-1.5 block">Agent <span className="text-dim normal-case">(optional)</span></label>
                                     <select
                                         value={addAiType}
                                         onChange={(e) => setAddAiType(e.target.value)}
@@ -1738,7 +1740,7 @@ function Baselines() {
                                 </button>
                                 <button
                                     onClick={() => { setShowAddForm(false); setAddPattern(''); setAddAiType(''); }}
-                                    className="p-2 text-gray-500 hover:text-gray-300 transition-colors"
+                                    className="p-2 text-dim hover:text-gray-300 transition-colors"
                                 >
                                     <X className="w-4 h-4" />
                                 </button>
@@ -1816,7 +1818,7 @@ function Baselines() {
                                         <Icon className={`w-4 h-4 transition-colors duration-300 ${isActive ? cfg.color : cfg.color + ' opacity-60 group-hover:opacity-90'}`} />
                                     </div>
                                     <span className={`text-[10px] font-bold uppercase tracking-wider transition-colors duration-300 ${isActive ? cfg.color : cfg.color + ' opacity-50 group-hover:opacity-80'}`}>{cfg.label}</span>
-                                    <span className={`text-xl font-extrabold tabular-nums leading-none transition-colors duration-300 ${isActive ? 'text-white' : count > 0 ? 'text-gray-300' : 'text-gray-600'}`}>{count.toLocaleString()}</span>
+                                    <span className={`text-xl font-extrabold tabular-nums leading-none transition-colors duration-300 ${isActive ? 'text-white' : count > 0 ? 'text-gray-300' : 'text-dim'}`}>{count.toLocaleString()}</span>
                                 </motion.button>
                             );
                         })}
@@ -1836,7 +1838,7 @@ function Baselines() {
                             <UserCheck className="w-3.5 h-3.5" />
                             <span>Manual Only</span>
                             {manualCount > 0 && (
-                                <span className={`px-1.5 py-0.5 text-xs rounded-full tabular-nums ${showManualOnly ? 'bg-green-500/20 text-green-300' : 'bg-white/[0.06] text-gray-500'}`}>
+                                <span className={`px-1.5 py-0.5 text-xs rounded-full tabular-nums ${showManualOnly ? 'bg-green-500/20 text-green-300' : 'bg-white/[0.06] text-dim'}`}>
                                     {manualCount}
                                 </span>
                             )}
@@ -1844,7 +1846,7 @@ function Baselines() {
 
                         {/* Pattern search */}
                         <div className="relative">
-                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                             <input
                                 type="text"
                                 placeholder="Search patterns..."
@@ -1853,7 +1855,7 @@ function Baselines() {
                                 className="pl-8 pr-8 py-2.5 text-sm bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-2xl text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/40 focus:ring-1 focus:ring-blue-500/20 w-64 transition-all"
                             />
                             {patternSearch && (
-                                <button onClick={() => setPatternSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                                <button onClick={() => setPatternSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dim hover:text-white">
                                     <X className="w-3.5 h-3.5" />
                                 </button>
                             )}
@@ -1910,7 +1912,7 @@ function Baselines() {
                         {/* Active filters indicator */}
                         {(agentFilter !== '' || patternSearch || showManualOnly) && (
                             <div className="flex items-center gap-2 text-sm">
-                                <Filter className="w-3.5 h-3.5 text-gray-500" />
+                                <Filter className="w-3.5 h-3.5 text-dim" />
                                 {showManualOnly && (
                                     <span className="px-2 py-0.5 rounded text-xs border bg-green-500/10 border-green-500/30 text-green-300">
                                         Manual Only
@@ -1926,10 +1928,10 @@ function Baselines() {
                                         &quot;{patternSearch}&quot;
                                     </span>
                                 )}
-                                <span className="text-xs text-gray-500 tabular-nums">{filteredBaselines.length} results</span>
+                                <span className="text-xs text-dim tabular-nums">{filteredBaselines.length} results</span>
                                 <button
                                     onClick={() => { setFilter(''); setAgentFilter(''); setPatternSearch(''); setShowManualOnly(false); }}
-                                    className="text-gray-500 hover:text-white text-xs transition-colors"
+                                    className="text-dim hover:text-white text-xs transition-colors"
                                 >
                                     Clear all
                                 </button>
@@ -1964,7 +1966,7 @@ function Baselines() {
                                         animate={{ scale: 1 }}
                                         transition={{ type: 'spring', stiffness: 200, damping: 15, delay: 0.1 }}
                                     >
-                                        <Database className="w-14 h-14 text-gray-600 mx-auto mb-4" />
+                                        <Database className="w-14 h-14 text-dim mx-auto mb-4" />
                                     </motion.div>
                                     {visibleBaselines.length === 0 ? (
                                         <>
@@ -2019,7 +2021,7 @@ function Baselines() {
                                                         {fileTree.reduce((s, n) => s + n.totalFiles, 0)} files in {fileTree.length} {fileTree.length === 1 ? 'tree' : 'trees'}
                                                     </span>
                                                 </div>
-                                                <div className="flex items-center gap-3.5 text-[10px] text-gray-500">
+                                                <div className="flex items-center gap-3.5 text-[10px] text-dim">
                                                     <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500" /> &lt;1h</span>
                                                     <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-yellow-500" /> &lt;24h</span>
                                                     <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-gray-500" /> older</span>
@@ -2074,7 +2076,7 @@ function Baselines() {
                                                         {networkPortGroups.reduce((s, g) => s + g.subnets.length, 0)} subnets across {networkPortGroups.length} {networkPortGroups.length === 1 ? 'port' : 'ports'}
                                                     </span>
                                                 </div>
-                                                <div className="flex items-center gap-3.5 text-[10px] text-gray-500">
+                                                <div className="flex items-center gap-3.5 text-[10px] text-dim">
                                                     <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500" /> &lt;1h</span>
                                                     <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-yellow-500" /> &lt;24h</span>
                                                     <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-gray-500" /> older</span>
@@ -2170,7 +2172,7 @@ function Baselines() {
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <p className="text-[11px] text-gray-600 mt-0.5 truncate">{cfg.description}</p>
+                                                                <p className="text-[11px] text-dim mt-0.5 truncate">{cfg.description}</p>
                                                             </div>
                                                             <div className="shrink-0 flex items-center gap-6">
                                                                 <div className="w-[160px]">
@@ -2184,7 +2186,7 @@ function Baselines() {
                                                                     {aiLabel ? (
                                                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"><Bot className="w-3 h-3 text-cyan-400/60" />{aiLabel}</span>
                                                                     ) : (
-                                                                        <span className="text-xs text-gray-600 italic">Any</span>
+                                                                        <span className="text-xs text-dim italic">Any</span>
                                                                     )}
                                                                 </div>
                                                                 <div className="w-[70px] text-right">
@@ -2227,7 +2229,7 @@ function Baselines() {
                         </div>
                     )}
                     {!loading && !hasMore && baselines.length > 0 && (
-                        <p className="text-center text-xs text-gray-600 py-2">
+                        <p className="text-center text-xs text-dim py-2">
                             {baselines.length} baselines loaded
                         </p>
                     )}
@@ -2246,7 +2248,7 @@ function Baselines() {
                         <h3 className="text-sm font-semibold text-gray-300 mb-3">Add Safe Domain</h3>
                         <div className="flex items-end gap-3">
                             <div className="flex-1 max-w-sm">
-                                <label className="block text-xs text-gray-500 mb-1">Domain</label>
+                                <label className="block text-xs text-dim mb-1">Domain</label>
                                 <input
                                     type="text"
                                     value={newDomain}
@@ -2257,7 +2259,7 @@ function Baselines() {
                                 />
                             </div>
                             <div className="flex-1 max-w-md">
-                                <label className="block text-xs text-gray-500 mb-1">Description (optional)</label>
+                                <label className="block text-xs text-dim mb-1">Description (optional)</label>
                                 <input
                                     type="text"
                                     value={newDomainDesc}
@@ -2303,7 +2305,7 @@ function Baselines() {
                                         animate={{ scale: 1 }}
                                         transition={{ type: 'spring', stiffness: 200, damping: 15, delay: 0.1 }}
                                     >
-                                        <ShieldCheck className="w-14 h-14 text-gray-600 mx-auto mb-4" />
+                                        <ShieldCheck className="w-14 h-14 text-dim mx-auto mb-4" />
                                     </motion.div>
                                     <h3 className="text-xl font-semibold mb-2">No Safe Domains Configured</h3>
                                     <p className="text-gray-400 max-w-md mx-auto">Add domains above to suppress findings for known-safe AI provider connections.</p>
@@ -2347,7 +2349,7 @@ function Baselines() {
                                                         <td className="px-6 py-4 text-gray-300">
                                                             {domain.description || "\u2014"}
                                                         </td>
-                                                        <td className="px-6 py-4 text-right text-sm text-gray-500">
+                                                        <td className="px-6 py-4 text-right text-sm text-dim">
                                                             {formatDate(domain.created_at)}
                                                         </td>
                                                         <td className="px-6 py-4 text-right">
@@ -2387,8 +2389,8 @@ function Baselines() {
                             </motion.div>
                         ) : exclusions.length === 0 && suspendedBaselines.length === 0 ? (
                             <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                                className="flex flex-col items-center justify-center py-20 text-gray-500 gap-3">
-                                <ShieldCheck className="w-12 h-12 text-gray-600" />
+                                className="flex flex-col items-center justify-center py-20 text-dim gap-3">
+                                <ShieldCheck className="w-12 h-12 text-dim" />
                                 <div className="text-center">
                                     <p className="text-lg font-medium text-gray-400">No Exclusions</p>
                                     <p className="text-sm mt-1">When you delete or suspend a baseline, it will appear here.</p>
@@ -2420,7 +2422,7 @@ function Baselines() {
                                                 <Clock className="w-4 h-4 text-amber-400" />
                                                 <span className="text-sm font-semibold text-amber-300">Suspended Baselines</span>
                                                 <span className="px-1.5 py-0.5 text-xs bg-amber-500/20 text-amber-400 rounded-full tabular-nums">{suspendedBaselines.length}</span>
-                                                <span className="text-[11px] text-gray-600 ml-1">Detection engine will flag these until suspension expires</span>
+                                                <span className="text-[11px] text-dim ml-1">Detection engine will flag these until suspension expires</span>
                                             </div>
                                             <div className="space-y-4">
                                                 {sectionConfigs.filter(s => suspendedByType.has(s.key)).map(section => {
@@ -2463,7 +2465,7 @@ function Baselines() {
                                                                                     {aiLabel ? (
                                                                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"><Bot className="w-3 h-3 text-cyan-400/60" />{aiLabel}</span>
                                                                                     ) : (
-                                                                                        <span className="text-xs text-gray-600 italic">Any</span>
+                                                                                        <span className="text-xs text-dim italic">Any</span>
                                                                                     )}
                                                                                 </div>
                                                                                 <div className="w-[130px] text-right">
@@ -2548,10 +2550,10 @@ function Baselines() {
                                                                                 {excl.ai_type ? (
                                                                                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"><Bot className="w-3 h-3 text-cyan-400/60" />{aiAgentDisplayName(excl.ai_type)}</span>
                                                                                 ) : (
-                                                                                    <span className="text-xs text-gray-600 italic">Any</span>
+                                                                                    <span className="text-xs text-dim italic">Any</span>
                                                                                 )}
                                                                             </div>
-                                                                            <div className="w-[130px] text-right text-xs text-gray-500">
+                                                                            <div className="w-[130px] text-right text-xs text-dim">
                                                                                 {formatDate(excl.created_at)}
                                                                             </div>
                                                                             <div className="w-[100px] flex justify-center">
@@ -2597,7 +2599,7 @@ function Baselines() {
                                 </div>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-xs text-gray-500 tabular-nums">{neverBaselines.filter(e => e.source === 'system').length} rules</span>
+                                <span className="text-xs text-dim tabular-nums">{neverBaselines.filter(e => e.source === 'system').length} rules</span>
                                 <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${nbSystemExpanded ? 'rotate-180' : ''}`} />
                             </div>
                         </button>
@@ -2624,7 +2626,7 @@ function Baselines() {
                                                         <CIcon className={`w-3.5 h-3.5 ${cat.color}`} />
                                                     </div>
                                                     <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">{cat.label}</span>
-                                                    <span className="text-[10px] text-gray-500 bg-white/[0.05] px-1.5 py-0.5 rounded-full tabular-nums">{items.length}</span>
+                                                    <span className="text-[10px] text-dim bg-white/[0.05] px-1.5 py-0.5 rounded-full tabular-nums">{items.length}</span>
                                                 </div>
                                                 <div className="flex flex-wrap gap-1.5">
                                                     {items.map((e, i) => (
@@ -2646,7 +2648,7 @@ function Baselines() {
                                 <div>
                                     <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                                         <AlertTriangle className="w-4 h-4 text-orange-400" />
-                                        Your Organization's Never-Baseline Rules
+                                        Your Organization&apos;s Never-Baseline Rules
                                     </h3>
                                     <p className="text-xs text-gray-400 mt-1">Patterns added here will always trigger incidents — they can never be silenced by the learning engine. Existing baselines matching a new rule will be removed.</p>
                                 </div>
@@ -2706,9 +2708,9 @@ function Baselines() {
                                 <span>Loading...</span>
                             </div>
                         ) : neverBaselines.filter(e => e.source === 'user').length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-12 text-gray-500 gap-2">
+                            <div className="flex flex-col items-center justify-center py-12 text-dim gap-2">
                                 <Ban className="w-10 h-10 text-gray-700" />
-                                <p className="text-sm text-gray-500">No custom rules yet. Add a rule above to permanently block a pattern from being baselined.</p>
+                                <p className="text-sm text-dim">No custom rules yet. Add a rule above to permanently block a pattern from being baselined.</p>
                             </div>
                         ) : (
                             <div className="overflow-x-auto">
@@ -2731,8 +2733,8 @@ function Baselines() {
                                                 <td className="px-6 py-3">
                                                     <code className="text-sm font-mono text-gray-200 bg-white/[0.04] px-2 py-0.5 rounded break-all">{entry.pattern}</code>
                                                 </td>
-                                                <td className="px-6 py-3 text-sm text-gray-400">{entry.description || <span className="text-gray-600 italic">—</span>}</td>
-                                                <td className="px-6 py-3 text-right text-xs text-gray-500">{entry.created_at ? entry.created_at.slice(0, 10) : '—'}</td>
+                                                <td className="px-6 py-3 text-sm text-gray-400">{entry.description || <span className="text-dim italic">—</span>}</td>
+                                                <td className="px-6 py-3 text-right text-xs text-dim">{entry.created_at ? entry.created_at.slice(0, 10) : '—'}</td>
                                                 <td className="px-6 py-3 text-right">
                                                     <button
                                                         onClick={() => setDeleteNeverBaselineTarget(entry.id)}
@@ -2834,9 +2836,9 @@ function Baselines() {
                                 <span>Loading...</span>
                             </div>
                         ) : blockRules.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-12 text-gray-500 gap-2">
+                            <div className="flex flex-col items-center justify-center py-12 text-dim gap-2">
                                 <ShieldOff className="w-10 h-10 text-gray-700" />
-                                <p className="text-sm text-gray-500">No block rules yet. Add a rule above to actively block matching activity.</p>
+                                <p className="text-sm text-dim">No block rules yet. Add a rule above to actively block matching activity.</p>
                             </div>
                         ) : (
                             <div className="overflow-x-auto">
@@ -2859,7 +2861,7 @@ function Baselines() {
                                                     <td className="px-6 py-3">
                                                         <div>
                                                             <code className="text-sm font-mono text-gray-200 bg-white/[0.04] px-2 py-0.5 rounded break-all">{rule.pattern}</code>
-                                                            {rule.description && <p className="text-[10px] text-gray-500 mt-1">{rule.description}</p>}
+                                                            {rule.description && <p className="text-[10px] text-dim mt-1">{rule.description}</p>}
                                                         </div>
                                                     </td>
                                                     <td className="px-4 py-3">
@@ -2878,7 +2880,7 @@ function Baselines() {
                                                         {rule.kill_tree ? (
                                                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/25">kill tree</span>
                                                         ) : (
-                                                            <span className="text-[10px] text-gray-600">—</span>
+                                                            <span className="text-[10px] text-dim">—</span>
                                                         )}
                                                     </td>
                                                     <td className="px-4 py-3">
@@ -2886,7 +2888,7 @@ function Baselines() {
                                                             {rule.source}
                                                         </span>
                                                     </td>
-                                                    <td className="px-4 py-3 text-right text-xs text-gray-500">{rule.created_at ? rule.created_at.slice(0, 10) : '—'}</td>
+                                                    <td className="px-4 py-3 text-right text-xs text-dim">{rule.created_at ? rule.created_at.slice(0, 10) : '—'}</td>
                                                     <td className="px-6 py-3 text-right">
                                                         <button
                                                             onClick={() => setDeleteBlockRuleTarget(rule.id)}
@@ -2916,7 +2918,7 @@ function Baselines() {
                             <button
                                 key={key}
                                 onClick={() => setSuppressedSubTab(key)}
-                                className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${suppressedSubTab === key ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                                className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${suppressedSubTab === key ? 'bg-white/10 text-white' : 'text-dim hover:text-gray-300'}`}
                             >
                                 {label}
                             </button>
@@ -2930,16 +2932,16 @@ function Baselines() {
                                     <Eye className="w-4 h-4 text-cyan-400" />
                                     <h3 className="text-sm font-medium text-cyan-400">Auto-Suppressed Findings</h3>
                                 </div>
-                                <p className="text-xs text-gray-500">
+                                <p className="text-xs text-dim">
                                     These findings were automatically suppressed because they match learned behavioral baselines.
                                     They still appear under Resolved in the Findings page.
                                 </p>
                             </div>
 
                             {suppressedLoading ? (
-                                <div className="text-center py-8 text-gray-500 text-sm">Loading suppressed findings...</div>
+                                <div className="text-center py-8 text-dim text-sm">Loading suppressed findings...</div>
                             ) : suppressedGroups.length === 0 ? (
-                                <div className="text-center py-8 text-gray-500 text-sm">No suppressed findings in the last 24 hours</div>
+                                <div className="text-center py-8 text-dim text-sm">No suppressed findings in the last 24 hours</div>
                             ) : (
                                 <div className="border border-white/10 rounded-xl overflow-hidden">
                                     <table className="w-full text-xs">
@@ -2959,14 +2961,14 @@ function Baselines() {
                                                     <td className="px-4 py-2.5 text-right">
                                                         <span className="text-cyan-400 font-mono tabular-nums">{g.count.toLocaleString()}</span>
                                                     </td>
-                                                    <td className="px-4 py-2.5 text-right text-gray-500">
+                                                    <td className="px-4 py-2.5 text-right text-dim">
                                                         {new Date(g.last_seen).toLocaleString()}
                                                     </td>
                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
-                                    <div className="px-4 py-2 bg-white/[0.02] border-t border-white/10 text-[10px] text-gray-500">
+                                    <div className="px-4 py-2 bg-white/[0.02] border-t border-white/10 text-[10px] text-dim">
                                         Total: {suppressedGroups.reduce((sum, g) => sum + g.count, 0).toLocaleString()} suppressed findings across {suppressedGroups.length} patterns (last 24h)
                                     </div>
                                 </div>
@@ -2981,16 +2983,16 @@ function Baselines() {
                                     <Terminal className="w-4 h-4 text-orange-400" />
                                     <h3 className="text-sm font-medium text-orange-400">Command Noise Filters</h3>
                                 </div>
-                                <p className="text-xs text-gray-500">
+                                <p className="text-xs text-dim">
                                     These binaries are automatically filtered from findings. Windows system processes and
                                     bare runtimes without arguments produce no security signal and are suppressed at the detection level.
                                 </p>
                             </div>
 
                             {noiseLoading ? (
-                                <div className="text-center py-8 text-gray-500 text-sm">Loading noise filters...</div>
+                                <div className="text-center py-8 text-dim text-sm">Loading noise filters...</div>
                             ) : !noiseFilters ? (
-                                <div className="text-center py-8 text-gray-500 text-sm">Failed to load noise filters</div>
+                                <div className="text-center py-8 text-dim text-sm">Failed to load noise filters</div>
                             ) : (
                                 <div className="space-y-3">
                                     {([
@@ -3002,7 +3004,7 @@ function Baselines() {
                                         <div key={key} className={`border ${border} rounded-xl overflow-hidden`}>
                                             <div className={`px-4 py-2.5 ${bg}`}>
                                                 <h4 className={`text-xs font-semibold ${color}`}>{title}</h4>
-                                                <p className="text-[10px] text-gray-500 mt-0.5">{desc}</p>
+                                                <p className="text-[10px] text-dim mt-0.5">{desc}</p>
                                             </div>
                                             <div className="px-4 py-3 flex flex-wrap gap-1.5">
                                                 {(noiseFilters[key] || []).sort().map((name) => (
@@ -3011,7 +3013,7 @@ function Baselines() {
                                                     </span>
                                                 ))}
                                                 {(!noiseFilters[key] || noiseFilters[key].length === 0) && (
-                                                    <span className="text-[11px] text-gray-600">No filters configured</span>
+                                                    <span className="text-[11px] text-dim">No filters configured</span>
                                                 )}
                                             </div>
                                         </div>

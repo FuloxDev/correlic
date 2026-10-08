@@ -3,7 +3,13 @@
 import { motion } from 'framer-motion';
 import { RadialBarChart, RadialBar, ResponsiveContainer } from 'recharts';
 import {
-    AlertTriangle, XCircle, CheckCircle, RefreshCw, Clock, Link2, Shield, Eye,
+    AlertTriangle,
+    XCircle,
+    CheckCircle,
+    RefreshCw,
+    Clock,
+    Link2,
+    Eye
 } from 'lucide-react';
 import { CATEGORY_LABELS, CATEGORY_COLORS, type IncidentDetail } from '@/lib/api-client';
 
@@ -19,7 +25,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
     investigating: { label: 'Investigating', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/30' },
     resolved: { label: 'Resolved', color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/30' },
     dismissed: { label: 'Dismissed', color: 'text-gray-400', bg: 'bg-gray-500/10 border-gray-500/30' },
-    auto_resolved: { label: 'Auto-resolved', color: 'text-gray-500', bg: 'bg-gray-500/10 border-gray-500/30' },
+    auto_resolved: { label: 'Auto-resolved', color: 'text-dim', bg: 'bg-gray-500/10 border-gray-500/30' },
 };
 
 interface IncidentHeaderProps {
@@ -110,7 +116,7 @@ export default function IncidentHeader({ incident, onRefresh, onStatusUpdate, on
                                 <span className="text-lg font-bold leading-none" style={{ color: sevConfig.fill }}>
                                     {confidence}%
                                 </span>
-                                <span className="text-[7px] text-gray-500 uppercase tracking-wider mt-0.5">Confidence</span>
+                                <span className="text-[7px] text-dim uppercase tracking-wider mt-0.5">Confidence</span>
                             </div>
                         </motion.div>
                         <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${sevConfig.bg} border ${sevConfig.border}`}>
@@ -148,7 +154,7 @@ export default function IncidentHeader({ incident, onRefresh, onStatusUpdate, on
                                 className="p-1.5 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-all shrink-0"
                                 title="Refresh"
                             >
-                                <RefreshCw className="w-3.5 h-3.5 text-gray-500" />
+                                <RefreshCw className="w-3.5 h-3.5 text-dim" />
                             </button>
                         </div>
 
@@ -187,7 +193,7 @@ export default function IncidentHeader({ incident, onRefresh, onStatusUpdate, on
                                     animate="visible"
                                     className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2"
                                 >
-                                    <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">{stat.label}</p>
+                                    <p className="text-[10px] text-dim uppercase tracking-wider mb-0.5">{stat.label}</p>
                                     <p className={`text-sm font-semibold text-white ${stat.mono ? 'font-mono' : ''}`}>{stat.value}</p>
                                     {stat.extra}
                                 </motion.div>
@@ -206,7 +212,7 @@ export default function IncidentHeader({ incident, onRefresh, onStatusUpdate, on
                         )}
 
                         {/* Timestamps */}
-                        <div className="flex items-center gap-1.5 mt-2 text-xs text-gray-500">
+                        <div className="flex items-center gap-1.5 mt-2 text-xs text-dim">
                             <Clock className="w-3 h-3" />
                             <span>{new Date(incident.started_at).toLocaleString()} — {new Date(incident.ended_at).toLocaleString()}</span>
                         </div>

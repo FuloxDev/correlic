@@ -430,11 +430,34 @@
   --sidebar-ring: #22c55e;
 }
 
+/* Shared by every theme: muted body text that still clears WCAG AA (>= 4.5:1)
+   on each theme's darkest background (#060b18 gives 6.2:1). Use `text-dim`. */
+:root {
+  --foreground-dim: #8792a3;
+}
+
+/* Font selection: `data-font` on <html> picks one of the next/font variables
+   registered in app/layout.tsx. The picker in the dashboard layout sets it. */
+:root,
+[data-font="inter"] {
+  --active-font: var(--font-inter);
+}
+[data-font="space-grotesk"] {
+  --active-font: var(--font-space-grotesk);
+}
+[data-font="jetbrains-mono"] {
+  --active-font: var(--font-jetbrains-mono);
+}
+[data-font="ibm-plex-sans"] {
+  --active-font: var(--font-ibm-plex-sans);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-dim: var(--foreground-dim);
+  --font-sans: var(--active-font);
+  --font-mono: var(--font-jetbrains-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -503,7 +526,7 @@ html {
 }
 
 body {
-  font-family: var(--active-font, 'Inter'), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--active-font, system-ui), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--background);

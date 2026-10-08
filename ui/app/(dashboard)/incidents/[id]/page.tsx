@@ -4,11 +4,30 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-    AlertTriangle, CheckCircle, XCircle, Shield, RefreshCw,
-    ChevronDown, ArrowLeft, Eye, Link2,
-    Bot, Send, Sparkles, Loader2,
-    FileText, Globe, Terminal, Info, GitBranch, Cpu,
-    FolderOpen, Brain, Lock, BarChart2, CheckSquare, Activity,
+    AlertTriangle,
+    CheckCircle,
+    XCircle,
+    Shield,
+    RefreshCw,
+    ChevronDown,
+    ArrowLeft,
+    Eye,
+    Bot,
+    Send,
+    Sparkles,
+    Loader2,
+    FileText,
+    Globe,
+    Terminal,
+    Info,
+    GitBranch,
+    Cpu,
+    FolderOpen,
+    Brain,
+    Lock,
+    BarChart2,
+    CheckSquare,
+    Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AnimatedNumber from '@/components/dashboard/AnimatedNumber';
@@ -17,7 +36,6 @@ import {
     updateIncidentStatus,
     explainIncident,
     askAboutIncident,
-    streamAskAboutIncident,
     streamChatAboutIncident,
     getChatHistory,
     deleteChatThread,
@@ -27,10 +45,8 @@ import {
     addSafeDomain,
     createBaseline,
     type IncidentDetail,
-    type FindingSummary,
     type AIExplanation,
-    type DomainResolution,
-    type ChatMessage,
+    type DomainResolution
 } from '@/lib/api-client';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import ReactMarkdown from 'react-markdown';
@@ -216,9 +232,9 @@ function ReasoningPanel({ reasoning }: { reasoning: string }) {
                 <div className="flex items-center gap-2.5">
                     <Brain className="w-4 h-4 text-purple-400" />
                     <span className="text-xs font-semibold text-purple-300 uppercase tracking-wider">AI Reasoning Steps</span>
-                    <span className="text-[10px] text-gray-600 font-normal normal-case tracking-normal">— how the risk score was derived</span>
+                    <span className="text-[10px] text-dim font-normal normal-case tracking-normal">— how the risk score was derived</span>
                 </div>
-                <ChevronDown className={`w-4 h-4 text-gray-600 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`w-4 h-4 text-dim transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
             </button>
             <AnimatePresence initial={false}>
                 {open && (
@@ -230,7 +246,7 @@ function ReasoningPanel({ reasoning }: { reasoning: string }) {
                         className="overflow-hidden"
                     >
                         <div className="px-4 pb-4 border-t border-white/[0.05]">
-                            <div className="mt-3 prose prose-invert prose-sm max-w-none text-gray-500 text-xs leading-relaxed">
+                            <div className="mt-3 prose prose-invert prose-sm max-w-none text-dim text-xs leading-relaxed">
                                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                                     {reasoning}
                                 </ReactMarkdown>
@@ -345,8 +361,8 @@ export default function IncidentDetailPage() {
         try {
             const result = await explainIncident(incidentId, deepMode ? 'deep' : undefined);
             setAiExplanation(result);
-        } catch (err: any) {
-            setAiError(err?.message || 'Failed to get AI explanation');
+        } catch (err: unknown) {
+            setAiError(err instanceof Error ? err.message : 'Failed to get AI explanation');
         } finally {
             setAiLoading(false);
         }
@@ -405,7 +421,7 @@ export default function IncidentDetailPage() {
                     setToolActivity(tool.status === 'running' ? tool.name : null);
                 },
             );
-        } catch (err: any) {
+        } catch {
             // Fallback to legacy non-streaming endpoint
             setAskHistory(prev => {
                 const updated = [...prev];
@@ -421,10 +437,10 @@ export default function IncidentDetailPage() {
                     updated[updated.length - 1] = { role: 'assistant', content: result.content, tokens: result.tokens, model: result.model };
                     return updated;
                 });
-            } catch (fallbackErr: any) {
+            } catch (fallbackErr: unknown) {
                 setAskHistory(prev => {
                     const updated = [...prev];
-                    updated[updated.length - 1] = { role: 'assistant', content: `Error: ${fallbackErr?.message || 'Failed to get response'}` };
+                    updated[updated.length - 1] = { role: 'assistant', content: `Error: ${fallbackErr instanceof Error ? fallbackErr.message : 'Failed to get response'}` };
                     return updated;
                 });
             }
@@ -593,7 +609,7 @@ export default function IncidentDetailPage() {
                         <h2 className="text-lg font-semibold">
                             Findings ({findings.length})
                             {resolvedFindings.length > 0 && activeFindings.length > 0 && (
-                                <span className="text-sm font-normal text-gray-500 ml-2">
+                                <span className="text-sm font-normal text-dim ml-2">
                                     {activeFindings.length} active, {resolvedFindings.length} resolved
                                 </span>
                             )}
@@ -604,7 +620,7 @@ export default function IncidentDetailPage() {
                 {findingsOpen && (
                     <div className="px-6 pb-6 space-y-3">
                         {findings.length === 0 ? (
-                            <p className="text-gray-500 text-sm py-4">No finding details available</p>
+                            <p className="text-dim text-sm py-4">No finding details available</p>
                         ) : (
                             <>
                             {/* Active findings */}
@@ -622,7 +638,7 @@ export default function IncidentDetailPage() {
                                                 <span className={`px-1.5 py-0.5 rounded text-[10px] border ${fSevConfig.bg} ${fSevConfig.border} ${fSevConfig.text}`}>
                                                     {f.severity.toUpperCase()}
                                                 </span>
-                                                <span className="text-xs text-gray-500">{(f.confidence * 100).toFixed(0)}%</span>
+                                                <span className="text-xs text-dim">{(f.confidence * 100).toFixed(0)}%</span>
                                             </div>
                                             <ExpandableText text={f.summary} maxLines={2} className="text-xs text-gray-400 mb-1" />
                                             {/* Network destination — always visible for exfil/network findings */}
@@ -639,7 +655,7 @@ export default function IncidentDetailPage() {
                                                             {displayDomain ? `${displayDomain} (${f.context.dst_ip}:${f.context.dst_port})` : `${f.context.dst_ip}:${f.context.dst_port}`}
                                                         </span>
                                                         {asnName && <span className="text-gray-400">({asnName})</span>}
-                                                        {bgpPrefix && <span className="text-gray-500 font-mono">{bgpPrefix}</span>}
+                                                        {bgpPrefix && <span className="text-dim font-mono">{bgpPrefix}</span>}
                                                         {!displayDomain && !resolved && (
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); handleResolveDomain(f.id); }}
@@ -650,15 +666,15 @@ export default function IncidentDetailPage() {
                                                             </button>
                                                         )}
                                                         {!displayDomain && resolved && (
-                                                            <span className="text-gray-500 text-[11px]">No domain found</span>
+                                                            <span className="text-dim text-[11px]">No domain found</span>
                                                         )}
-                                                        {res?.source && <span className="text-gray-600 text-[11px]">via {res.source}</span>}
+                                                        {res?.source && <span className="text-dim text-[11px]">via {res.source}</span>}
                                                     </div>
                                                 );
                                             })() : null}
                                             {/* Context details */}
                                             {f.context && <FindingContext context={f.context} />}
-                                            <div className="flex items-center space-x-3 text-xs text-gray-500">
+                                            <div className="flex items-center space-x-3 text-xs text-dim">
                                                 <span className="font-mono">{f.detection_id}</span>
                                                 <span>{new Date(f.timestamp).toLocaleString()}</span>
                                             </div>
@@ -754,7 +770,7 @@ export default function IncidentDetailPage() {
                             {/* Resolved/allowed findings — collapsed by default */}
                             {resolvedFindings.length > 0 && (
                                 <details className="group">
-                                    <summary className="cursor-pointer flex items-center gap-2 text-xs text-gray-500 hover:text-gray-400 transition-colors py-2 border-t border-white/5 mt-2">
+                                    <summary className="cursor-pointer flex items-center gap-2 text-xs text-dim hover:text-gray-400 transition-colors py-2 border-t border-white/5 mt-2">
                                         <ChevronDown className="w-3 h-3 transition-transform group-open:rotate-180" />
                                         <span>{resolvedFindings.length} resolved/allowed finding{resolvedFindings.length !== 1 ? 's' : ''}</span>
                                     </summary>
@@ -765,7 +781,7 @@ export default function IncidentDetailPage() {
                                             return (
                                                 <div key={f.id} className="flex items-start space-x-3 p-3 bg-black/10 rounded-lg border border-white/5">
                                                     <div className="p-1.5 rounded bg-gray-500/10 flex-shrink-0">
-                                                        <Shield className="w-4 h-4 text-gray-500" />
+                                                        <Shield className="w-4 h-4 text-dim" />
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center space-x-2 mb-1">
@@ -774,8 +790,8 @@ export default function IncidentDetailPage() {
                                                                 {stConfig?.label || f.status}
                                                             </span>
                                                         </div>
-                                                        <p className="text-xs text-gray-500 mb-1">{f.summary}</p>
-                                                        <div className="flex items-center space-x-3 text-xs text-gray-600">
+                                                        <p className="text-xs text-dim mb-1">{f.summary}</p>
+                                                        <div className="flex items-center space-x-3 text-xs text-dim">
                                                             <span className="font-mono">{f.detection_id}</span>
                                                             <span>{new Date(f.timestamp).toLocaleString()}</span>
                                                         </div>
@@ -820,7 +836,7 @@ export default function IncidentDetailPage() {
                             </span>
                         )}
                     </div>
-                    <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform duration-300 ${aiOpen ? 'rotate-180' : ''}`} />
+                    <ChevronDown className={`w-4 h-4 text-dim transition-transform duration-300 ${aiOpen ? 'rotate-180' : ''}`} />
                 </button>
 
                 {aiOpen && (
@@ -869,7 +885,7 @@ export default function IncidentDetailPage() {
                                     <Sparkles className="w-4 h-4" />
                                     {deepMode ? 'Deep Analysis' : 'Analyze Incident'}
                                 </button>
-                                <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
+                                <label className="flex items-center gap-2 text-xs text-dim cursor-pointer select-none">
                                     <input
                                         type="checkbox"
                                         checked={deepMode}
@@ -941,7 +957,7 @@ export default function IncidentDetailPage() {
                                                             className="text-2xl font-bold leading-none"
                                                         />
                                                     </span>
-                                                    <span className="text-[10px] text-gray-600">/10</span>
+                                                    <span className="text-[10px] text-dim">/10</span>
                                                 </div>
                                             </div>
                                             <div className="flex-1 min-w-0">
@@ -988,7 +1004,7 @@ export default function IncidentDetailPage() {
                                     })}
 
                                     {/* Metadata */}
-                                    <div className="flex items-center gap-3 text-xs text-gray-600 pt-1">
+                                    <div className="flex items-center gap-3 text-xs text-dim pt-1">
                                         <span>Model: {aiExplanation.model}</span>
                                         <span>{aiExplanation.tokens.input} in / {aiExplanation.tokens.output} out tokens</span>
                                         {aiExplanation.cached && <span className="text-cyan-700">cached</span>}
@@ -1007,10 +1023,10 @@ export default function IncidentDetailPage() {
                         {askHistory.length > 0 && (
                             <div className="border-t border-white/[0.06] pt-4">
                                 <div className="flex items-center justify-between mb-3">
-                                    <span className="text-xs text-gray-600">Conversation{threadId ? ' (persistent)' : ''}</span>
+                                    <span className="text-xs text-dim">Conversation{threadId ? ' (persistent)' : ''}</span>
                                     <button
                                         onClick={handleNewConversation}
-                                        className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                                        className="text-xs text-dim hover:text-gray-300 transition-colors"
                                         title="Start a new conversation thread"
                                     >
                                         New conversation
@@ -1034,7 +1050,7 @@ export default function IncidentDetailPage() {
                                                     <div className="whitespace-pre-wrap">{msg.content}</div>
                                                 )}
                                                 {msg.tokens && (
-                                                    <div className="text-[10px] text-gray-600 mt-1">
+                                                    <div className="text-[10px] text-dim mt-1">
                                                         {msg.model} &middot; {msg.tokens.input + msg.tokens.output} tokens
                                                     </div>
                                                 )}

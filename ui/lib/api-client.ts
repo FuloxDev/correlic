@@ -144,18 +144,22 @@ export async function getEvents(params: TelemetryListParams = {}): Promise<Telem
     return fetchJSON<TelemetryEvent[]>(`/telemetry${queryStr ? '?' + queryStr : ''}`)
 }
 
-// Agents
+// Agents (GET /agents returns a JSON array, or null when the org has none)
 export interface Agent {
-    id: string
-    name: string
-    org_id: string
-    status: 'active' | 'inactive' | 'offline'
-    last_seen?: string
-    created_at: string
+    agent_id: string
+    user_id?: string
+    hostname: string
+    os: string
+    profile: string
+    version: string
+    state: string
+    liveness?: 'online' | 'stale' | 'offline'
+    first_seen_at: string
+    last_seen_at: string
 }
 
-export async function getAgents(): Promise<Agent[]> {
-    return fetchJSON<Agent[]>('/agents')
+export async function getAgents(): Promise<Agent[] | null> {
+    return fetchJSON<Agent[] | null>('/agents')
 }
 
 // Ports summary
@@ -1073,7 +1077,7 @@ export interface AppNotification {
     reference_type?: string
     reference_id?: string
     host_id?: string
-    context?: Record<string, any>
+    context?: Record<string, unknown>
     read: boolean
     dismissed: boolean
     created_at: string
@@ -1084,7 +1088,7 @@ export interface NotificationEndpoint {
     org_id: string
     name: string
     channel_type: string
-    config: Record<string, any>
+    config: Record<string, unknown>
     min_severity: string
     enabled: boolean
     created_at: string
@@ -1097,7 +1101,7 @@ export interface NotificationDelivery {
     endpoint_id: string
     reference_type: string
     reference_id: string
-    payload: Record<string, any>
+    payload: Record<string, unknown>
     status: string
     attempts: number
     max_attempts: number
@@ -1140,7 +1144,7 @@ export async function getNotificationEndpoints(): Promise<{ endpoints: Notificat
 export async function createNotificationEndpoint(data: {
     name: string
     channel_type: string
-    config: Record<string, any>
+    config: Record<string, unknown>
     min_severity?: string
     enabled?: boolean
 }): Promise<{ endpoint: NotificationEndpoint }> {
@@ -1153,7 +1157,7 @@ export async function createNotificationEndpoint(data: {
 export async function updateNotificationEndpoint(id: string, data: Partial<{
     name: string
     channel_type: string
-    config: Record<string, any>
+    config: Record<string, unknown>
     min_severity: string
     enabled: boolean
 }>): Promise<{ endpoint: NotificationEndpoint }> {
@@ -1203,7 +1207,7 @@ export async function updateUserProfile(data: {
 }
 
 // Google OAuth
-export async function googleSignIn(idToken: string): Promise<{ token: string; session: any; user: any }> {
+export async function googleSignIn(idToken: string): Promise<{ token: string; session: Record<string, unknown>; user: UserProfile }> {
     return fetchJSON('/auth/google', {
         method: 'POST',
         body: JSON.stringify({ id_token: idToken }),

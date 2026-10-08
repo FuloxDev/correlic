@@ -1,6 +1,7 @@
 'use client'
 
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
+import { subscribeToasts } from '@/lib/backend-status'
 
 type ToastType = 'success' | 'error' | 'info'
 
@@ -34,6 +35,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       setToasts(prev => prev.filter(t => t.id !== id))
     }, 4000)
   }, [])
+
+  // Toasts raised outside React (e.g. a 403 inside the API client).
+  useEffect(() => subscribeToasts((message, type) => showToast(message, type)), [showToast])
 
   const dismissToast = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id))
@@ -77,7 +81,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-50 space-y-2">
+      <div className="fixed bottom-4 right-4 z-[110] space-y-2" role="status" aria-live="polite">
         {toasts.map(toast => {
           const styles = getToastStyles(toast.type)
           return (
@@ -102,9 +106,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 {toast.message}
               </span>
               <button
+                type="button"
                 onClick={() => dismissToast(toast.id)}
                 className="p-1 rounded transition-colors hover:bg-[var(--background-tertiary)]"
                 style={{ color: 'var(--foreground-muted)' }}
+                aria-label="Dismiss notification"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

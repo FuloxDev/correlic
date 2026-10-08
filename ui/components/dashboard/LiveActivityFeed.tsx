@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useEffect, useCallback, useState } from 'react'
+import { useMemo, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { FileText, Globe, Terminal, Wifi, Clock, ArrowRight, Radio } from 'lucide-react'
 import Link from 'next/link'
@@ -113,45 +113,39 @@ interface LiveActivityFeedProps {
 }
 
 export default function LiveActivityFeed({ refreshTrigger }: LiveActivityFeedProps) {
-    const [loading, setLoading] = useState(false)
+    const [loading, setLoading] = useState(true)
     const [activityData, setActivityData] = useState<AgentActivityResponse | null>(null)
     const [rawEvents, setRawEvents] = useState<TelemetryEvent[]>([])
     const [useRawFallback, setUseRawFallback] = useState(false)
 
-    const fetchData = useCallback(async () => {
-        try {
-            setLoading(true)
-            const activity = await getAgentActivity(FETCH_WINDOW_MINUTES, 1)
-            const hasActions = activity?.agents?.some(a => a.actions?.length > 0)
-
-            if (hasActions) {
-                setActivityData(activity)
-                setUseRawFallback(false)
-            } else {
-                setActivityData(null)
-                setUseRawFallback(true)
-                const since = new Date(Date.now() - FETCH_WINDOW_MINUTES * 60000).toISOString()
-                const events = await getEvents({ since, limit: MAX_ITEMS })
-                setRawEvents(events || [])
-            }
-        } catch {
-            try {
-                setUseRawFallback(true)
-                const since = new Date(Date.now() - FETCH_WINDOW_MINUTES * 60000).toISOString()
-                const events = await getEvents({ since, limit: MAX_ITEMS })
-                setRawEvents(events || [])
-            } catch {
-                // keep previous data
-            }
-        } finally {
-            setLoading(false)
-        }
-    }, [])
-
-    // Fetch on mount and whenever parent triggers a refresh
+    // Fetch on mount and whenever the parent triggers a refresh. Falls back to
+    // raw telemetry when the activity endpoint has nothing to show.
     useEffect(() => {
-        fetchData()
-    }, [fetchData, refreshTrigger])
+        let cancelled = false
+        const since = () => new Date(Date.now() - FETCH_WINDOW_MINUTES * 60000).toISOString()
+        const loadRaw = () => getEvents({ since: since(), limit: MAX_ITEMS }).then(events => {
+            if (cancelled) return
+            setActivityData(null)
+            setUseRawFallback(true)
+            setRawEvents(events || [])
+        })
+
+        getAgentActivity(FETCH_WINDOW_MINUTES, 1)
+            .then(activity => {
+                if (cancelled) return
+                const hasActions = activity?.agents?.some(a => a.actions?.length > 0)
+                if (hasActions) {
+                    setActivityData(activity)
+                    setUseRawFallback(false)
+                    return
+                }
+                return loadRaw()
+            })
+            .catch(() => loadRaw().catch(() => { /* keep previous data */ }))
+            .finally(() => { if (!cancelled) setLoading(false) })
+
+        return () => { cancelled = true }
+    }, [refreshTrigger])
 
     const agentActions = useMemo(() => {
         if (!activityData?.agents) return []

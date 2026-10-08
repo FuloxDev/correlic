@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { Link2, Clock, AlertTriangle, ChevronRight } from 'lucide-react'
+import { Link2, Clock, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import type { Incident } from '@/lib/api-client'
 

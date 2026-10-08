@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -111,41 +111,34 @@ interface IncidentTrendChartProps {
 
 export default function IncidentTrendChart({ initialTrends }: IncidentTrendChartProps) {
     const [rangeIdx, setRangeIdx] = useState(DEFAULT_RANGE_IDX)
-    const [trends, setTrends] = useState<TrendPoint[]>(initialTrends || [])
+    const [fetchedTrends, setFetchedTrends] = useState<TrendPoint[]>([])
     const [loading, setLoading] = useState(false)
     const [pinnedIndex, setPinnedIndex] = useState<number | null>(null)
-    const [pinnedPos, setPinnedPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+    const [pinnedPos, setPinnedPos] = useState<{ x: number; y: number; flip: boolean }>({ x: 0, y: 0, flip: false })
     const chartContainerRef = useRef<HTMLDivElement>(null)
 
     const range = timeRanges[rangeIdx]
 
-    // Update from parent when initial data changes
-    useEffect(() => {
-        if (initialTrends && rangeIdx === DEFAULT_RANGE_IDX) {
-            setTrends(initialTrends)
-        }
-    }, [initialTrends, rangeIdx])
-
-    // Only fetch independently when user selects a different time range
-    const fetchTrends = useCallback(async () => {
-        if (rangeIdx === DEFAULT_RANGE_IDX && initialTrends) return
-        try {
-            setLoading(true)
-            const res = await getDashboardTrends(range.points, range.interval)
-            setTrends(res.points || [])
-        } catch {
-            // keep previous data on error
-        } finally {
-            setLoading(false)
-        }
-    }, [range.points, range.interval, rangeIdx, initialTrends])
+    // The parent already fetched the default range; other ranges are fetched here.
+    const usesParentData = rangeIdx === DEFAULT_RANGE_IDX && initialTrends !== undefined
+    const trends: TrendPoint[] = usesParentData && initialTrends ? initialTrends : fetchedTrends
 
     useEffect(() => {
-        fetchTrends()
-    }, [fetchTrends])
+        if (usesParentData) return
+        let cancelled = false
+        getDashboardTrends(range.points, range.interval)
+            .then(res => { if (!cancelled) setFetchedTrends(res.points || []) })
+            .catch(() => { /* keep previous data on error */ })
+            .finally(() => { if (!cancelled) setLoading(false) })
+        return () => { cancelled = true }
+        // initialTrends identity changes on every parent refresh: re-fetch custom ranges then too.
+    }, [usesParentData, range.points, range.interval, initialTrends])
 
-    // Clear pin on range change
-    useEffect(() => { setPinnedIndex(null) }, [rangeIdx])
+    const changeRange = (idx: number) => {
+        setRangeIdx(idx)
+        setPinnedIndex(null)
+        if (!(idx === DEFAULT_RANGE_IDX && initialTrends !== undefined)) setLoading(true)
+    }
 
     // Close pinned tooltip on Escape or click outside
     useEffect(() => {
@@ -189,9 +182,11 @@ export default function IncidentTrendChart({ initialTrends }: IncidentTrendChart
                 const rect = chartContainerRef.current?.getBoundingClientRect()
                 const nativeEvent = event?.nativeEvent || event
                 if (rect && nativeEvent) {
+                    const x = nativeEvent.clientX - rect.left
                     setPinnedPos({
-                        x: nativeEvent.clientX - rect.left,
+                        x,
                         y: nativeEvent.clientY - rect.top,
+                        flip: x > rect.width / 2,
                     })
                 }
                 setPinnedIndex(idx)
@@ -228,7 +223,7 @@ export default function IncidentTrendChart({ initialTrends }: IncidentTrendChart
                     {timeRanges.map((r, i) => (
                         <button
                             key={r.label}
-                            onClick={() => setRangeIdx(i)}
+                            onClick={() => changeRange(i)}
                             className={`px-2.5 py-1 text-[11px] font-medium rounded-xl transition-all duration-200 ${
                                 rangeIdx === i
                                     ? 'bg-white/10 text-white shadow-sm'
@@ -318,8 +313,7 @@ export default function IncidentTrendChart({ initialTrends }: IncidentTrendChart
                                     style={{
                                         left: pinnedPos.x,
                                         top: Math.max(0, pinnedPos.y - 20),
-                                        transform: pinnedPos.x > (chartContainerRef.current?.clientWidth || 400) / 2
-                                            ? 'translateX(-100%)' : 'translateX(0)',
+                                        transform: pinnedPos.flip ? 'translateX(-100%)' : 'translateX(0)',
                                     }}
                                 >
                                     <IncidentTooltipContent

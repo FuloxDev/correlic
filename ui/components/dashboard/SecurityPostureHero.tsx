@@ -7,15 +7,18 @@ import {
     Search, CheckCircle, XCircle, EyeOff, Cpu, FileText, Globe, Wifi, LogOut,
 } from 'lucide-react'
 import AnimatedNumber from './AnimatedNumber'
-import type { DashboardStats, TrendPoint } from '@/lib/api-client'
+import type { DashboardStats } from '@/lib/api-client'
 
 interface Props {
     stats: DashboardStats | null
-    trends: TrendPoint[]
+    /** True when the last /dashboard/stats request failed; the hero then shows "No data". */
+    failed?: boolean
 }
 
-function computePostureScore(stats: DashboardStats | null): number {
-    if (!stats) return 100
+const NO_DATA_COLOR = '#64748b'
+
+function computePostureScore(stats: DashboardStats | null): number | null {
+    if (!stats) return null
 
     const criticalOpen = stats.incidents?.critical_open ?? 0
     const pendingFindings = stats.detection?.pending_findings ?? 0
@@ -43,14 +46,16 @@ function computePostureScore(stats: DashboardStats | null): number {
     return Math.max(0, Math.min(100, Math.round(100 - criticalPenalty - incidentPenalty - findingsPenalty)))
 }
 
-function postureColor(score: number): string {
+function postureColor(score: number | null): string {
+    if (score === null) return NO_DATA_COLOR
     if (score >= 80) return '#22c55e'
     if (score >= 50) return '#eab308'
     if (score >= 25) return '#f97316'
     return '#f43f5e'
 }
 
-function postureLabel(score: number): string {
+function postureLabel(score: number | null, failed: boolean): string {
+    if (score === null) return failed ? 'No data' : 'Loading'
     if (score >= 80) return 'Healthy'
     if (score >= 50) return 'Elevated'
     if (score >= 25) return 'High Risk'
@@ -120,10 +125,10 @@ const statCardConfigs: StatCardConfig[] = [
     { label: 'Baselines', icon: Database, hex: '#a855f7', color: 'text-purple-400' },
 ]
 
-export default function SecurityPostureHero({ stats }: Props) {
+export default function SecurityPostureHero({ stats, failed = false }: Props) {
     const score = computePostureScore(stats)
     const color = postureColor(score)
-    const gaugeData = [{ value: score, fill: color }]
+    const gaugeData = [{ value: score ?? 0, fill: color }]
 
     // Findings breakdown
     const pending = stats?.detection?.pending_findings ?? 0
@@ -192,17 +197,21 @@ export default function SecurityPostureHero({ stats }: Props) {
                             </RadialBarChart>
                         </ResponsiveContainer>
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <AnimatedNumber
-                                value={score}
-                                className="text-3xl font-bold"
-                                format={(n) => Math.round(n).toString()}
-                            />
+                            {score === null ? (
+                                <span className="text-3xl font-bold" aria-label="No posture score available">—</span>
+                            ) : (
+                                <AnimatedNumber
+                                    value={score}
+                                    className="text-3xl font-bold"
+                                    format={(n) => Math.round(n).toString()}
+                                />
+                            )}
                             <span className="text-xs text-[var(--foreground-muted)]">/ 100</span>
                         </div>
                     </motion.div>
                     <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4" style={{ color }} />
-                        <span className="text-sm font-medium" style={{ color }}>{postureLabel(score)}</span>
+                        <Shield className="w-4 h-4" style={{ color }} aria-hidden="true" />
+                        <span className="text-sm font-medium" style={{ color }}>{postureLabel(score, failed)}</span>
                     </div>
                 </div>
 
