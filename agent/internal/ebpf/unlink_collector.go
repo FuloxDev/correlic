@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -55,17 +56,25 @@ func NewUnlinkCollector(logger *slog.Logger) (*UnlinkCollector, error) {
 		return nil, fmt.Errorf("loading unlink eBPF objects: %w", err)
 	}
 
-	// Attach to unlink tracepoint
+	// Attach to unlink tracepoint. The legacy unlink(2) syscall only exists
+	// on architectures with the old syscall table (x86_64, ...); arm64 and the
+	// other asm-generic ports have unlinkat(2) only, so the tracepoint is
+	// absent there (libc routes unlink() to unlinkat) and skipping it loses
+	// nothing. Any other attach failure is still fatal.
 	lUnlink, err := link.Tracepoint("syscalls", "sys_enter_unlink", objs.TraceUnlink, nil)
 	if err != nil {
-		objs.Close()
-		return nil, fmt.Errorf("attaching unlink tracepoint: %w", err)
+		if !errors.Is(err, os.ErrNotExist) {
+			objs.Close()
+			return nil, fmt.Errorf("attaching unlink tracepoint: %w", err)
+		}
+		logger.Info("sys_enter_unlink tracepoint not present on this kernel (no unlink syscall on this architecture); monitoring unlinkat only")
+		lUnlink = nil
 	}
 
 	// Attach to unlinkat tracepoint
 	lUnlinkAt, err := link.Tracepoint("syscalls", "sys_enter_unlinkat", objs.TraceUnlinkat, nil)
 	if err != nil {
-		lUnlink.Close()
+		closeLink(lUnlink)
 		objs.Close()
 		return nil, fmt.Errorf("attaching unlinkat tracepoint: %w", err)
 	}
@@ -74,7 +83,7 @@ func NewUnlinkCollector(logger *slog.Logger) (*UnlinkCollector, error) {
 	reader, err := ringbuf.NewReader(objs.UnlinkEvents)
 	if err != nil {
 		lUnlinkAt.Close()
-		lUnlink.Close()
+		closeLink(lUnlink)
 		objs.Close()
 		return nil, fmt.Errorf("creating ring buffer reader: %w", err)
 	}
@@ -137,8 +146,16 @@ func (c *UnlinkCollector) Start(ctx context.Context) {
 func (c *UnlinkCollector) Close() error {
 	c.reader.Close()
 	c.linkUnlinkAt.Close()
-	c.linkUnlink.Close()
+	closeLink(c.linkUnlink)
 	return c.objs.Close()
+}
+
+// closeLink closes an optional link (nil when the attach point does not
+// exist on this kernel).
+func closeLink(l link.Link) {
+	if l != nil {
+		l.Close()
+	}
 }
 
 // parseUnlinkEvent converts raw bytes from the ring buffer to UnlinkEvent.

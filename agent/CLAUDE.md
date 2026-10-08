@@ -5,7 +5,7 @@ Runs on monitored hosts. On Linux it loads eBPF programs into the kernel, reads 
 
 ## Tech Stack
 - Go 1.26+, cilium/ebpf, libbpf headers, clang
-- Requires Linux 5.8+ with BTF (`/sys/kernel/btf/vmlinux`)
+- Requires Linux 5.8+ with BTF (`/sys/kernel/btf/vmlinux`), on x86_64 or arm64 (aarch64)
 - Needs root / CAP_BPF (+ CAP_PERFMON)
 
 ## Directory Structure
@@ -48,7 +48,9 @@ agent/
 | unlink.bpf.c     | tp/syscalls/sys_enter_unlink(at)                  | File deletions                 | unlink_monitor_enabled    |
 | setuid.bpf.c     | tp/syscalls/sys_enter_setuid/setgid/setres*       | Privilege changes              | setuid_monitor_enabled    |
 
-Generated `*_x86_bpfel.{go,o}` are git-ignored: run `go generate ./internal/ebpf/...` (with `CPATH=<libbpf include dir>` if the headers are not on the default path) before building. See `internal/ebpf/BUILD.md`.
+Generated `*_x86_bpfel.{go,o}` and `*_arm64_bpfel.{go,o}` (one `go generate`, `bpf2go -target amd64,arm64`; `GOARCH` picks the set) are git-ignored: run `go generate ./internal/ebpf/...` (with `CPATH=<libbpf include dir>` if the headers are not on the default path) before building. See `internal/ebpf/BUILD.md`.
+
+Both linux/amd64 and linux/arm64 are supported from the same sources and the same x86-generated `vmlinux.h` (CO-RE relocates every kernel-struct access by name). The kprobe programs (`dns`, `bind`) include `bpf/arch_arm64.h` after `vmlinux.h` and before `bpf_tracing.h`: it declares `struct user_pt_regs` so `PT_REGS_*` / `BPF_KPROBE` compile for arm64. Never use the `*_CORE` / `*_SYSCALL` register macros. arm64 has no `unlink(2)` syscall, so `unlink_collector.go` skips the missing `sys_enter_unlink` tracepoint and monitors `unlinkat` only.
 
 ## CRITICAL: Struct Padding
 C compiler adds padding for alignment. Go parsing MUST account for it.
@@ -105,6 +107,7 @@ sudo CORRELIC_CONFIG=/etc/correlic/agent.yaml go run ./cmd/agent
 # Build / tests
 CPATH=<libbpf include> go generate ./internal/ebpf/...
 go build ./... && go vet ./... && go test -race ./...
+GOOS=linux GOARCH=arm64 go build ./... && GOOS=linux GOARCH=arm64 go vet ./...   # arm64 cross build (objects already generated)
 GOOS=darwin GOARCH=arm64 go build ./... && GOOS=windows GOARCH=amd64 go build ./...
 # macOS with Endpoint Security (compile check only; needs a Mac with Xcode)
 SDKROOT=$(xcrun --sdk macosx --show-sdk-path) CGO_ENABLED=1 go build -tags esf ./cmd/agent
