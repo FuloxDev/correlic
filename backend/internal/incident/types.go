@@ -196,17 +196,17 @@ var InformationalDetections = map[string]bool{
 
 // chainCategoryMap maps chain pattern IDs to their attack category.
 var chainCategoryMap = map[string]string{
-	"credential_theft":        "credential_theft",
-	"reverse_shell_setup":     "execution",
-	"lateral_movement":        "execution",
-	"full_compromise":         "credential_theft",
-	"persistence_backdoor":    "persistence",
-	"supply_chain_attack":     "tampering",
-	"data_staging":            "exfiltration",
-	"credential_persistence":  "credential_theft",
-	"privesc_credential_exfil":"privilege_escalation",
-	"recon_to_escalation":     "reconnaissance",
-	"container_breakout":      "privilege_escalation",
+	"credential_theft":         "credential_theft",
+	"reverse_shell_setup":      "execution",
+	"lateral_movement":         "execution",
+	"full_compromise":          "credential_theft",
+	"persistence_backdoor":     "persistence",
+	"supply_chain_attack":      "tampering",
+	"data_staging":             "exfiltration",
+	"credential_persistence":   "credential_theft",
+	"privesc_credential_exfil": "privilege_escalation",
+	"recon_to_escalation":      "reconnaissance",
+	"container_breakout":       "privilege_escalation",
 }
 
 // categoryTitle returns a campaign-level incident title derived from the attack

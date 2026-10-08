@@ -1,10 +1,20 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
-    ChevronDown, Activity, RefreshCw, Calendar, Cpu, FileText, Terminal,
-    Globe, Zap, ChevronUp, Filter, Search, Wifi, Clock, ChevronRight, Bot
+    Activity,
+    RefreshCw,
+    Cpu,
+    FileText,
+    Terminal,
+    Globe,
+    Zap,
+    Search,
+    Wifi,
+    Clock,
+    ChevronRight,
+    Bot
 } from 'lucide-react';
 import { getAgentActivity, type AgentActivityResponse, type AgentSummary as AgentSummaryType, type AgentAction } from '@/lib/api-client';
 import { PageHeading } from '@/components/ui/page-heading';
@@ -99,19 +109,19 @@ function ActionRow({ action, agentComm }: { action: AgentAction; agentComm: stri
                         <span className="text-sm text-gray-200">{action.action}</span>
                         {/* S1-S3: detail on hover only */}
                         {hasDetail && !isHighSig && (
-                            <span className="text-xs text-gray-500 truncate hidden group-hover/action:inline" title={action.detail}>
+                            <span className="text-xs text-dim truncate hidden group-hover/action:inline" title={action.detail}>
                                 {action.detail!.length > 60 ? action.detail!.slice(0, 57) + '...' : action.detail}
                             </span>
                         )}
                     </div>
                     {/* S4+: detail always visible inline */}
                     {hasDetail && isHighSig && (
-                        <p className="text-[11px] text-gray-500 font-mono truncate mt-0.5" title={action.detail}>
+                        <p className="text-[11px] text-dim font-mono truncate mt-0.5" title={action.detail}>
                             {action.detail!.length > 100 ? action.detail!.slice(0, 97) + '...' : action.detail}
                         </p>
                     )}
                     {isChild && (
-                        <span className="text-[10px] text-gray-500 font-mono">
+                        <span className="text-[10px] text-dim font-mono">
                             via {processComm}{action.process_pid ? ` (${action.process_pid})` : ''}
                         </span>
                     )}
@@ -123,7 +133,7 @@ function ActionRow({ action, agentComm }: { action: AgentAction; agentComm: stri
                 </span>
 
                 {/* Timestamp */}
-                <span className="text-xs text-gray-500 w-20 text-right font-mono tabular-nums shrink-0">
+                <span className="text-xs text-dim w-20 text-right font-mono tabular-nums shrink-0">
                     {time}
                 </span>
             </div>
@@ -216,11 +226,11 @@ function GroupedActionRow({ group, agentComm }: { group: ActionGroup; agentComm:
                     </div>
                     <div className="flex-1 min-w-0">
                         <span className="text-sm text-gray-300">
-                            {label} <span className="text-gray-500">(×{group.count})</span>
+                            {label} <span className="text-dim">(×{group.count})</span>
                         </span>
                     </div>
-                    <span className="text-xs text-gray-500 font-mono">{timeRange}</span>
-                    <ChevronRight className={`w-3.5 h-3.5 text-gray-500 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+                    <span className="text-xs text-dim font-mono">{timeRange}</span>
+                    <ChevronRight className={`w-3.5 h-3.5 text-dim transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
                 </div>
             </div>
             {expanded && (
@@ -247,10 +257,14 @@ function AgentCard({ agent, isExpanded, onToggle }: {
     const totalActions = agent.actions?.length || 0;
     const highSigCount = agent.actions?.filter(a => a.significance >= 4).length || 0;
 
-    // Reset visible count when search changes or card collapses
-    useEffect(() => {
+    // Reset the visible window when the search changes or the card collapses
+    // (state adjustment during render instead of an effect).
+    const resetKey = `${isExpanded ? 1 : 0}:${searchQuery}`;
+    const [prevResetKey, setPrevResetKey] = useState(resetKey);
+    if (prevResetKey !== resetKey) {
+        setPrevResetKey(resetKey);
         setVisibleCount(PAGE_SIZE);
-    }, [searchQuery, isExpanded]);
+    }
 
     // Filter actions by search query
     const filteredActions = searchQuery.trim()
@@ -308,7 +322,7 @@ function AgentCard({ agent, isExpanded, onToggle }: {
                         <span className="text-[10px] px-2 py-0.5 bg-cyan-500/15 text-cyan-300 rounded-full font-medium border border-cyan-500/20">
                             {agent.ai_type}
                         </span>
-                        <span className="text-xs text-gray-500 tabular-nums">{totalActions} action{totalActions !== 1 ? 's' : ''}</span>
+                        <span className="text-xs text-dim tabular-nums">{totalActions} action{totalActions !== 1 ? 's' : ''}</span>
                     </div>
                     <div className="flex items-center gap-2">
                         {agent.stats.files_modified > 0 && (
@@ -335,16 +349,16 @@ function AgentCard({ agent, isExpanded, onToggle }: {
                                 {highSigCount}
                             </span>
                         )}
-                        <ChevronRight className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+                        <ChevronRight className={`w-4 h-4 text-dim transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
                     </div>
                 </div>
                 {/* Inline stats */}
                 <div className="flex items-center gap-3 px-4 pb-3 flex-wrap">
-                    <span className="text-xs text-gray-500">PID: <span className="text-gray-400 font-mono">{agent.agent_pid}</span></span>
+                    <span className="text-xs text-dim">PID: <span className="text-gray-400 font-mono">{agent.agent_pid}</span></span>
                     <span className="text-white/10">|</span>
-                    <span className="text-xs text-gray-500">{agent.duration}</span>
+                    <span className="text-xs text-dim">{agent.duration}</span>
                     <span className="text-white/10">|</span>
-                    <span className="text-xs text-gray-500">{agent.child_count} subprocess{agent.child_count !== 1 ? 'es' : ''}</span>
+                    <span className="text-xs text-dim">{agent.child_count} subprocess{agent.child_count !== 1 ? 'es' : ''}</span>
                 </div>
             </div>
 
@@ -352,7 +366,7 @@ function AgentCard({ agent, isExpanded, onToggle }: {
             {isExpanded && (
                 <div className="ml-4 md:ml-5 pl-4 md:pl-6 border-l border-white/[0.06]">
                     {totalActions === 0 ? (
-                        <div className="py-6 text-center text-gray-500 text-sm italic">
+                        <div className="py-6 text-center text-dim text-sm italic">
                             No significant actions in this time window
                         </div>
                     ) : (
@@ -360,7 +374,7 @@ function AgentCard({ agent, isExpanded, onToggle }: {
                             {/* Search input */}
                             <div className="flex items-center gap-2 mb-2">
                                 <div className="relative flex-1">
-                                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                                     <input
                                         type="text"
                                         placeholder="Search actions..."
@@ -371,14 +385,14 @@ function AgentCard({ agent, isExpanded, onToggle }: {
                                     />
                                 </div>
                                 {searchQuery && (
-                                    <span className="text-[11px] text-gray-500 whitespace-nowrap">
+                                    <span className="text-[11px] text-dim whitespace-nowrap">
                                         {filteredActions.length} of {totalActions} actions
                                     </span>
                                 )}
                             </div>
 
                             {filteredActions.length === 0 ? (
-                                <div className="py-4 text-center text-gray-500 text-sm">
+                                <div className="py-4 text-center text-dim text-sm">
                                     No actions match &quot;{searchQuery}&quot;
                                 </div>
                             ) : (
@@ -387,7 +401,7 @@ function AgentCard({ agent, isExpanded, onToggle }: {
                                         <GroupedActionRow key={`group-${idx}`} group={group} agentComm={agent.agent_name} />
                                     ))}
                                     {hasMore && (
-                                        <div ref={sentinelRef} className="flex items-center justify-center py-3 text-xs text-gray-500">
+                                        <div ref={sentinelRef} className="flex items-center justify-center py-3 text-xs text-dim">
                                             Showing {visibleCount} of {filteredActions.length} actions — scroll for more
                                         </div>
                                     )}
@@ -412,12 +426,14 @@ function ActivityStreamView({
 }) {
     const [expandedAgents, setExpandedAgents] = useState<Set<number>>(new Set());
 
-    // Auto-expand first agent
-    useEffect(() => {
+    // Auto-expand the first agent the first time data arrives.
+    const [seenData, setSeenData] = useState<AgentActivityResponse | null>(null);
+    if (data !== seenData) {
+        setSeenData(data);
         if (data?.agents?.length && expandedAgents.size === 0) {
             setExpandedAgents(new Set([data.agents[0].agent_pid]));
         }
-    }, [data]);
+    }
 
     const toggleAgent = (pid: number) => {
         setExpandedAgents(prev => {
@@ -614,7 +630,7 @@ function ActivityStreamView({
             {/* Agent cards */}
             {data.agents.map((agent) => (
                 <AgentCard
-                    key={agent.agent_pid}
+                    key={`${agent.host_id}-${agent.ai_type}-${agent.agent_pid}`}
                     agent={agent}
                     isExpanded={expandedAgents.has(agent.agent_pid)}
                     onToggle={() => toggleAgent(agent.agent_pid)}
@@ -628,27 +644,32 @@ function ActivityStreamView({
 export default function Timeline() {
     const [interval, setInterval_] = useState(60);
     const [activityData, setActivityData] = useState<AgentActivityResponse | null>(null);
-    const [activityLoading, setActivityLoading] = useState(false);
+    const [activityLoading, setActivityLoading] = useState(true);
     const [activityError, setActivityError] = useState<string | null>(null);
     const [minSignificance, setMinSignificance] = useState(2);
 
-    const fetchActivityData = useCallback(async () => {
-        try {
-            setActivityLoading(true);
-            const response = await getAgentActivity(interval, minSignificance);
-            setActivityData(response);
-            setActivityError(null);
-        } catch (err) {
-            console.error('Failed to fetch agent activity:', err);
-            setActivityError('Failed to load agent activity');
-        } finally {
-            setActivityLoading(false);
-        }
-    }, [interval, minSignificance]);
+    const [reloadNonce, setReloadNonce] = useState(0);
 
     useEffect(() => {
-        fetchActivityData();
-    }, [fetchActivityData]);
+        let cancelled = false;
+        getAgentActivity(interval, minSignificance)
+            .then(response => {
+                if (cancelled) return;
+                setActivityData(response);
+                setActivityError(null);
+            })
+            .catch(err => {
+                if (cancelled) return;
+                console.error('Failed to fetch agent activity:', err);
+                setActivityError('Failed to load agent activity');
+            })
+            .finally(() => { if (!cancelled) setActivityLoading(false); });
+        return () => { cancelled = true; };
+    }, [interval, minSignificance, reloadNonce]);
+
+    const changeInterval = (value: number) => { setInterval_(value); setActivityLoading(true); };
+    const changeSignificance = (value: number) => { setMinSignificance(value); setActivityLoading(true); };
+    const fetchActivityData = () => { setActivityLoading(true); setReloadNonce(n => n + 1); };
 
     return (
         <div className="space-y-7">
@@ -663,7 +684,7 @@ export default function Timeline() {
                             {intervalOptions.map((opt) => (
                                 <button
                                     key={opt.value}
-                                    onClick={() => setInterval_(opt.value)}
+                                    onClick={() => changeInterval(opt.value)}
                                     className={`px-2.5 py-1.5 text-[11px] font-semibold rounded-xl transition-all duration-200 ${interval === opt.value
                                         ? 'bg-white/[0.12] border border-white/[0.08] text-white shadow-sm'
                                         : 'text-white/30 hover:text-white/60 hover:bg-white/[0.03]'
@@ -676,11 +697,11 @@ export default function Timeline() {
 
                         {/* Significance Filter */}
                         <div className="flex items-center bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-2xl p-1">
-                            <span className="px-2 text-[10px] text-gray-500 uppercase tracking-wider">Sig</span>
+                            <span className="px-2 text-[10px] text-dim uppercase tracking-wider">Sig</span>
                             {[1, 2, 3, 4, 5].map((sig) => (
                                 <button
                                     key={sig}
-                                    onClick={() => setMinSignificance(sig)}
+                                    onClick={() => changeSignificance(sig)}
                                     className={`px-2 py-1.5 text-[11px] font-semibold rounded-xl transition-all duration-200 ${minSignificance === sig
                                         ? 'bg-white/[0.12] border border-white/[0.08] text-white shadow-sm'
                                         : 'text-white/30 hover:text-white/60 hover:bg-white/[0.03]'
@@ -705,7 +726,7 @@ export default function Timeline() {
                 }
             >
                 {activityData?.window_start && activityData?.window_end && (
-                    <span className="flex items-center gap-1.5 text-xs text-gray-500 bg-[#0d1117]/60 px-2.5 py-1 rounded-full border border-white/[0.07]">
+                    <span className="flex items-center gap-1.5 text-xs text-dim bg-[#0d1117]/60 px-2.5 py-1 rounded-full border border-white/[0.07]">
                         <Clock className="w-3 h-3" />
                         {new Date(activityData.window_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         {' – '}

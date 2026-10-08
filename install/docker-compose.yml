@@ -4,11 +4,14 @@
 # Usage:
 #   cp .env.example .env            # fill in DB_PASSWORD, NEO4J_PASSWORD, LLM_ENCRYPTION_KEY
 #   docker compose up -d
-#   docker compose logs bootstrap   # shows the generated dashboard API key on first start
+#   docker compose logs bootstrap   # shows the dashboard login (API key, admin password) on first start
 #   open http://localhost:3001
 #
-# API_KEY in .env is optional: leave it empty and the bootstrap service creates
-# a local key, or set it to a key you made with `correlic-admin create-api-key`.
+# The bootstrap service creates the organisation, a dashboard admin (API key
+# and email/password) and a separate, restricted key for the agent. The
+# credentials are also stored in the correlic-certs volume as
+# dashboard-credentials. The dashboard port is bound to 127.0.0.1; change the
+# `ports:` entry of the ui service to expose it on the network.
 
 services:
   # ── Init: generate mTLS certs (first run only) ───────────
@@ -38,12 +41,13 @@ services:
     volumes:
       - correlic-certs:/certs
 
-  # ── Bootstrap: migrations + org + local API key + agent config (first run) ─
+  # ── Bootstrap: migrations + org + admin + agent key + agent config (first run)
   bootstrap:
     image: ghcr.io/fuloxdev/correlic-backend:latest
     entrypoint: [""]
     command: >
       sh -c '
+        kv() { grep -E "^[[:space:]]*$$1=" | head -1 | sed -E "s/^[[:space:]]*$$1=//" | tr -d "[:space:]"; }
         if [ -f /certs/.bootstrapped ]; then
           echo "Already bootstrapped, running migrations only..."
           /app/admin migrate up
@@ -51,41 +55,36 @@ services:
         fi
         echo "Running bootstrap..."
         /app/admin migrate up
-        /app/admin create-org --name "Default" 2>&1 | tee /tmp/org.log
-        ORG_ID=$$(grep "org_id=" /tmp/org.log | cut -d= -f2)
+        ORG_ID=$$(/app/admin create-org --name "Default" 2>&1 | tee /dev/stderr | kv org_id)
         if [ -z "$$ORG_ID" ] && [ -f /certs/.org_id ]; then ORG_ID=$$(cat /certs/.org_id); fi
         if [ -z "$$ORG_ID" ]; then echo "ERROR: could not create or find the organization"; exit 1; fi
         echo "$$ORG_ID" > /certs/.org_id
         /app/admin enroll-client-cert --org-id "$$ORG_ID" --name agent-cert --cert-file /certs/client.crt 2>&1 || true
-        if [ -z "$$API_KEY" ]; then
-          echo "No API_KEY provided — creating a local one..."
-          /app/admin create-service-account --org-id "$$ORG_ID" --email agent@localhost --name "Local agent" --role admin 2>&1 | tee /tmp/sa.log
-          USER_ID=$$(grep "^user_id=" /tmp/sa.log | cut -d= -f2)
-          /app/admin create-api-key --org-id "$$ORG_ID" --user-id "$$USER_ID" --name local 2>&1 | tee /tmp/key.log
-          API_KEY=$$(grep "^api_key=" /tmp/key.log | cut -d= -f2)
-          if [ -z "$$API_KEY" ]; then echo "ERROR: could not create a local API key (see output above)"; exit 1; fi
-          GENERATED=1
-        fi
-        printf "%s" "$$API_KEY" > /certs/.api_key
-        chmod 600 /certs/.api_key
-        printf "backend_url: \"https://backend-api:8080\"\ntelemetry_url: \"https://backend-tel:8081\"\napi_key: \"$$API_KEY\"\ntls_ca_file: \"/certs/ca.crt\"\ntls_client_cert_file: \"/certs/client.crt\"\ntls_client_key_file: \"/certs/client.key\"\nprofile: \"developer\"\nlog_level: \"info\"\nprocess_exec_enabled: true\nfile_monitor_enabled: true\nnetwork_monitor_enabled: true\ndns_monitor_enabled: true\n" > /certs/agent.yaml
+        ADMIN_OUT=$$(/app/admin create-user --org-id "$$ORG_ID" --email admin@local.dev --name "Admin" --role admin 2>&1)
+        ADMIN_ID=$$(echo "$$ADMIN_OUT" | kv user_id); ADMIN_PASSWORD=$$(echo "$$ADMIN_OUT" | kv password)
+        DASHBOARD_KEY=$$(/app/admin create-api-key --org-id "$$ORG_ID" --user-id "$$ADMIN_ID" --name dashboard 2>&1 | kv api_key)
+        AGENT_USER=$$(/app/admin create-service-account --org-id "$$ORG_ID" --email agent@local.dev --name "Agent" --role member 2>&1 | kv user_id)
+        AGENT_KEY=$$(/app/admin create-api-key --org-id "$$ORG_ID" --user-id "$$AGENT_USER" --name agent --type agent 2>&1 | kv api_key)
+        if [ -z "$$DASHBOARD_KEY" ] || [ -z "$$AGENT_KEY" ]; then echo "ERROR: could not create API keys (see output above)"; exit 1; fi
+        printf "backend_url: \"https://backend-api:8080\"\ntelemetry_url: \"https://backend-tel:8081\"\napi_key: \"$$AGENT_KEY\"\ntls_ca_file: \"/certs/ca.crt\"\ntls_client_cert_file: \"/certs/client.crt\"\ntls_client_key_file: \"/certs/client.key\"\nprofile: \"developer\"\nlog_level: \"info\"\nheartbeat_interval: 30s\nebpf_enabled: true\nprocess_exec_enabled: true\nfile_monitor_enabled: true\nnetwork_monitor_enabled: true\ndns_monitor_enabled: true\n" > /certs/agent.yaml
+        chmod 600 /certs/agent.yaml
+        printf "DASHBOARD_URL=http://localhost:3001\nAPI_KEY=%s\nADMIN_EMAIL=admin@local.dev\nADMIN_PASSWORD=%s\n" "$$DASHBOARD_KEY" "$$ADMIN_PASSWORD" > /certs/dashboard-credentials
+        chmod 600 /certs/dashboard-credentials
         touch /certs/.bootstrapped
         echo ""
         echo "============================================"
         echo "  Correlic ready!"
         echo "  Dashboard: http://localhost:3001"
         echo "  Org ID:    $$ORG_ID"
-        if [ -n "$$GENERATED" ]; then
-          echo ""
-          echo "  Dashboard API key (log in with this; also stored in the"
-          echo "  correlic-certs volume as .api_key):"
-          echo "    $$API_KEY"
-        fi
+        echo ""
+        echo "  Log in with the API key:"
+        echo "    $$DASHBOARD_KEY"
+        echo "  or with admin@local.dev / $$ADMIN_PASSWORD"
+        echo "  (also stored in the correlic-certs volume as dashboard-credentials)"
         echo "============================================"
       '
     environment:
       DATABASE_URL: postgres://correlic:${DB_PASSWORD:?Set DB_PASSWORD in .env (see .env.example)}@db:5432/correlic?sslmode=disable
-      API_KEY: ${API_KEY:-}
     volumes:
       - correlic-certs:/certs
     depends_on:
@@ -216,18 +215,17 @@ services:
       - correlic
 
   # ── UI Dashboard ──────────────────────────────────────────
-  # With API_KEY set the dashboard logs you in automatically; without it,
-  # log in with the key printed by the bootstrap service.
+  # Log in with the API key or admin password printed by the bootstrap service.
+  # Bound to 127.0.0.1 by default; use "3001:3001" to expose it on the network.
   ui:
     image: ghcr.io/fuloxdev/correlic-ui:latest
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     environment:
       PROXY_BASE_URL: http://ui-proxy:8788
       PORT: "3001"
       HOSTNAME: "0.0.0.0"
       NODE_ENV: production
-      API_KEY: ${API_KEY:-}
     depends_on:
       - backend-api
       - bootstrap
@@ -241,9 +239,9 @@ services:
     environment:
       PORT: 8788
       BIND_HOST: 0.0.0.0
+      NODE_ENV: production
       BACKEND_API: https://backend-api:8080
-      API_KEY: ${API_KEY:-}
-      UI_ORIGIN: http://ui:3001
+      ALLOWED_ORIGINS: http://localhost:3001,http://127.0.0.1:3001
       MTLS_CA: /certs/ca.crt
       MTLS_CERT: /certs/client.crt
       MTLS_KEY: /certs/client.key

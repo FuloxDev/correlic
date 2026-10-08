@@ -8,6 +8,15 @@
 //
 // Uses kprobe/udp_sendmsg to capture ALL UDP sends to port 53,
 // including send() on connected sockets (glibc resolver path).
+//
+// Portability: the layout of struct iov_iter changed several times.
+//   - < 6.4: the iovec pointer is `iov`
+//   - >= 6.4: it is `__iov`
+//   - >= 6.0: single-buffer sends use ITER_UBUF with the user pointer in
+//     `ubuf` and the length in `count` (6.4+ also aliases this as
+//     `__ubuf_iovec`)
+// All accesses are CO-RE relocated and guarded with bpf_core_field_exists /
+// bpf_core_enum_value_exists so one object loads on every supported kernel.
 
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
@@ -19,6 +28,14 @@
 #define MAX_DNS_NAME 128
 #define DNS_PORT 53
 #define DNS_HDR_LEN 12
+
+// CO-RE "flavour" of struct iov_iter for kernels before 6.4, where the iovec
+// pointer field is named `iov`. libbpf/cilium strip the ___old suffix when
+// matching against the running kernel's BTF, so the field access below is
+// relocated (or reported as missing) like any other.
+struct iov_iter___old {
+    const struct iovec *iov;
+} __attribute__((preserve_access_index));
 
 // Event structure for DNS queries
 struct dns_event {
@@ -38,6 +55,56 @@ struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 2 * 1024 * 1024);  // 2MB buffer
 } dns_events SEC(".maps");
+
+// first_segment resolves the user pointer and length of the first data
+// segment of msg->msg_iter. Returns 0 on success, -1 when the iterator type
+// is not one we can read (kvec/bvec/xarray: kernel-internal sends).
+static __always_inline int first_segment(struct iov_iter *iter, void **base, __u64 *len)
+{
+    int is_ubuf = 0;
+    int is_iovec = 1;
+
+    // iter_type (u8) exists since 5.14; older kernels keep flags in `type`
+    // and only have the iovec layout for sendmsg, so assume ITER_IOVEC there.
+    if (bpf_core_field_exists(iter->iter_type)) {
+        __u8 type = BPF_CORE_READ(iter, iter_type);
+        if (bpf_core_enum_value_exists(enum iter_type, ITER_UBUF))
+            is_ubuf = (type == bpf_core_enum_value(enum iter_type, ITER_UBUF));
+        is_iovec = (type == bpf_core_enum_value(enum iter_type, ITER_IOVEC));
+    }
+
+    if (is_ubuf) {
+        // Single user buffer: pointer in `ubuf`, length in `count`.
+        if (!bpf_core_field_exists(iter->ubuf))
+            return -1;
+        *base = BPF_CORE_READ(iter, ubuf);
+        *len = BPF_CORE_READ(iter, count);
+        return 0;
+    }
+
+    if (!is_iovec)
+        return -1;
+
+    const struct iovec *iov = NULL;
+    if (bpf_core_field_exists(iter->__iov)) {
+        iov = BPF_CORE_READ(iter, __iov);
+    } else {
+        struct iov_iter___old *old = (struct iov_iter___old *)iter;
+        if (bpf_core_field_exists(old->iov))
+            iov = BPF_CORE_READ(old, iov);
+    }
+    if (!iov)
+        return -1;
+
+    // The iovec array lives in kernel memory (copied in by the syscall layer).
+    void *iov_base = NULL;
+    __u64 iov_len = 0;
+    bpf_probe_read_kernel(&iov_base, sizeof(iov_base), &iov->iov_base);
+    bpf_probe_read_kernel(&iov_len, sizeof(iov_len), &iov->iov_len);
+    *base = iov_base;
+    *len = iov_len;
+    return 0;
+}
 
 // kprobe on udp_sendmsg catches ALL UDP sends (sendto, send, sendmsg, write)
 // regardless of whether the socket is connected or not.
@@ -82,33 +149,22 @@ int trace_dns_udp_sendmsg(struct pt_regs *ctx)
     // DNS server IP (network byte order)
     e->dst_ip = BPF_CORE_READ(sk, __sk_common.skc_daddr);
 
-    // Read DNS payload from the iovec.
-    // msg->msg_iter contains the data; we read the first iov segment.
+    // Read DNS payload from the first data segment of the message.
     __builtin_memset(e->domain, 0, sizeof(e->domain));
     e->qtype = 0;
     e->qclass = 0;
 
-    struct iov_iter *iter = &msg->msg_iter;
-    const struct iovec *iov;
-    void *iov_base;
-    size_t iov_len;
-
-    // Read iov pointer from the iter union (ITER_IOVEC path)
-    bpf_probe_read_kernel(&iov, sizeof(iov), &iter->__iov);
-    if (iov) {
-        bpf_probe_read_kernel(&iov_base, sizeof(iov_base), &iov->iov_base);
-        bpf_probe_read_kernel(&iov_len, sizeof(iov_len), &iov->iov_len);
-
+    void *base = NULL;
+    __u64 len = 0;
+    if (first_segment(&msg->msg_iter, &base, &len) == 0 && base && len > DNS_HDR_LEN) {
         // DNS header is 12 bytes, then question section follows.
         // Copy raw question bytes; parse in userspace for correctness.
-        if (iov_base && iov_len > DNS_HDR_LEN) {
-            __u64 read_len = iov_len - DNS_HDR_LEN;
-            if (read_len > sizeof(e->domain) - 1)
-                read_len = sizeof(e->domain) - 1;
-            if (read_len > 0 && read_len <= sizeof(e->domain) - 1) {
-                bpf_probe_read_user(e->domain, read_len,
-                                    (const void *)iov_base + DNS_HDR_LEN);
-            }
+        __u64 read_len = len - DNS_HDR_LEN;
+        if (read_len > sizeof(e->domain) - 1)
+            read_len = sizeof(e->domain) - 1;
+        if (read_len > 0 && read_len <= sizeof(e->domain) - 1) {
+            bpf_probe_read_user(e->domain, read_len,
+                                (const void *)base + DNS_HDR_LEN);
         }
     }
 

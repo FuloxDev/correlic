@@ -28,4 +28,3 @@ type ApprovalCheckResponse struct {
 	ApprovalID   string   `json:"approval_id,omitempty"`
 	Status       string   `json:"status,omitempty"`
 }
-

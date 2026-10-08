@@ -14,8 +14,10 @@ import (
 // GetAgentActivityStream returns a structured activity stream for all AI agents.
 // It queries Neo4j for agent root processes and their descendant activity events,
 // translates raw events into human-readable actions with significance scores,
-// and groups everything per agent.
-func (s *TimelineService) GetAgentActivityStream(ctx context.Context, since time.Time, minSignificance int) (*AgentActivityResponse, error) {
+// and groups everything per agent. The graph is not tenant-scoped, so orgID is
+// accepted for interface symmetry with PostgresActivityStream and not applied.
+func (s *TimelineService) GetAgentActivityStream(ctx context.Context, orgID string, since time.Time, minSignificance int) (*AgentActivityResponse, error) {
+	_ = orgID
 	sinceStr := since.Format(time.RFC3339)
 
 	// Find TOPMOST AI agent processes: those with no AIAgent parent via PROCESS_PARENT.

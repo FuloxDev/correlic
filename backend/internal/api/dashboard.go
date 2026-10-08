@@ -43,13 +43,13 @@ type DetectionStats struct {
 
 // IncidentSummaryStats contains incident metrics for the dashboard.
 type IncidentSummaryStats struct {
-	Total        int `json:"total"`
-	Open         int `json:"open"`
+	Total         int `json:"total"`
+	Open          int `json:"open"`
 	Investigating int `json:"investigating"`
-	Resolved     int `json:"resolved"`
-	Dismissed    int `json:"dismissed"`
-	AutoResolved int `json:"auto_resolved"`
-	CriticalOpen int `json:"critical_open"`
+	Resolved      int `json:"resolved"`
+	Dismissed     int `json:"dismissed"`
+	AutoResolved  int `json:"auto_resolved"`
+	CriticalOpen  int `json:"critical_open"`
 }
 
 // EventBreakdown contains event counts by type.

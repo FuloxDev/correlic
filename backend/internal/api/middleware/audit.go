@@ -1,9 +1,9 @@
 package middleware
 
 import (
-	//"log"
+	"log"
 	"net/http"
-	//"time"
+	"time"
 )
 
 // statusWriter is a wrapper around the http.ResponseWriter that tracks the status code
@@ -26,28 +26,38 @@ func (w *statusWriter) Flush() {
 	}
 }
 
-// Audit wraps the next handler with audit logging
+// Audit logs every state-changing request (anything other than GET, HEAD or
+// OPTIONS) at INFO with the method, path, actor identity, role, response
+// status and duration. It must run after AuthMiddleware so the actor is
+// available in the request context. Read-only requests are not logged to
+// keep the log volume proportional to meaningful activity.
 func Audit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sw := &statusWriter{ResponseWriter: w, status: 200}
-		//start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
 
-		// serve the request
 		next.ServeHTTP(sw, r)
 
-		// get the org ID from the context
-		// orgID, _ := OrgFromContext(r.Context())
-		// fp, _ := ClientCertFingerprintFromContext(r.Context())
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			return
+		}
 
-		// log.Printf(
-		// 	"audit method=%s path=%s org=%s mTLS_fp=%s status=%d duration_ms=%d remote=%s",
-		// 	r.Method,
-		// 	r.URL.Path,
-		// 	orgID,
-		// 	fp,
-		// 	sw.status,
-		// 	time.Since(start).Milliseconds(),
-		// 	r.RemoteAddr,
-		// )
+		orgID, _ := OrgFromContext(r.Context())
+		actorType, actorID, _ := ActorFromContext(r.Context())
+		role, _ := ActorRoleFromContext(r.Context())
+
+		log.Printf(
+			"INFO audit method=%s path=%s org=%s actor_type=%s actor_id=%s role=%s status=%d duration_ms=%d remote=%s",
+			r.Method,
+			r.URL.Path,
+			orgID,
+			actorType,
+			actorID,
+			role,
+			sw.status,
+			time.Since(start).Milliseconds(),
+			r.RemoteAddr,
+		)
 	})
 }

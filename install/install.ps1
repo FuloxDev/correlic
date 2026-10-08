@@ -277,14 +277,11 @@ $dbPassword = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | Fo
 $neo4jPassword = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
 $lmkKey = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
 
-# API key is optional: press Enter and a local key is created once the
-# database is initialized.
-Write-Host ""
-Write-Host "  API key (press Enter to generate a local key):" -ForegroundColor Cyan
-$apiKey = Read-Host "  API Key"
-$apiKey = if ($apiKey) { $apiKey.Trim() } else { "" }
+# Keys are created after the database is initialised: a dashboard admin
+# (API key + password) and a separate restricted key for the agent.
+$apiKey = ""
 $generatedApiKey = ""
-if ($apiKey -ne "") { Write-OK "Using the API key you entered" } else { Write-Detail "A local API key will be generated" }
+$adminPassword = ""
 
 # Use BOM-free UTF-8 for all config files (PS 5.1 -Encoding UTF8 adds BOM)
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -295,13 +292,16 @@ if ($newInstall) {
     $agentContent = @"
 backend_url: "https://localhost:8080"
 telemetry_url: "https://localhost:8081"
-api_key: "$apiKey"
+api_key: ""
+profile: "developer"
+log_level: "info"
+heartbeat_interval: 30s
 etw_enabled: true
 process_exec_enabled: true
 file_monitor_enabled: true
 network_monitor_enabled: true
 dns_monitor_enabled: true
-block_enabled: true
+block_enabled: false
 tls_ca_file: $($certsDir -replace '\\','/')/ca.crt
 tls_client_cert_file: $($certsDir -replace '\\','/')/client.crt
 tls_client_key_file: $($certsDir -replace '\\','/')/client.key
@@ -439,34 +439,54 @@ if (Test-Path "$certsDir\client.crt") {
     if ("$enrollOut" -match "enrolled=true|already") { Write-OK "Client certificate enrolled" } else { Write-Warn "Client certificate enrollment: $enrollOut" }
 }
 
-# Create a local API key when none was entered
-if ($apiKey -eq "" -and $newInstall) {
-    Write-Detail "Creating local API key..."
-    $j = Start-Job { param($d,$c,$o) $env:DATABASE_URL=$c; & "$d\bin\correlic-admin.exe" create-service-account --org-id $o --email agent@localhost --name "Local agent" --role admin 2>&1 } -Arg $InstallDir,$connStr,$orgUUID
+# Create the dashboard admin (API key + password) and a restricted agent key
+if ($newInstall) {
+    Write-Detail "Creating dashboard admin and agent key..."
+    $j = Start-Job { param($d,$c,$o) $env:DATABASE_URL=$c; & "$d\bin\correlic-admin.exe" create-user --org-id $o --email admin@local.dev --name "Admin" --role admin 2>&1 } -Arg $InstallDir,$connStr,$orgUUID
+    $null = Wait-Job $j -Timeout 15
+    $adminOut = Receive-Job $j 2>$null
+    Remove-Job $j -Force -ErrorAction SilentlyContinue
+    $adminUserId = ""
+    if ("$adminOut" -match "user_id=([0-9a-f-]+)") { $adminUserId = $Matches[1] }
+    if ("$adminOut" -match "password=(\S+)") { $adminPassword = $Matches[1] }
+    if ($adminUserId -ne "") {
+        $j = Start-Job { param($d,$c,$o,$u) $env:DATABASE_URL=$c; & "$d\bin\correlic-admin.exe" create-api-key --org-id $o --user-id $u --name dashboard 2>&1 } -Arg $InstallDir,$connStr,$orgUUID,$adminUserId
+        $null = Wait-Job $j -Timeout 15
+        $keyOut = Receive-Job $j 2>$null
+        Remove-Job $j -Force -ErrorAction SilentlyContinue
+        if ("$keyOut" -match "api_key=([0-9a-f]+)") { $generatedApiKey = $Matches[1] }
+    }
+    $j = Start-Job { param($d,$c,$o) $env:DATABASE_URL=$c; & "$d\bin\correlic-admin.exe" create-service-account --org-id $o --email agent@local.dev --name "Agent" --role member 2>&1 } -Arg $InstallDir,$connStr,$orgUUID
     $null = Wait-Job $j -Timeout 15
     $saOut = Receive-Job $j 2>$null
     Remove-Job $j -Force -ErrorAction SilentlyContinue
     $saUserId = ""
     if ("$saOut" -match "user_id=([0-9a-f-]+)") { $saUserId = $Matches[1] }
     if ($saUserId -ne "") {
-        $j = Start-Job { param($d,$c,$o,$u) $env:DATABASE_URL=$c; & "$d\bin\correlic-admin.exe" create-api-key --org-id $o --user-id $u --name local 2>&1 } -Arg $InstallDir,$connStr,$orgUUID,$saUserId
+        $j = Start-Job { param($d,$c,$o,$u) $env:DATABASE_URL=$c; & "$d\bin\correlic-admin.exe" create-api-key --org-id $o --user-id $u --name agent --type agent 2>&1 } -Arg $InstallDir,$connStr,$orgUUID,$saUserId
         $null = Wait-Job $j -Timeout 15
-        $keyOut = Receive-Job $j 2>$null
+        $akeyOut = Receive-Job $j 2>$null
         Remove-Job $j -Force -ErrorAction SilentlyContinue
-        if ("$keyOut" -match "api_key=([0-9a-f]+)") { $apiKey = $Matches[1] }
+        if ("$akeyOut" -match "api_key=([0-9a-f]+)") { $apiKey = $Matches[1] }
     }
     if ($apiKey -ne "") {
-        $generatedApiKey = $apiKey
         $agentYamlPath = "$InstallDir\agent.yaml"
         if (Test-Path $agentYamlPath) {
             $yaml = Get-Content $agentYamlPath -Raw
             $yaml = $yaml -replace 'api_key: ".*"', "api_key: `"$apiKey`""
             [System.IO.File]::WriteAllText($agentYamlPath, $yaml, $utf8NoBom)
         }
-        Write-OK "Local API key created (shown at the end of the install)"
+        Write-OK "Agent key created and written to agent.yaml"
     } else {
-        Write-Warn "Could not create a local API key: $saOut $keyOut"
-        Write-Detail "Create one later with correlic-admin create-service-account / create-api-key"
+        Write-Warn "Could not create the agent key: $saOut $akeyOut"
+        Write-Detail "Create one later: correlic-admin create-api-key --org-id $orgUUID --user-id <user_id> --name agent --type agent"
+    }
+    if ($generatedApiKey -ne "") {
+        $creds = "# Correlic dashboard credentials (generated by the installer). Keep this file private.`r`nDASHBOARD_URL=http://localhost:3001`r`nAPI_KEY=$generatedApiKey`r`nADMIN_EMAIL=admin@local.dev`r`nADMIN_PASSWORD=$adminPassword`r`n"
+        [System.IO.File]::WriteAllText("$InstallDir\dashboard-credentials.txt", $creds, $utf8NoBom)
+        Write-OK "Dashboard admin created (credentials shown at the end of the install)"
+    } else {
+        Write-Warn "Could not create the dashboard admin: $adminOut $keyOut"
     }
 }
 
@@ -647,7 +667,6 @@ cd /d "$InstallDir"
 for /f "usebackq tokens=1,2 delims==" %%A in ("$InstallDir\.env") do (
     if not "%%A"=="" if not "%%A"=="#" set "%%A=%%B"
 )
-set API_KEY=$apiKey
 "$InstallDir\bin\correlic-api.exe" 2>>"$InstallDir\logs\api-error.log"
 "@ | Set-Content "$InstallDir\bin\start-api.cmd" -Encoding ASCII
 
@@ -681,7 +700,6 @@ cd /d "$InstallDir"
 for /f "usebackq tokens=1,2 delims==" %%A in ("$InstallDir\.env") do (
     if not "%%A"=="" if not "%%A"=="#" set "%%A=%%B"
 )
-set API_KEY=$apiKey
 "$InstallDir\bin\correlic-telemetry.exe" 2>>"$InstallDir\logs\telemetry-error.log"
 "@ | Set-Content "$InstallDir\bin\start-telemetry.cmd" -Encoding ASCII
 
@@ -710,10 +728,11 @@ if ($telPortOK -and $telProcOK) {
 # ── 10c. Dashboard ──
 
 if (Test-Path "$InstallDir\ui\server.js") {
-    # Create .cmd launcher for UI (sets API_KEY for auto-login)
+    # Create .cmd launcher for UI
     @"
 @echo off
-set API_KEY=$apiKey
+set NODE_ENV=production
+set HOSTNAME=127.0.0.1
 set PROXY_BASE_URL=http://localhost:8788
 set PORT=3001
 "$nodePathCmd" server.js
@@ -847,7 +866,11 @@ if ($failCount -eq 0) {
 }
 Write-Host ""
 Write-Host "  Dashboard:    " -NoNewline; Write-Host "http://localhost:3001" -ForegroundColor Cyan
-if ($generatedApiKey -ne "") { Write-Host "  API key:      " -NoNewline; Write-Host $generatedApiKey -ForegroundColor Cyan; Write-Host "                (log in to the dashboard with it; also in $InstallDir\agent.yaml)" -ForegroundColor Gray }
+if ($generatedApiKey -ne "") {
+    Write-Host "  Log in with:  " -NoNewline; Write-Host $generatedApiKey -ForegroundColor Cyan; Write-Host "  (API key)" -ForegroundColor Gray
+    Write-Host "           or:  " -NoNewline; Write-Host "admin@local.dev / $adminPassword" -ForegroundColor Cyan
+    Write-Host "                (stored in $InstallDir\dashboard-credentials.txt)" -ForegroundColor Gray
+}
 Write-Host "  Neo4j:        " -NoNewline; Write-Host "bolt://localhost:$neo4jBoltPort" -ForegroundColor Gray
 Write-Host "  Install dir:  $InstallDir"
 Write-Host "  Logs:         $InstallDir\logs"
@@ -857,6 +880,6 @@ Write-Host "    Start:     " -NoNewline; Write-Host "powershell $InstallDir\star
 Write-Host "    Stop:      " -NoNewline; Write-Host "powershell $InstallDir\stop.ps1" -ForegroundColor Gray
 Write-Host "    Uninstall: " -NoNewline; Write-Host "powershell $InstallDir\uninstall.ps1" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  Log in with the API key from your approval email." -ForegroundColor Yellow
+Write-Host "  The dashboard listens on localhost only." -ForegroundColor Gray
 Write-Host "  All data stays on this device. Nothing is sent externally." -ForegroundColor Green
 Write-Host ""

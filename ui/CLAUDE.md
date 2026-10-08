@@ -1,76 +1,71 @@
 # Correlic UI — Claude Code Context
 
 ## Purpose
-Next.js web frontend for security analysts. Displays real-time event timelines, process trees, alerts, and detection rule management.
+Next.js dashboard for security analysts: findings, incidents (with AI explain/chat),
+behavioral baselines, the agent activity timeline and org settings.
 
 ## Tech Stack
-- Next.js 16 (App Router), React 19, TypeScript
-- TailwindCSS, React Query (data fetching), Recharts (visualizations), Framer Motion (animations)
-- Auth: session-based (in progress)
+- Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4
+- Recharts (charts), Framer Motion (animation), lucide-react (icons), react-markdown
+- Fonts are self-hosted at build time via `next/font` (Inter, Space Grotesk, JetBrains Mono, IBM Plex Sans)
+- Dev server runs on port **3001**
 
 ## Directory Structure
 ```
-correlic-ui/
-├── app/                    # Next.js App Router
-│   ├── layout.tsx          # Root layout
-│   ├── providers.tsx       # React Query + auth providers
-│   ├── (dashboard)/        # Main dashboard routes (protected)
-│   ├── login/              # Auth pages
-│   └── api/                # Next.js API routes (proxy to backend)
-├── components/             # Shared UI components
-├── component/              # Feature-specific components
-├── lib/                    # Utilities, API client, types
-├── proxy.ts                 # Auth proxy (route protection, Next.js 16 convention)
-├── next.config.ts
-└── package.json
+ui/
+├── app/
+│   ├── layout.tsx            # Root layout: fonts, theme/font boot script
+│   ├── providers.tsx         # ToastProvider
+│   ├── (dashboard)/          # Protected routes + layout (top bar, sidebar drawer, status banner)
+│   ├── login/                # Login page (API key or email/password), centered layout
+│   ├── auth/                 # reset-password, verify-email (centered layout)
+│   └── api/
+│       ├── auth/             # login / logout / google route handlers (set the session cookie)
+│       └── proxy/[...path]/  # Forwards to ui-proxy with Authorization: Bearer <cookie value>
+├── components/               # Dashboard widgets, incidents views, top-bar pieces
+├── component/                # Small primitives (Card, Button, Input, ToastProvider)
+├── lib/
+│   ├── api.ts                # fetchJSON + ApiError; drives the backend status store
+│   ├── api-client.ts         # Typed endpoint wrappers
+│   ├── backend-status.ts     # "backend unreachable" store + out-of-React toast channel
+│   ├── use-polling.ts        # Visibility-aware polling hook
+│   ├── appearance.ts         # Theme/font tables shared by boot script and picker
+│   └── server/session.ts     # Cookie options, PROXY_BASE, session-token helpers (server only)
+└── proxy.ts                  # Route protection (Next 16 "proxy" convention)
 ```
 
-## Key Features
-- **Event Timeline** — chronological view of telemetry events
-- **Process Tree** — D3.js parent-child visualization
-- **Recursive File Tree** — nested file access explorer
-- **Alert Dashboard** — security alerts management
-- **Detection Rules** — configure custom detection logic
-- **Search & Filter** — query by process, file, IP, event type
+## Auth model
+- Cookie `correlic_session` holds either a service API key or a backend session token (UUID).
+- `app/api/proxy/[...path]/route.ts` sends it as `Authorization: Bearer …`; no cookie → 401 JSON.
+- `proxy.ts`: `/login`, `/auth/*`, `/api/auth/*` are public; other pages redirect to `/login?from=…`.
+- Logout calls backend `DELETE /auth/sessions` when the cookie is a session token, then clears it.
+- Never read an `API_KEY` env var here; there is no auto-login.
 
-## API Communication
-UI talks to backend via `/api/v1/*`. In dev, the UI proxy handles routing.
-React Query used for polling (every 5s for new events).
+## Data fetching
+- Plain `fetch` through `lib/api.ts`; no React Query.
+- `usePolling(fn, ms)` pauses when the tab is hidden. Dashboard default 60 s, NotificationBell 30 s.
+- 401 → redirect to login; 403 → "You don't have permission" toast; 0/502/503/504 → BackendStatusBanner.
+- The dashboard reads counts from `/dashboard/stats`; it does not fetch the findings list.
 
-```typescript
-// Typical fetch pattern
-const { data } = useQuery(['events'], () =>
-  fetch('/api/v1/events?limit=100').then(r => r.json())
-)
+## Environment Variables
+```
+PROXY_BASE_URL=http://localhost:8788      # ui-proxy address (server side)
+PORT=3001
+CORRELIC_API_URL=                          # optional remote key server fallback
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=              # optional Google sign-in
+NEXT_ALLOWED_DEV_ORIGINS=                  # optional extra dev origins
 ```
 
 ## Running
 ```bash
 npm install
-npm run dev      # dev server on :3001
-npm run build    # production build
+npm run dev        # :3001
+npm run build      # standalone output for Docker
 npm run lint
+npm run typecheck
 ```
 
-## Environment Variables
-```
-NEXT_PUBLIC_API_URL=https://localhost:8080   # backend URL
-```
-
-## Key Files
-- Root layout: `app/layout.tsx`
-- Auth proxy: `proxy.ts`
-- API client: `lib/` (look for api.ts or client.ts)
-- Dashboard routes: `app/(dashboard)/`
-- Components: `components/` and `component/`
-
-## Current State
-Basic UI working. In progress (v0.2):
-- Alert system UI
-- Detection rules management UI
-- Interactive process tree (D3.js)
-- User authentication (login page exists, full RBAC pending)
-
-## Common Issues
-- CORS: handled by ui-proxy in production; in dev, Next.js API routes proxy requests
-- Auth: `proxy.ts` protects dashboard routes, redirects to `/login`
+## Conventions
+- Muted text uses the `text-dim` utility (`--foreground-dim`, ≥ 4.5:1 on every theme), not `text-gray-500/600`.
+- Icon-only buttons need `aria-label`; `Input`/`Select` wire `label` to the control via `useId`.
+- Theme ids live in `lib/appearance.ts`; `data-theme`/`data-font` on `<html>` drive the CSS.

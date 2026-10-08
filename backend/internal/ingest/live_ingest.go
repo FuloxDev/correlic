@@ -3,7 +3,9 @@ package ingest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/correlic/correlic-backend/internal/ai/attribution"
 	"github.com/correlic/correlic-backend/internal/correlation"
@@ -17,6 +19,17 @@ import (
 
 const requiredSchemaVersion = 1
 
+// MaxEventsPerRequest caps a single ingest batch; larger batches are rejected with 413
+// before any processing so a misbehaving agent cannot pin a worker.
+const MaxEventsPerRequest = 500
+
+// Timestamp sanity window: events claiming to be from the future (clock skew beyond
+// 5 minutes) or older than 7 days are rejected rather than stored out of place.
+const (
+	MaxFutureSkew = 5 * time.Minute
+	MaxEventAge   = 7 * 24 * time.Hour
+)
+
 // FindingNotifier is called when a finding is stored, for in-app notification.
 // Nil-safe: pass nil to disable.
 type FindingNotifier interface {
@@ -24,11 +37,18 @@ type FindingNotifier interface {
 }
 
 // IngestCanonicalEvents validates events, inserts into telemetry_events (raw), then into events (canonical).
-// Uses ON CONFLICT DO NOTHING for events. Returns accepted and rejected counts.
+// Uses ON CONFLICT DO NOTHING for events. Returns accepted, rejected and sampled counts.
+//
+// A failed raw telemetry insert aborts the batch and returns an error so the caller can
+// answer 5xx and the agent retries; everything else is per-event (counted as rejected).
+//
 // If eventBuffer is provided, events are pushed to the buffer for streaming correlation.
 // If sampler is provided, events are sampled before ingestion.
 // If attributionSvc is provided, events are attributed to AI agents.
 // If processTreeWriter is provided (Tier 1), process_exec events are immediately written to Neo4j.
+// Detection runs whenever detectionEngine is non-nil. AI attribution for the rules comes
+// from the event's own tags and attributionCache (see detection.AttributionQuerier);
+// graphQuerier (Neo4j) is optional and only adds look-back context when present.
 // If cooldown is provided, repeat findings for the same detection+host are rate-limited.
 // If chainCorrelator is provided, correlated multi-step attack chains are detected and stored.
 // If exceptionChecker is provided, findings matching a per-rule exception are suppressed.
@@ -50,6 +70,7 @@ func IngestCanonicalEvents(
 	baselineCollector *detection.BaselineCollector,
 	findingStore *storage.FindingStore,
 	graphQuerier detection.GraphQuerier,
+	attributionCache *detection.AttributionCache,
 	safeDomainChecker detection.SafeDomainChecker,
 	cooldown *detection.FindingCooldown,
 	chainCorrelator *detection.ChainCorrelator,
@@ -61,9 +82,21 @@ func IngestCanonicalEvents(
 	orgID string,
 	events []event.Event,
 ) (accepted, rejected, sampled int, err error) {
+	// One attribution querier per batch: it carries the current event's AI tags and the
+	// shared (host,pid) cache into every rule, with Neo4j as an optional fallback.
+	querier := detection.NewAttributionQuerier(graphQuerier, attributionCache)
+
+	now := time.Now()
+	minTS := now.Add(-MaxEventAge)
+	maxTS := now.Add(MaxFutureSkew)
+
 	for i := range events {
 		evt := &events[i]
 		if evt.SchemaVersion != requiredSchemaVersion || evt.ID == "" || evt.HostID == "" {
+			rejected++
+			continue
+		}
+		if evt.Timestamp.IsZero() || evt.Timestamp.After(maxTS) || evt.Timestamp.Before(minTS) {
 			rejected++
 			continue
 		}
@@ -93,16 +126,19 @@ func IngestCanonicalEvents(
 			Timestamp: evt.Timestamp,
 			Payload:   payload,
 		}
-		if err := telemetryStore.InsertEvents(orgID, []model.TelemetryEvent{te}); err != nil {
-			log.Printf("ingest: telemetry store insert failed id=%s type=%s host=%s: %v", evt.ID, evt.Type, evt.HostID, err)
+		if ierr := telemetryStore.InsertEvents(orgID, []model.TelemetryEvent{te}); ierr != nil {
+			log.Printf("ingest: telemetry store insert failed id=%s type=%s host=%s: %v", evt.ID, evt.Type, evt.HostID, ierr)
+			// Raw storage is the source of truth for replay; abort so the agent retries the batch.
+			return accepted, rejected, sampled, fmt.Errorf("telemetry insert failed (event %s): %w", evt.ID, ierr)
+		}
+		if aerr := canonicalStore.AppendIdempotentForOrg(ctx, orgID, *evt); aerr != nil {
+			log.Printf("ingest: canonical store append failed id=%s type=%s host=%s: %v", evt.ID, evt.Type, evt.HostID, aerr)
 			rejected++
 			continue
 		}
-		if err := canonicalStore.AppendIdempotent(ctx, *evt); err != nil {
-			log.Printf("ingest: canonical store append failed id=%s type=%s host=%s: %v", evt.ID, evt.Type, evt.HostID, err)
-			rejected++
-			continue
-		}
+
+		// Seed the attribution cache / current-event context before anything consults it.
+		querier.SetCurrentEvent(evt)
 
 		// Attribute event to AI agent (if enabled)
 		// This tracks process tree correlation for AI agent counting
@@ -112,22 +148,22 @@ func IngestCanonicalEvents(
 
 		// Tier 1: Write process tree structure to Neo4j immediately (real-time correlation)
 		if processTreeWriter != nil && (evt.Type == "process_exec" || evt.Type == "process_exit") {
-			if err := processTreeWriter.IngestProcess(ctx, evt); err != nil {
+			if perr := processTreeWriter.IngestProcess(ctx, evt); perr != nil {
 				// Log but don't fail ingestion — Neo4j is secondary storage
-				log.Printf("WARN: Tier 1 process tree write failed: %v", err)
+				log.Printf("WARN: Tier 1 process tree write failed: %v", perr)
 			}
 		}
 
 		// Detection: evaluate rules against this event
 		var findings []detection.Finding
 		var emittedFindings []detection.Finding
-		if detectionEngine != nil && graphQuerier != nil {
+		if detectionEngine != nil {
 			evalCtx := &detection.EvalContext{
 				Ctx:               ctx,
 				Event:             evt,
 				HostID:            evt.HostID,
 				OrgID:             orgID,
-				GraphQuery:        graphQuerier,
+				GraphQuery:        querier,
 				SafeDomainChecker: safeDomainChecker,
 				RuleSettings:      ruleSettings,
 				Baselines:         baselineCollector,
@@ -173,27 +209,9 @@ func IngestCanonicalEvents(
 						continue
 					}
 
-					row := storage.FindingRow{
-						ID:            f.ID,
-						OrgID:         orgID,
-						DetectionID:   f.DetectionID,
-						HostID:        f.HostID,
-						Severity:      f.Severity,
-						Confidence:    f.Confidence,
-						Title:         f.Title,
-						Summary:       f.Summary,
-						AnchorEvent:   f.AnchorEventID,
-						RelatedEvents: f.RelatedEvents,
-						Context:       f.Context,
-						Status:        f.Status,
-						Suppressed:    f.Suppressed,
-						CreatedAt:     f.Timestamp,
-					}
-					if f.BaselineMatch != "" {
-						row.BaselineMatch = &f.BaselineMatch
-					}
-					if err := findingStore.Insert(row); err != nil {
-						log.Printf("WARN: finding store insert failed: %v", err)
+					row := findingRowFrom(orgID, f)
+					if ferr := findingStore.Insert(row); ferr != nil {
+						log.Printf("WARN: finding store insert failed: %v", ferr)
 					} else {
 						stored++
 						if suppressed {
@@ -216,24 +234,8 @@ func IngestCanonicalEvents(
 					for _, f := range emittedFindings {
 						chainFindings := chainCorrelator.Ingest(f)
 						for _, cf := range chainFindings {
-							chainRow := storage.FindingRow{
-								ID:            cf.ID,
-								OrgID:         orgID,
-								DetectionID:   cf.DetectionID,
-								HostID:        cf.HostID,
-								Severity:      cf.Severity,
-								Confidence:    cf.Confidence,
-								Title:         cf.Title,
-								Summary:       cf.Summary,
-								AnchorEvent:   cf.AnchorEventID,
-								RelatedEvents: cf.RelatedEvents,
-								Context:       cf.Context,
-								Status:        cf.Status,
-								Suppressed:    cf.Suppressed,
-								CreatedAt:     cf.Timestamp,
-							}
-							if err := findingStore.Insert(chainRow); err != nil {
-								log.Printf("WARN: chain finding store insert failed: %v", err)
+							if cerr := findingStore.Insert(findingRowFrom(orgID, cf)); cerr != nil {
+								log.Printf("WARN: chain finding store insert failed: %v", cerr)
 							} else {
 								stored++
 								allChainFindings = append(allChainFindings, cf)
@@ -251,6 +253,9 @@ func IngestCanonicalEvents(
 				if neverBaselineChecker != nil {
 					for i := range emittedFindings {
 						f := &emittedFindings[i]
+						if f.Context == nil {
+							continue
+						}
 						sigType, _ := f.Context["signal_type"].(string)
 						pat, _ := f.Context["pattern"].(string)
 						if sigType != "" && neverBaselineChecker.MatchesAny(orgID, sigType, pat) {
@@ -265,13 +270,13 @@ func IngestCanonicalEvents(
 				// Incident correlation: group emitted findings into incidents.
 				if incidentCorrelator != nil {
 					for _, f := range emittedFindings {
-						if _, err := incidentCorrelator.Ingest(ctx, orgID, f); err != nil {
-							log.Printf("WARN: incident correlator failed: %v", err)
+						if _, ierr := incidentCorrelator.Ingest(ctx, orgID, f); ierr != nil {
+							log.Printf("WARN: incident correlator failed: %v", ierr)
 						}
 					}
 					for _, cf := range allChainFindings {
-						if _, err := incidentCorrelator.Ingest(ctx, orgID, cf); err != nil {
-							log.Printf("WARN: incident correlator (chain) failed: %v", err)
+						if _, ierr := incidentCorrelator.Ingest(ctx, orgID, cf); ierr != nil {
+							log.Printf("WARN: incident correlator (chain) failed: %v", ierr)
 						}
 					}
 				}
@@ -292,8 +297,8 @@ func IngestCanonicalEvents(
 			// Populate ai_type on event context so baselines are scoped to specific AI agents.
 			// Detection rules already call IsAIProcess() per-rule, but the result isn't
 			// stored on evt.Context. We do a single lookup here for baseline attribution.
-			if graphQuerier != nil && evt.Process != nil && evt.Process.PID > 0 {
-				if isAI, aiType, err := graphQuerier.IsAIProcess(ctx, evt.HostID, evt.Process.PID); err == nil && isAI && aiType != "" {
+			if evt.Process != nil && evt.Process.PID > 0 {
+				if isAI, aiType, qerr := querier.IsAIProcess(ctx, evt.HostID, evt.Process.PID); qerr == nil && isAI && aiType != "" {
 					if evt.Context == nil {
 						evt.Context = make(map[string]interface{})
 					}
@@ -305,10 +310,10 @@ func IngestCanonicalEvents(
 
 		// Tier 2: Push to event buffer for batched activity correlation (non-blocking)
 		if eventBuffer != nil {
-			if err := eventBuffer.Push(evt); err != nil {
+			if berr := eventBuffer.Push(evt); berr != nil {
 				// Log but don't fail ingestion
 				log.Printf("WARN: Tier 2 buffer push failed (buffer full?) id=%s type=%s host=%s: %v",
-					evt.ID, evt.Type, evt.HostID, err)
+					evt.ID, evt.Type, evt.HostID, berr)
 			}
 		}
 
@@ -316,4 +321,28 @@ func IngestCanonicalEvents(
 		accepted++
 	}
 	return accepted, rejected, sampled, nil
+}
+
+// findingRowFrom converts a detection finding into its storage row for orgID.
+func findingRowFrom(orgID string, f detection.Finding) storage.FindingRow {
+	row := storage.FindingRow{
+		ID:            f.ID,
+		OrgID:         orgID,
+		DetectionID:   f.DetectionID,
+		HostID:        f.HostID,
+		Severity:      f.Severity,
+		Confidence:    f.Confidence,
+		Title:         f.Title,
+		Summary:       f.Summary,
+		AnchorEvent:   f.AnchorEventID,
+		RelatedEvents: f.RelatedEvents,
+		Context:       f.Context,
+		Status:        f.Status,
+		Suppressed:    f.Suppressed,
+		CreatedAt:     f.Timestamp,
+	}
+	if f.BaselineMatch != "" {
+		row.BaselineMatch = &f.BaselineMatch
+	}
+	return row
 }

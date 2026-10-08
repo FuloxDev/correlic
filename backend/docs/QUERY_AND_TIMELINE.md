@@ -9,7 +9,7 @@ API Handlers
   ├── /query/*           → Service (PostgreSQL canonical events)
   ├── /neo4j/*           → TimelineService (Neo4j graph queries)
   ├── /processes/*       → TimelineService (process tree + activity)
-  ├── /agents/activity   → TimelineService (human-readable feed)
+  ├── /agents/activity   → TimelineService (Neo4j) or PostgresActivityStream (events table)
   ├── /timeline          → Builder (on-demand correlation around anchor)
   └── /process/lifecycles → EventStore (process lifecycle events)
 ```
@@ -48,7 +48,7 @@ Graph-powered queries for process trees, attack paths, and session-scoped activi
 | GET | `/processes/tree` | Interactive process timeline for UI |
 | GET | `/processes/activity` | Process activity stream |
 | GET | `/processes/summary` | Process network summary |
-| GET | `/agents/activity` | Human-readable action feed (agent activity stream) |
+| GET | `/agents/activity` | Human-readable action feed (agent activity stream). Always registered: Neo4j when configured, else built from the events table using the agent's `ai_session_id` tags |
 
 ## Neo4j Investigation Service
 

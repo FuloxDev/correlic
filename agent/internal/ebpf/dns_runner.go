@@ -84,8 +84,8 @@ func (r *DNSRunner) Start(ctx context.Context) {
 				"source":     "ebpf",
 				"category":   category,
 				"suspicious": isSuspiciousDNS(dnsEvt.Domain),
-				"is_ai":      true, // Explicit flag
 			}
+			tracker.Annotate(payload, dnsEvt.PID)
 
 			ok := r.emit("dns_query", payload)
 			if !ok {
@@ -118,6 +118,7 @@ func (r *DNSRunner) Start(ctx context.Context) {
 						"category":   category,
 					},
 				}
+				tracker.Annotate(canonicalEvent.Context, dnsEvt.PID)
 				canonicalEvent.ID = event.GenerateID(
 					r.HostID,
 					ts.UnixNano(),

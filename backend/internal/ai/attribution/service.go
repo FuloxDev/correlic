@@ -164,14 +164,29 @@ func (s *Service) GetPatternNeedles() []string {
 	return needles
 }
 
-// GetAllPatterns returns all AI agent patterns with full details.
-func (s *Service) GetAllPatterns() ([]AIAgentPattern, error) {
-	return s.store.GetPatterns()
+// GetPatternNeedlesForOrg returns the pattern strings visible to orgID
+// (built-ins plus the org's own) for agent-side substring matching.
+func (s *Service) GetPatternNeedlesForOrg(orgID string) []string {
+	patterns, err := s.store.GetPatternsForOrg(orgID)
+	if err != nil {
+		return nil
+	}
+	needles := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		needles = append(needles, p.Pattern)
+	}
+	return needles
 }
 
-// CreatePattern adds a new AI agent pattern and clears caches.
-func (s *Service) CreatePattern(p AIAgentPattern) (AIAgentPattern, error) {
-	created, err := s.store.CreatePattern(p)
+// GetAllPatterns returns the AI agent patterns visible to orgID with full details:
+// built-ins (org_id NULL) plus the org's own.
+func (s *Service) GetAllPatterns(orgID string) ([]AIAgentPattern, error) {
+	return s.store.GetPatternsForOrg(orgID)
+}
+
+// CreatePattern adds a new AI agent pattern owned by orgID and clears caches.
+func (s *Service) CreatePattern(orgID string, p AIAgentPattern) (AIAgentPattern, error) {
+	created, err := s.store.CreatePattern(orgID, p)
 	if err != nil {
 		return AIAgentPattern{}, err
 	}
@@ -179,9 +194,9 @@ func (s *Service) CreatePattern(p AIAgentPattern) (AIAgentPattern, error) {
 	return created, nil
 }
 
-// DeletePattern removes an AI agent pattern and clears caches.
-func (s *Service) DeletePattern(id int) error {
-	if err := s.store.DeletePattern(id); err != nil {
+// DeletePattern removes one of orgID's own AI agent patterns and clears caches.
+func (s *Service) DeletePattern(orgID string, id int) error {
+	if err := s.store.DeletePattern(orgID, id); err != nil {
 		return err
 	}
 	s.ClearCache()

@@ -4,22 +4,22 @@ package windows
 
 import (
 	"context"
-	"log/slog"
-	"path/filepath"
-	"strings"
 	"github.com/correlic/correlic-agent/internal/dispatch"
 	"github.com/correlic/correlic-agent/internal/event"
 	"github.com/correlic/correlic-agent/internal/lineage"
+	"log/slog"
+	"path/filepath"
+	"strings"
 )
 
 // Access mask constants for file/registry access distinction
 const (
-	accessReadData    = 0x1
-	accessWriteData   = 0x2
-	accessAppendData  = 0x4
-	accessDelete      = 0x10000
-	accessWriteDAC    = 0x40000
-	accessWriteOwner  = 0x80000
+	accessReadData   = 0x1
+	accessWriteData  = 0x2
+	accessAppendData = 0x4
+	accessDelete     = 0x10000
+	accessWriteDAC   = 0x40000
+	accessWriteOwner = 0x80000
 )
 
 // AuditRunner converts Windows Security Audit events (from AuditSubscriber)
@@ -77,7 +77,7 @@ func (r *AuditRunner) Start(ctx context.Context) {
 				r.handlePrivilegeUse(evt)
 			case 4698:
 				r.handleScheduledTask(evt)
-			// 4688/4689 handled by CmdlineCache — not dispatched here
+				// 4688/4689 handled by CmdlineCache — not dispatched here
 			}
 		}
 	}
@@ -107,21 +107,16 @@ func (r *AuditRunner) handleRegistryWrite(evt AuditEvent) {
 			FilePath: regPath, // Treat registry path like file path for compatibility
 		},
 		Context: map[string]any{
-			"event_id":   4657,
-			"reg_key":    regPath,
-			"reg_value":  evt.RegValue,
-			"old_value":  evt.RegOldVal,
-			"new_value":  evt.RegNewVal,
-			"operation":  "SetValue",
+			"event_id":  4657,
+			"reg_key":   regPath,
+			"reg_value": evt.RegValue,
+			"old_value": evt.RegOldVal,
+			"new_value": evt.RegNewVal,
+			"operation": "SetValue",
 		},
 	}
 
-	if aiSess := lineage.GetLineageTracker().GetSessionID(evt.PID); aiSess != "" {
-		canonEvt.Context["ai_session_id"] = aiSess
-	}
-	if aiType := lineage.GetLineageTracker().GetAIType(evt.PID); aiType != "" {
-		canonEvt.Context["ai_type"] = aiType
-	}
+	lineage.GetLineageTracker().Annotate(canonEvt.Context, evt.PID)
 
 	canonEvt.ID = event.GenerateID(r.hostID, evt.Timestamp.UnixNano(),
 		canonEvt.Source, canonEvt.Type, canonEvt.Actor.PID, regPath)
@@ -164,12 +159,7 @@ func (r *AuditRunner) handleObjectAccess(evt AuditEvent) {
 		},
 	}
 
-	if aiSess := lineage.GetLineageTracker().GetSessionID(evt.PID); aiSess != "" {
-		canonEvt.Context["ai_session_id"] = aiSess
-	}
-	if aiType := lineage.GetLineageTracker().GetAIType(evt.PID); aiType != "" {
-		canonEvt.Context["ai_type"] = aiType
-	}
+	lineage.GetLineageTracker().Annotate(canonEvt.Context, evt.PID)
 
 	canonEvt.ID = event.GenerateID(r.hostID, evt.Timestamp.UnixNano(),
 		canonEvt.Source, canonEvt.Type, canonEvt.Actor.PID, evt.ObjectPath)
@@ -219,9 +209,7 @@ func (r *AuditRunner) handlePrivilegeUse(evt AuditEvent) {
 		},
 	}
 
-	if aiSess := lineage.GetLineageTracker().GetSessionID(evt.PID); aiSess != "" {
-		canonEvt.Context["ai_session_id"] = aiSess
-	}
+	lineage.GetLineageTracker().Annotate(canonEvt.Context, evt.PID)
 
 	canonEvt.ID = event.GenerateID(r.hostID, evt.Timestamp.UnixNano(),
 		canonEvt.Source, canonEvt.Type, canonEvt.Actor.PID, strings.Join(sensitive, ","))

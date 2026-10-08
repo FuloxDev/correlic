@@ -233,6 +233,7 @@ func (r *ExecRunner) handleStart(ev ProcEvent, tracker *lineage.LineageTracker) 
 			SessionID:   sessionID,
 			Role:        role,
 			AISessionID: tracker.GetSessionID(ev.PID),
+			AIType:      tracker.GetAIType(ev.PID),
 			Blocked:     wasBlocked,
 		}
 		r.handler.Handle(raw)
@@ -330,10 +331,11 @@ func splitCmdline(cmdline string) []string {
 // Preserves command structure and flag names — only the secret values are replaced.
 //
 // Examples:
-//   PGPASSWORD=correlic psql → PGPASSWORD=*** psql
-//   --password=secret       → --password=***
-//   --token=abc123          → --token=***
-//   -H "Authorization: Bearer sk-xxx" → -H "Authorization: Bearer ***"
+//
+//	PGPASSWORD=correlic psql → PGPASSWORD=*** psql
+//	--password=secret       → --password=***
+//	--token=abc123          → --token=***
+//	-H "Authorization: Bearer sk-xxx" → -H "Authorization: Bearer ***"
 func redactCmdline(args []string) []string {
 	redacted := make([]string, len(args))
 	copy(redacted, args)

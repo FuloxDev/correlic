@@ -4,7 +4,6 @@ package ebpf
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
@@ -58,6 +57,9 @@ func (r *ForkRunner) Start(ctx context.Context) {
 
 	r.logger.Info("eBPF fork runner started, tracking process tree")
 
+	tracker := GetLineageTracker()
+	debug := r.logger.Enabled(ctx, slog.LevelDebug)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -65,33 +67,26 @@ func (r *ForkRunner) Start(ctx context.Context) {
 			r.collector.Close()
 			return
 		case forkEvt := <-r.collector.Events():
-			// Skip events with parent_pid=0 - these are incomplete/corrupted events
-			// from sys_enter_clone or exit tracepoints that shouldn't be emitted
-			if forkEvt.ParentPID == 0 {
-				r.logger.Debug("skipping fork event with parent_pid=0",
-					"child_pid", forkEvt.ChildPID,
-					"clone_flags", fmt.Sprintf("0x%X", forkEvt.CloneFlags))
-				continue
-			}
-
-			// Skip exit events - they're handled by the dedicated exit collector
+			// Exit events are handled by the dedicated exit collector; the
+			// fork collector only uses them to prune its tree.
 			if forkEvt.IsExit() {
 				continue
 			}
-
-			// Determine event type
-			eventType := "fork"
-			if forkEvt.IsThread() {
-				eventType = "thread"
-				// No longer skipping threads. We need them to maintain the lineage
-				// for child processes spawned by these threads.
+			// Only thread-group leaders are processes. The collector already
+			// filters threads and child_pid == 0; keep the guard local too.
+			if forkEvt.ChildPID == 0 || forkEvt.IsThread() || forkEvt.ParentTGID == 0 {
+				if debug {
+					r.logger.Debug("skipping non-process fork event",
+						"child_pid", forkEvt.ChildPID, "child_tgid", forkEvt.ChildTGID,
+						"parent_tgid", forkEvt.ParentTGID)
+				}
+				continue
 			}
 
-			// Register with LineageTracker
-			tracker := GetLineageTracker()
-			// For threads/forks, the child initially shares the parent's comm
-			// or has its own set via prctl (captured in ChildComm)
-			isAI := tracker.RegisterProcess(forkEvt.ChildPID, forkEvt.ParentPID, forkEvt.ChildComm)
+			// Register with LineageTracker, keyed by process (tgid) with the
+			// parent *process* (tgid) so forks from worker threads inherit.
+			// The child initially shares the parent's comm; it is refined on exec.
+			isAI := tracker.RegisterProcess(forkEvt.ChildTGID, forkEvt.ParentTGID, forkEvt.ChildComm)
 
 			// FILTER: Only proceed if this is an AI process or descendant
 			if !isAI {
@@ -99,26 +94,26 @@ func (r *ForkRunner) Start(ctx context.Context) {
 			}
 
 			// Detect container and session for enrichment
-			containerID := DetectContainerID(forkEvt.ChildPID)
-			sessionID := detectSessionID(forkEvt.ChildPID)
+			containerID := DetectContainerID(forkEvt.ChildTGID)
+			sessionID := detectSessionID(forkEvt.ChildTGID)
 
 			// Convert ForkEvent to telemetry format
 			payload := map[string]any{
-				"event":        eventType,
-				"parent_pid":   forkEvt.ParentPID,
+				"event":        "fork",
+				"parent_pid":   forkEvt.ParentTGID,
 				"parent_tgid":  forkEvt.ParentTGID,
-				"child_pid":    forkEvt.ChildPID,
+				"child_pid":    forkEvt.ChildTGID,
 				"child_tgid":   forkEvt.ChildTGID,
 				"uid":          forkEvt.UID,
 				"parent_comm":  forkEvt.ParentComm,
 				"child_comm":   forkEvt.ChildComm,
-				"is_fork":      forkEvt.IsFork(),
+				"is_fork":      true,
 				"container_id": containerID,         // Container context
 				"session_id":   sessionID,           // Session tracking
 				"timestamp_ns": forkEvt.TimestampNs, // Precise timestamp
 				"source":       "ebpf",
-				"is_ai":        true, // Explicit flag
 			}
+			tracker.Annotate(payload, forkEvt.ChildTGID)
 
 			ok := r.emit("process_tree", payload)
 			if !ok {
@@ -129,39 +124,30 @@ func (r *ForkRunner) Start(ctx context.Context) {
 			if r.Dispatcher != nil {
 				ts := time.Now()
 
-				// For threads/helper processes that don't exec, we emit a 'process_exec'
-				// event representing the start of this thread/process.
-				// This ensures it becomes a node in the graph that children can link to.
-
-				// Use "process_exec" for graph compatibility so it looks like a process node.
-				graphEventType := "process_exec"
-
-				// Actor is the CHILD (the thread/process being created)
+				// For helper processes that never exec, we emit a 'process_exec'
+				// event representing the start of this process so it becomes a
+				// node in the graph that children can link to.
 				canonicalEvent := event.Event{
 					SchemaVersion: 1,
-					Type:          graphEventType,
+					Type:          "process_exec",
 					Timestamp:     ts,
 					HostID:        r.HostID,
 					Source:        "ebpf",
 					Actor: &event.Actor{
-						PID:       int(forkEvt.ChildPID),
-						PPID:      int(forkEvt.ParentPID),
+						PID:       int(forkEvt.ChildTGID),
+						PPID:      int(forkEvt.ParentTGID),
 						Comm:      forkEvt.ChildComm,
 						SessionID: strconv.FormatUint(uint64(sessionID), 10),
 					},
 					Context: map[string]any{
-						"is_thread":      forkEvt.IsThread(),
+						"is_thread":      false,
 						"child_tgid":     forkEvt.ChildTGID,
 						"parent_comm":    forkEvt.ParentComm,
 						"container_id":   containerID,
 						"synthetic_exec": true, // Flag to identify and filter these from UI activity stream
 					},
 				}
-
-				// Generate a deterministic ID
-				if aiSess := tracker.GetSessionID(forkEvt.ChildPID); aiSess != "" {
-					canonicalEvent.Context["ai_session_id"] = aiSess
-				}
+				tracker.Annotate(canonicalEvent.Context, forkEvt.ChildTGID)
 				canonicalEvent.ID = event.GenerateID(
 					r.HostID,
 					ts.UnixNano(),

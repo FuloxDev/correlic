@@ -217,18 +217,10 @@ func (h *NotificationHandler) CreateEndpoint(w http.ResponseWriter, r *http.Requ
 		body.Config = map[string]any{}
 	}
 
-	// Validate channel-specific config
-	switch body.ChannelType {
-	case "webhook":
-		if url, _ := body.Config["url"].(string); url == "" {
-			BadRequest(w, "webhook config requires 'url'")
-			return
-		}
-	case "slack":
-		if url, _ := body.Config["webhook_url"].(string); url == "" {
-			BadRequest(w, "slack config requires 'webhook_url'")
-			return
-		}
+	// Validate channel-specific config, including the SSRF guard on the URL.
+	if msg, ok := validateEndpointConfig(body.ChannelType, body.Config); !ok {
+		BadRequest(w, msg)
+		return
 	}
 
 	validSeverities := map[string]bool{"low": true, "medium": true, "high": true, "critical": true}
@@ -332,6 +324,14 @@ func (h *NotificationHandler) UpdateEndpoint(w http.ResponseWriter, r *http.Requ
 		existing.Enabled = *body.Enabled
 	}
 
+	// Re-run the config/URL validation whenever the channel or config changed.
+	if body.ChannelType != nil || body.Config != nil {
+		if msg, ok := validateEndpointConfig(existing.ChannelType, existing.Config); !ok {
+			BadRequest(w, msg)
+			return
+		}
+	}
+
 	if err := h.endpointStore.Update(r.Context(), *existing); err != nil {
 		log.Printf("ERROR: update notification endpoint: %v", err)
 		Internal(w)
@@ -410,6 +410,13 @@ func (h *NotificationHandler) TestEndpoint(w http.ResponseWriter, r *http.Reques
 		},
 	}
 
+	// Stored endpoints predate the SSRF guard or may have been re-pointed by
+	// DNS since: validate again before contacting anything.
+	if msg, ok := validateEndpointConfig(endpoint.ChannelType, endpoint.Config); !ok {
+		BadRequest(w, msg)
+		return
+	}
+
 	var sendErr error
 	switch endpoint.ChannelType {
 	case "webhook":
@@ -425,13 +432,40 @@ func (h *NotificationHandler) TestEndpoint(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	if sendErr != nil {
+		// Full error (dial addresses, upstream bodies) stays in the log; the
+		// client only learns the failure category.
+		log.Printf("WARN: test notification endpoint %s failed: %v", endpoint.ID, sendErr)
 		json.NewEncoder(w).Encode(map[string]any{
 			"ok":    false,
-			"error": sendErr.Error(),
+			"error": notification.CategorizeSendError(sendErr),
 		})
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// validateEndpointConfig checks the channel-specific config of a notification
+// endpoint and runs the outbound URL guard. It returns a client-safe message
+// and false on failure.
+func validateEndpointConfig(channelType string, config map[string]any) (string, bool) {
+	var key, rawURL string
+	switch channelType {
+	case "webhook":
+		key = "url"
+	case "slack":
+		key = "webhook_url"
+	default:
+		return "channel_type must be 'webhook' or 'slack'", false
+	}
+	rawURL, _ = config[key].(string)
+	if strings.TrimSpace(rawURL) == "" {
+		return channelType + " config requires '" + key + "'", false
+	}
+	if err := notification.ValidateOutboundURL(rawURL); err != nil {
+		log.Printf("WARN: notification endpoint %s rejected: %v", key, err)
+		return key + " rejected: " + notification.CategorizeSendError(err), false
+	}
+	return "", true
 }
 
 // --- Delivery History ---

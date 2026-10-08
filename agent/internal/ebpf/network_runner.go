@@ -5,11 +5,13 @@ package ebpf
 import (
 	"context"
 	"log/slog"
+	"net"
 	"strconv"
 	"time"
 
 	"github.com/correlic/correlic-agent/internal/collect"
 	"github.com/correlic/correlic-agent/internal/dispatch"
+	"github.com/correlic/correlic-agent/internal/enforcer"
 	"github.com/correlic/correlic-agent/internal/event"
 )
 
@@ -20,6 +22,7 @@ type NetworkRunner struct {
 	logger     *slog.Logger
 	HostID     string
 	Dispatcher dispatch.Dispatcher
+	enforcer   *enforcer.Enforcer
 }
 
 // NewNetworkRunner creates a new network monitoring runner.
@@ -42,12 +45,19 @@ func NewNetworkRunner(emit collect.EventSink, logger *slog.Logger, hostID string
 	}, nil
 }
 
+// SetEnforcer attaches the soft-block enforcer to the network runner.
+func (r *NetworkRunner) SetEnforcer(e *enforcer.Enforcer) {
+	r.enforcer = e
+}
+
 // Start implements the collect.Collector interface.
 func (r *NetworkRunner) Start(ctx context.Context) {
 	// Start the underlying collector
 	go r.collector.Start(ctx)
 
 	r.logger.Info("eBPF network runner started, forwarding connection events")
+
+	tracker := GetLineageTracker()
 
 	for {
 		select {
@@ -64,7 +74,6 @@ func (r *NetworkRunner) Start(ctx context.Context) {
 			}
 
 			// FILTER: Only proceed if this is an AI process or descendant
-			tracker := GetLineageTracker()
 			if !tracker.IsAI(ev.PID) {
 				// Race condition check: try to register via inheritance or pattern
 				if !tracker.RegisterProcess(ev.PID, ev.PPID, ev.Comm) {
@@ -72,20 +81,31 @@ func (r *NetworkRunner) Start(ctx context.Context) {
 				}
 			}
 
+			dstIP := ev.DstIP()
+			category := categorizeConnection(ev.DPort, dstIP)
+
+			// Soft-block check — kill process if the destination matches a block rule.
+			target := net.JoinHostPort(dstIP, strconv.Itoa(int(ev.DPort)))
+			blocked := applyBlockRule(r.enforcer, r.emit, r.logger, "net_connect", ev.PID, target,
+				map[string]any{"target": target})
+
 			// Convert ConnectEvent to telemetry format
 			payload := map[string]any{
 				"pid":      ev.PID,
 				"ppid":     ev.PPID,
 				"uid":      ev.UID,
 				"gid":      ev.GID,
-				"dst_ip":   ev.DstIP(),
+				"dst_ip":   dstIP,
 				"dst_port": ev.DPort,
 				"family":   familyToString(ev.Family),
 				"comm":     ev.Comm,
 				"pcomm":    ev.ParentComm,
 				"source":   "ebpf",
-				"category": categorizeConnection(ev.DPort, ev.DstIP()),
-				"is_ai":    true, // Explicit flag
+				"category": category,
+			}
+			tracker.Annotate(payload, ev.PID)
+			if blocked {
+				payload["action"] = "blocked"
 			}
 
 			// Send to batcher for aggregation
@@ -110,16 +130,17 @@ func (r *NetworkRunner) Start(ctx context.Context) {
 						SessionID: strconv.FormatUint(uint64(detectSessionID(ev.PID)), 10),
 					},
 					Target: &event.Target{
-						IP:       ev.DstIP(),
+						IP:       dstIP,
 						Port:     int(ev.DPort),
 						Protocol: familyToString(ev.Family),
 					},
 					Context: map[string]any{
-						"category": categorizeConnection(ev.DPort, ev.DstIP()),
+						"category": category,
 					},
 				}
-				if aiSess := tracker.GetSessionID(ev.PID); aiSess != "" {
-					canonicalEvent.Context["ai_session_id"] = aiSess
+				tracker.Annotate(canonicalEvent.Context, ev.PID)
+				if blocked {
+					canonicalEvent.Context["action"] = "blocked"
 				}
 				canonicalEvent.ID = event.GenerateID(
 					r.HostID,
@@ -127,7 +148,7 @@ func (r *NetworkRunner) Start(ctx context.Context) {
 					canonicalEvent.Source,
 					canonicalEvent.Type,
 					canonicalEvent.Actor.PID,
-					ev.DstIP(),
+					dstIP,
 				)
 				r.Dispatcher.Enqueue(canonicalEvent)
 			}

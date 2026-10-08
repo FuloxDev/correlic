@@ -211,20 +211,22 @@ func NewChainCorrelator() *ChainCorrelator {
 // Prefers session_id from Context (stable across processes in the same session).
 // Falls back to host_id only when no session is available.
 func chainBufferKey(f Finding) string {
+	// Org-qualified so two tenants with identically named hosts never correlate together.
+	scope := f.OrgID + ":" + f.HostID
 	if f.Context != nil {
 		if v, ok := f.Context["session_id"]; ok {
 			if s, ok := v.(string); ok && s != "" && s != "0" {
-				return f.HostID + ":" + s
+				return scope + ":" + s
 			}
 		}
 	}
 	// Fallback: use PID to avoid mixing unrelated processes into one bucket.
 	if f.Context != nil {
 		if v, ok := f.Context["pid"]; ok {
-			return fmt.Sprintf("%s:pid:%v", f.HostID, v)
+			return fmt.Sprintf("%s:pid:%v", scope, v)
 		}
 	}
-	return f.HostID + ":unknown"
+	return scope + ":unknown"
 }
 
 // Ingest adds a finding to the correlation buffer and returns any chain findings that completed
@@ -380,8 +382,9 @@ func buildChainFinding(chain []Finding, p ChainPattern, lastFinding Finding) Fin
 		}
 	}
 
-	chainID := fmt.Sprintf("chain.%s:%s:%s:%d",
-		p.ID, lastFinding.HostID, sessionStr, firstFinding.Timestamp.Unix())
+	// Org-qualified like regular finding IDs (org:detection:host:pattern).
+	chainID := fmt.Sprintf("%s:chain.%s:%s:%s:%d",
+		lastFinding.OrgID, p.ID, lastFinding.HostID, sessionStr, firstFinding.Timestamp.Unix())
 
 	ctx := map[string]any{
 		"chain_pattern":     p.ID,
@@ -405,12 +408,13 @@ func buildChainFinding(chain []Finding, p ChainPattern, lastFinding Finding) Fin
 	}
 
 	return Finding{
-		ID:            chainID,
-		DetectionID:   "chain." + p.ID,
-		HostID:        lastFinding.HostID,
-		Severity:      p.Severity,
-		Confidence:    p.Confidence,
-		Title:         "Attack chain detected: " + p.Name,
+		ID:          chainID,
+		DetectionID: "chain." + p.ID,
+		OrgID:       lastFinding.OrgID,
+		HostID:      lastFinding.HostID,
+		Severity:    p.Severity,
+		Confidence:  p.Confidence,
+		Title:       "Attack chain detected: " + p.Name,
 		Summary: fmt.Sprintf("Correlated %d findings matched the %s attack chain within %ds",
 			len(chain), p.Name, windowSecs),
 		AnchorEventID: firstFinding.AnchorEventID,

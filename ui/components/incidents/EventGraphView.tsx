@@ -116,22 +116,6 @@ export default function EventGraphView({ nodes, edges }: EventGraphViewProps) {
 
     const resetView = useCallback(() => setTransform({ x: 0, y: 0, scale: 1 }), []);
 
-    if (!nodes.length) {
-        return (
-            <div className="bg-white/5 border border-orange-900/20 rounded-2xl backdrop-blur-sm p-6">
-                <div className="flex items-center gap-2 mb-4">
-                    <GitBranch className="w-5 h-5 text-orange-400" />
-                    <h2 className="text-lg font-semibold">Event Graph</h2>
-                </div>
-                <div className="text-center py-12 text-gray-500">
-                    <GitBranch className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">No event graph data available</p>
-                    <p className="text-xs text-gray-600 mt-1">Event graph requires Neo4j graph store</p>
-                </div>
-            </div>
-        );
-    }
-
     // Lane labels
     const activeLanes = useMemo(() => {
         const seen = new Map<number, string>();
@@ -142,6 +126,22 @@ export default function EventGraphView({ nodes, edges }: EventGraphViewProps) {
         return Array.from(seen.entries()).sort((a, b) => a[0] - b[0]);
     }, [nodes]);
 
+    if (!nodes.length) {
+        return (
+            <div className="bg-white/5 border border-orange-900/20 rounded-2xl backdrop-blur-sm p-6">
+                <div className="flex items-center gap-2 mb-4">
+                    <GitBranch className="w-5 h-5 text-orange-400" />
+                    <h2 className="text-lg font-semibold">Event Graph</h2>
+                </div>
+                <div className="text-center py-12 text-dim">
+                    <GitBranch className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No event graph data available</p>
+                    <p className="text-xs text-dim mt-1">Event graph requires Neo4j graph store</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="bg-white/5 border border-orange-900/20 rounded-2xl backdrop-blur-sm overflow-hidden">
             {/* Header */}
@@ -149,7 +149,7 @@ export default function EventGraphView({ nodes, edges }: EventGraphViewProps) {
                 <div className="flex items-center gap-2">
                     <GitBranch className="w-5 h-5 text-orange-400" />
                     <h2 className="text-lg font-semibold">Event Graph</h2>
-                    <span className="text-xs text-gray-500">{nodes.length} nodes, {edges.length} edges</span>
+                    <span className="text-xs text-dim">{nodes.length} nodes, {edges.length} edges</span>
                 </div>
                 <div className="flex items-center gap-1">
                     {selectedId && (
@@ -157,13 +157,13 @@ export default function EventGraphView({ nodes, edges }: EventGraphViewProps) {
                             Clear selection
                         </button>
                     )}
-                    <button onClick={() => setTransform(t => ({ ...t, scale: Math.min(t.scale * 1.2, 3) }))} className="p-1.5 bg-white/5 rounded-xl hover:bg-white/10 transition-all duration-200">
+                    <button type="button" aria-label="Zoom in" onClick={() => setTransform(t => ({ ...t, scale: Math.min(t.scale * 1.2, 3) }))} className="p-1.5 bg-white/5 rounded-xl hover:bg-white/10 transition-all duration-200">
                         <Plus className="w-3.5 h-3.5 text-gray-400" />
                     </button>
-                    <button onClick={() => setTransform(t => ({ ...t, scale: Math.max(t.scale * 0.8, 0.3) }))} className="p-1.5 bg-white/5 rounded-xl hover:bg-white/10 transition-all duration-200">
+                    <button type="button" aria-label="Zoom out" onClick={() => setTransform(t => ({ ...t, scale: Math.max(t.scale * 0.8, 0.3) }))} className="p-1.5 bg-white/5 rounded-xl hover:bg-white/10 transition-all duration-200">
                         <Minus className="w-3.5 h-3.5 text-gray-400" />
                     </button>
-                    <button onClick={resetView} className="p-1.5 bg-white/5 rounded-xl hover:bg-white/10 transition-all duration-200">
+                    <button type="button" aria-label="Reset view" onClick={resetView} className="p-1.5 bg-white/5 rounded-xl hover:bg-white/10 transition-all duration-200">
                         <Maximize2 className="w-3.5 h-3.5 text-gray-400" />
                     </button>
                 </div>
@@ -280,8 +280,8 @@ export default function EventGraphView({ nodes, edges }: EventGraphViewProps) {
                             }}
                         >
                             <div className="text-gray-200 font-medium break-words">{n.label}</div>
-                            <div className="text-gray-500">{n.type} &middot; {new Date(n.timestamp).toLocaleTimeString()}</div>
-                            {n.pid && <div className="text-gray-500 font-mono">PID {n.pid}</div>}
+                            <div className="text-dim">{n.type} &middot; {new Date(n.timestamp).toLocaleTimeString()}</div>
+                            {n.pid && <div className="text-dim font-mono">PID {n.pid}</div>}
                             {n.is_finding && <div className="text-orange-400 font-medium">Finding linked</div>}
                         </div>
                     );
@@ -295,13 +295,13 @@ export default function EventGraphView({ nodes, edges }: EventGraphViewProps) {
                     .map(([type, cfg]) => (
                         <div key={type} className="flex items-center gap-1.5">
                             <span className="w-2.5 h-2.5 rounded-full" style={{ background: cfg.color }} />
-                            <span className="text-[10px] text-gray-500">{cfg.label}</span>
+                            <span className="text-[10px] text-dim">{cfg.label}</span>
                         </div>
                     ))}
                 <span className="w-px h-3 bg-white/10" />
                 <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full border border-orange-500 bg-orange-500/30" />
-                    <span className="text-[10px] text-gray-500">Finding</span>
+                    <span className="text-[10px] text-dim">Finding</span>
                 </div>
             </div>
         </div>

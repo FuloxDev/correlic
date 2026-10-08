@@ -9,9 +9,11 @@
 .certs/
 certs/
 agent.yaml
-!install/**/agent.yaml.example
+agent-config.yaml
 
 # --- build output ---
+agent/internal/ebpf/bpf/test
+agent/internal/ebpf/bpf/test2
 backend/api
 backend/telemetry
 backend/admin

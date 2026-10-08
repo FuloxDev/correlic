@@ -18,12 +18,12 @@ import (
 type BlockRule struct {
 	ID          int       `json:"id"`
 	OrgID       string    `json:"org_id"`
-	SignalType  string    `json:"signal_type"`  // process_exec | net_connect | file_open
+	SignalType  string    `json:"signal_type"` // process_exec | net_connect | file_open
 	Pattern     string    `json:"pattern"`
 	Description string    `json:"description"`
 	Enabled     bool      `json:"enabled"`
 	KillTree    bool      `json:"kill_tree"`
-	Source      string    `json:"source"`     // user | system
+	Source      string    `json:"source"` // user | system
 	CreatedBy   string    `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

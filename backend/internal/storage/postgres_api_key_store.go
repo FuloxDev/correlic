@@ -22,21 +22,23 @@ func (s *PostgresAPIKeyStore) LookupOrgID(keyHash string) (string, error) {
 	return orgID, err
 }
 
-// LookupKeyInfo looks up full API key info (org, user, role) by hashed key
+// LookupKeyInfo looks up full API key info (org, user, role, key type) by hashed key
 func (s *PostgresAPIKeyStore) LookupKeyInfo(keyHash string) (*APIKeyInfo, error) {
 	var info APIKeyInfo
 	var userID sql.NullString
 	var role sql.NullString
+	var keyType sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT 
+		SELECT
 			ak.org_id::text,
 			ak.user_id::text,
-			ou.role
+			ou.role,
+			ak.key_type
 		FROM api_keys ak
 		LEFT JOIN org_users ou ON ak.user_id = ou.user_id AND ak.org_id = ou.org_id
 		WHERE ak.key_hash = $1 AND ak.revoked_at IS NULL
-	`, keyHash).Scan(&info.OrgID, &userID, &role)
+	`, keyHash).Scan(&info.OrgID, &userID, &role, &keyType)
 
 	if err != nil {
 		return nil, err
@@ -47,6 +49,10 @@ func (s *PostgresAPIKeyStore) LookupKeyInfo(keyHash string) (*APIKeyInfo, error)
 	}
 	if role.Valid {
 		info.Role = role.String
+	}
+	info.KeyType = APIKeyTypeService
+	if keyType.Valid && keyType.String != "" {
+		info.KeyType = keyType.String
 	}
 
 	return &info, nil

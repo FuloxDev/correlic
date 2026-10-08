@@ -254,9 +254,3 @@ func appendUnique(slice []string, val string) []string {
 	}
 	return append(slice, val)
 }
-
-// extractBinaryName gets the base name from an exe path.
-func extractBinaryName(exePath string) string {
-	base := filepath.Base(exePath)
-	return strings.TrimSuffix(strings.ToLower(base), ".exe")
-}

@@ -110,7 +110,7 @@ func (r *FileRunner) Start(ctx context.Context) {
 					HostID:        r.HostID,
 					Source:        "fsevents",
 					Actor: &event.Actor{
-						PID:       0, // Unknown from polling; ESF will populate this.
+						PID:       0,   // Unknown from polling; ESF will populate this.
 						SessionID: "0", // Unknown — polling can't attribute to a specific session.
 					},
 					Target: &event.Target{

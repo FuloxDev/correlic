@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // WebhookSender delivers notifications via HTTP POST with HMAC-SHA256 signing.
@@ -18,11 +17,10 @@ type WebhookSender struct {
 	client *http.Client
 }
 
-// NewWebhookSender creates a sender with a 10-second timeout.
+// NewWebhookSender creates a sender with a 10-second timeout, no redirect
+// following and an SSRF-guarded dialer (see newOutboundClient).
 func NewWebhookSender() *WebhookSender {
-	return &WebhookSender{
-		client: &http.Client{Timeout: 10 * time.Second},
-	}
+	return &WebhookSender{client: newOutboundClient()}
 }
 
 // Send delivers a payload to a webhook endpoint.
@@ -30,6 +28,11 @@ func (s *WebhookSender) Send(ctx context.Context, endpoint Endpoint, payload map
 	urlStr, _ := endpoint.Config["url"].(string)
 	if urlStr == "" {
 		return fmt.Errorf("webhook endpoint has no URL configured")
+	}
+	// Re-validate at send time: the DNS answer may have changed since the
+	// endpoint was configured.
+	if err := validateOutboundURL(ctx, urlStr); err != nil {
+		return fmt.Errorf("webhook url rejected: %w", err)
 	}
 
 	body, err := json.Marshal(payload)
@@ -53,13 +56,9 @@ func (s *WebhookSender) Send(ctx context.Context, endpoint Endpoint, payload map
 		req.Header.Set("X-Correlic-Signature", "sha256="+sig)
 	}
 
-	// Custom headers
+	// Custom headers (framing/routing headers are dropped).
 	if headers, ok := endpoint.Config["headers"].(map[string]any); ok {
-		for k, v := range headers {
-			if s, ok := v.(string); ok {
-				req.Header.Set(k, s)
-			}
-		}
+		applyCustomHeaders(req, headers)
 	}
 
 	resp, err := s.client.Do(req)
@@ -67,10 +66,10 @@ func (s *WebhookSender) Send(ctx context.Context, endpoint Endpoint, payload map
 		return fmt.Errorf("webhook request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+	return fmt.Errorf("webhook returned status %d: %w", resp.StatusCode, &HTTPStatusError{Status: resp.StatusCode})
 }

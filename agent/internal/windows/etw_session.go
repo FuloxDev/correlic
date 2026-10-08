@@ -53,10 +53,10 @@ var (
 // ─── ETW constants ────────────────────────────────────────────────────────────
 
 const (
-	eventTraceRealTimeMode       = 0x00000100
-	wNodeFlagTracedGUID          = 0x00020000
-	processTraceModeRealTime     = 0x00000100
-	processTraceModeEventRecord  = 0x10000000
+	eventTraceRealTimeMode         = 0x00000100
+	wNodeFlagTracedGUID            = 0x00020000
+	processTraceModeRealTime       = 0x00000100
+	processTraceModeEventRecord    = 0x10000000
 	eventControlCodeEnableProvider = 1
 
 	etwLevelInformational = 4
@@ -66,13 +66,13 @@ const (
 // ─── Windows API lazy-load ────────────────────────────────────────────────────
 
 var (
-	modAdvapi32       = windows.NewLazySystemDLL("advapi32.dll")
-	procStartTraceW   = modAdvapi32.NewProc("StartTraceW")
-	procControlTraceW = modAdvapi32.NewProc("ControlTraceW")
+	modAdvapi32        = windows.NewLazySystemDLL("advapi32.dll")
+	procStartTraceW    = modAdvapi32.NewProc("StartTraceW")
+	procControlTraceW  = modAdvapi32.NewProc("ControlTraceW")
 	procEnableTraceEx2 = modAdvapi32.NewProc("EnableTraceEx2")
-	procOpenTraceW    = modAdvapi32.NewProc("OpenTraceW")
-	procProcessTrace  = modAdvapi32.NewProc("ProcessTrace")
-	procCloseTrace    = modAdvapi32.NewProc("CloseTrace")
+	procOpenTraceW     = modAdvapi32.NewProc("OpenTraceW")
+	procProcessTrace   = modAdvapi32.NewProc("ProcessTrace")
+	procCloseTrace     = modAdvapi32.NewProc("CloseTrace")
 )
 
 // ─── Structures (64-bit layout) ───────────────────────────────────────────────
@@ -81,9 +81,9 @@ var (
 type wnodeHeader struct {
 	BufferSize    uint32
 	ProviderId    uint32
-	Version       uint32   // low dword of HistoricalContext union
-	Linkage       uint32   // high dword of HistoricalContext union
-	_             [8]byte  // KernelHandle/CountLost/TimeStamp union (pointer-sized)
+	Version       uint32  // low dword of HistoricalContext union
+	Linkage       uint32  // high dword of HistoricalContext union
+	_             [8]byte // KernelHandle/CountLost/TimeStamp union (pointer-sized)
 	Guid          windows.GUID
 	ClientContext uint32
 	Flags         uint32
@@ -122,12 +122,14 @@ type etwTracePropsBuffer struct {
 // middle fields (CurrentEvent + LogfileHeader) that we don't read.
 //
 // Offsets verified against Windows SDK evntrace.h (x64):
-//   0   LogFileName       *uint16  (LPWSTR)
-//   8   LoggerName        *uint16  (LPWSTR)
-//  16   CurrentTime       int64
-//  24   BuffersRead       uint32
-//  28   ProcessTraceMode  uint32   (union with LogFileMode)
-//  32   CurrentEvent      [88]byte (EVENT_TRACE)
+//
+//	 0   LogFileName       *uint16  (LPWSTR)
+//	 8   LoggerName        *uint16  (LPWSTR)
+//	16   CurrentTime       int64
+//	24   BuffersRead       uint32
+//	28   ProcessTraceMode  uint32   (union with LogFileMode)
+//	32   CurrentEvent      [88]byte (EVENT_TRACE)
+//
 // 120   LogfileHeader     [280]byte
 // 400   BufferCallback    uintptr
 // 408   BufferSize        uint32
@@ -168,29 +170,29 @@ type EventRecord struct {
 	TimeStamp     int64
 	ProviderID    windows.GUID // 16 bytes
 	// EVENT_DESCRIPTOR (starts at offset 40)
-	EventID       uint16
-	Version       uint8
-	Channel       uint8
-	Level         uint8
-	Opcode        uint8
-	Task          uint16
-	Keyword       uint64 // 8-aligned → offset 48
+	EventID uint16
+	Version uint8
+	Channel uint8
+	Level   uint8
+	Opcode  uint8
+	Task    uint16
+	Keyword uint64 // 8-aligned → offset 48
 	// Processor time union (offset 56)
-	KernelTime    uint32
-	UserTime      uint32
+	KernelTime uint32
+	UserTime   uint32
 	// ActivityId (offset 64)
-	ActivityID    windows.GUID // 16 bytes → ends at 80
+	ActivityID windows.GUID // 16 bytes → ends at 80
 	// ETW_BUFFER_CONTEXT (offset 80)
-	ProcNumber    uint8
-	Alignment     uint8
-	LoggerID      uint16
+	ProcNumber uint8
+	Alignment  uint8
+	LoggerID   uint16
 	// counts (offset 84)
-	ExtDataCount  uint16
-	UserDataLen   uint16
+	ExtDataCount uint16
+	UserDataLen  uint16
 	// pointers (offset 88, 8-aligned)
-	ExtData       uintptr
-	UserData      uintptr
-	UserCtx       uintptr
+	ExtData  uintptr
+	UserData uintptr
+	UserCtx  uintptr
 }
 
 // ─── Global callback dispatch ─────────────────────────────────────────────────
@@ -199,8 +201,8 @@ var (
 	globalCBPtr  uintptr
 	globalCBOnce sync.Once
 
-	cbMu    sync.Mutex
-	cbMap   = make(map[uintptr]func(*EventRecord))
+	cbMu     sync.Mutex
+	cbMap            = make(map[uintptr]func(*EventRecord))
 	cbNextID uintptr = 1
 )
 
@@ -252,11 +254,11 @@ const (
 
 // Session wraps an ETW real-time trace session with multiple kernel providers.
 type Session struct {
-	logger     *slog.Logger
-	handle     uint64 // SESSION_HANDLE (TRACEHANDLE, uint64 even on 32-bit)
+	logger      *slog.Logger
+	handle      uint64 // SESSION_HANDLE (TRACEHANDLE, uint64 even on 32-bit)
 	traceHandle uint64
-	dispatchID uintptr
-	dispatch   func(*EventRecord)
+	dispatchID  uintptr
+	dispatch    func(*EventRecord)
 }
 
 // NewSession creates an ETW session that calls dispatch for every received event.
@@ -360,9 +362,9 @@ func (s *Session) Start(ctx context.Context) error {
 		eventIDs []uint16
 	}
 	providers := []providerCfg{
-		{guidKernelProcess, 0x10, []uint16{1, 2}},             // ProcessStart, ProcessStop
-		{guidKernelFile, 0x10B0, []uint16{10, 11, 12, 30}},    // NameCreate, NameDelete, Create, CreateNewFile
-		{guidKernelNetwork, 0x30, []uint16{12, 15, 26, 29}},   // TcpConnect/Accept IPv4/IPv6
+		{guidKernelProcess, 0x10, []uint16{1, 2}},                 // ProcessStart, ProcessStop
+		{guidKernelFile, 0x10B0, []uint16{10, 11, 12, 30}},        // NameCreate, NameDelete, Create, CreateNewFile
+		{guidKernelNetwork, 0x30, []uint16{12, 15, 26, 29}},       // TcpConnect/Accept IPv4/IPv6
 		{guidDNSClient, 0x8000000000000000, []uint16{3008, 3009}}, // QueryRequest, QueryCompleted
 	}
 

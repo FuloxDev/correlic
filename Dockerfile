@@ -2,15 +2,16 @@
 # Bundles: PostgreSQL 16 + Neo4j 5 + Backend (API+Telemetry) + Agent (eBPF) + UI + Proxy
 #
 # Usage:
-#   docker run -d --name correlic \
+#   docker run -d --name correlic --restart unless-stopped \
 #     --privileged --pid=host \
 #     -v /sys/kernel:/sys/kernel:ro \
 #     -v correlic-data:/var/lib/correlic \
-#     -p 3001:3001 \
+#     -p 127.0.0.1:3001:3001 \
 #     ghcr.io/fuloxdev/correlic:latest
 #
-# On first start a local API key is generated and printed in the container log
-# (docker logs correlic). Pass -e API_KEY=... to use a key you created yourself.
+# On first start the container prints the dashboard API key and an admin
+# email/password (docker logs correlic); they are also stored in
+# /var/lib/correlic/dashboard-credentials inside the data volume.
 # Dashboard: http://localhost:3001
 
 ARG VERSION=dev
@@ -108,6 +109,12 @@ RUN curl -fsSL https://debian.neo4j.com/neotechnology.gpg.key | gpg --dearmor -o
     && apt-get update && apt-get install -y --no-install-recommends neo4j \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep Neo4j's data (including its auth store) on the persisted data volume.
+RUN mkdir -p /var/lib/correlic/neo4j && chown -R neo4j:neo4j /var/lib/correlic/neo4j \
+    && if grep -q '^server.directories.data=' /etc/neo4j/neo4j.conf; then \
+         sed -i 's|^server.directories.data=.*|server.directories.data=/var/lib/correlic/neo4j|' /etc/neo4j/neo4j.conf; \
+       else echo 'server.directories.data=/var/lib/correlic/neo4j' >> /etc/neo4j/neo4j.conf; fi
+
 # Create directory structure
 RUN mkdir -p \
     /opt/correlic/bin \
@@ -149,7 +156,6 @@ RUN chmod +x /opt/correlic/entrypoint.sh \
 
 # PostgreSQL data dir permissions
 RUN mkdir -p /var/lib/correlic/postgresql && chown -R postgres:postgres /var/lib/correlic/postgresql
-RUN mkdir -p /var/lib/correlic/neo4j && chown -R neo4j:neo4j /var/lib/correlic/neo4j
 
 VOLUME ["/var/lib/correlic"]
 EXPOSE 3001

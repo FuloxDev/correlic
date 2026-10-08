@@ -15,12 +15,19 @@ var ErrPatternExists = errors.New("pattern already exists")
 // ErrPatternNotFound is returned when a pattern is not found.
 var ErrPatternNotFound = errors.New("pattern not found")
 
+// ErrOrgRequired is returned by tenant-scoped writes called without an org.
+var ErrOrgRequired = errors.New("org id is required")
+
 // AIAgentPattern represents a known AI agent process pattern.
+// OrgID is empty for built-in (seeded) patterns, which every org sees and no org can
+// delete; patterns created through the API belong to the creating org.
 type AIAgentPattern struct {
 	ID          int       `json:"id"`
+	OrgID       string    `json:"org_id,omitempty"`
 	Pattern     string    `json:"pattern"`
 	AgentType   string    `json:"agent_type"`
 	Description string    `json:"description"`
+	BuiltIn     bool      `json:"built_in"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -40,8 +47,11 @@ type AIAgentSession struct {
 
 // Store provides storage operations for AI attribution.
 type Store interface {
-	// GetPatterns returns all known AI agent patterns.
+	// GetPatterns returns every AI agent pattern (built-ins plus all orgs'). Used for the
+	// process-wide matching caches; tenant-facing reads use GetPatternsForOrg.
 	GetPatterns() ([]AIAgentPattern, error)
+	// GetPatternsForOrg returns built-in patterns plus the ones orgID created.
+	GetPatternsForOrg(orgID string) ([]AIAgentPattern, error)
 	// GetPattern returns the agent type if comm matches a pattern, empty if no match.
 	GetPattern(comm string) (agentType string, err error)
 	// UpsertSession creates or updates an AI agent session.
@@ -54,10 +64,11 @@ type Store interface {
 	CountDistinctAgents(orgID string, since time.Time) (int, error)
 	// ListActiveSessions returns active AI sessions for an org.
 	ListActiveSessions(orgID string, since time.Time, limit int) ([]AIAgentSession, error)
-	// CreatePattern adds a new AI agent pattern.
-	CreatePattern(p AIAgentPattern) (AIAgentPattern, error)
-	// DeletePattern removes an AI agent pattern by ID.
-	DeletePattern(id int) error
+	// CreatePattern adds a new AI agent pattern owned by orgID (required).
+	CreatePattern(orgID string, p AIAgentPattern) (AIAgentPattern, error)
+	// DeletePattern removes an AI agent pattern by ID if orgID owns it. Built-in
+	// patterns and other orgs' patterns return ErrPatternNotFound.
+	DeletePattern(orgID string, id int) error
 }
 
 // PostgresStore implements Store using PostgreSQL.
@@ -93,12 +104,21 @@ func (s *PostgresStore) LoadPatterns() error {
 	return rows.Err()
 }
 
+const patternSelect = `
+	SELECT id, COALESCE(org_id::text, ''), pattern, agent_type, COALESCE(description, ''), created_at
+	FROM ai_agent_patterns
+`
+
 func (s *PostgresStore) GetPatterns() ([]AIAgentPattern, error) {
-	rows, err := s.db.Query(`
-		SELECT id, pattern, agent_type, COALESCE(description, ''), created_at
-		FROM ai_agent_patterns
-		ORDER BY agent_type, pattern
-	`)
+	return s.queryPatterns(patternSelect + ` ORDER BY agent_type, pattern`)
+}
+
+func (s *PostgresStore) GetPatternsForOrg(orgID string) ([]AIAgentPattern, error) {
+	return s.queryPatterns(patternSelect+` WHERE org_id IS NULL OR org_id::text = $1 ORDER BY agent_type, pattern`, orgID)
+}
+
+func (s *PostgresStore) queryPatterns(query string, args ...any) ([]AIAgentPattern, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -107,9 +127,10 @@ func (s *PostgresStore) GetPatterns() ([]AIAgentPattern, error) {
 	var patterns []AIAgentPattern
 	for rows.Next() {
 		var p AIAgentPattern
-		if err := rows.Scan(&p.ID, &p.Pattern, &p.AgentType, &p.Description, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.OrgID, &p.Pattern, &p.AgentType, &p.Description, &p.CreatedAt); err != nil {
 			return nil, err
 		}
+		p.BuiltIn = p.OrgID == ""
 		patterns = append(patterns, p)
 	}
 	return patterns, rows.Err()
@@ -208,14 +229,18 @@ func (s *PostgresStore) ListActiveSessions(orgID string, since time.Time, limit 
 	return sessions, rows.Err()
 }
 
-func (s *PostgresStore) CreatePattern(p AIAgentPattern) (AIAgentPattern, error) {
+func (s *PostgresStore) CreatePattern(orgID string, p AIAgentPattern) (AIAgentPattern, error) {
+	orgID = strings.TrimSpace(orgID)
+	if orgID == "" {
+		return AIAgentPattern{}, ErrOrgRequired
+	}
 	var created AIAgentPattern
 	err := s.db.QueryRow(`
-		INSERT INTO ai_agent_patterns (pattern, agent_type, description)
-		VALUES ($1, $2, $3)
-		RETURNING id, pattern, agent_type, COALESCE(description, ''), created_at
-	`, strings.TrimSpace(p.Pattern), strings.TrimSpace(p.AgentType), p.Description).Scan(
-		&created.ID, &created.Pattern, &created.AgentType, &created.Description, &created.CreatedAt,
+		INSERT INTO ai_agent_patterns (org_id, pattern, agent_type, description)
+		VALUES ($1::uuid, $2, $3, $4)
+		RETURNING id, COALESCE(org_id::text, ''), pattern, agent_type, COALESCE(description, ''), created_at
+	`, orgID, strings.TrimSpace(p.Pattern), strings.TrimSpace(p.AgentType), p.Description).Scan(
+		&created.ID, &created.OrgID, &created.Pattern, &created.AgentType, &created.Description, &created.CreatedAt,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
@@ -228,8 +253,13 @@ func (s *PostgresStore) CreatePattern(p AIAgentPattern) (AIAgentPattern, error) 
 	return created, nil
 }
 
-func (s *PostgresStore) DeletePattern(id int) error {
-	result, err := s.db.Exec(`DELETE FROM ai_agent_patterns WHERE id = $1`, id)
+// DeletePattern removes orgID's own pattern. Built-ins (org_id NULL) are read-only.
+func (s *PostgresStore) DeletePattern(orgID string, id int) error {
+	orgID = strings.TrimSpace(orgID)
+	if orgID == "" {
+		return ErrOrgRequired
+	}
+	result, err := s.db.Exec(`DELETE FROM ai_agent_patterns WHERE id = $1 AND org_id::text = $2`, id, orgID)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -500,7 +501,7 @@ type SafeDomainRow struct {
 
 // ListSafeDomains handles GET /api/v1/baselines/safe-domains
 func (h *BaselinesHandler) ListSafeDomains(w http.ResponseWriter, r *http.Request) {
-	_, ok := middleware.OrgFromContext(r.Context())
+	orgID, ok := middleware.OrgFromContext(r.Context())
 	if !ok {
 		Unauthorized(w, "missing org context")
 		return
@@ -511,7 +512,10 @@ func (h *BaselinesHandler) ListSafeDomains(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := h.db.Query("SELECT id, domain, description, created_at FROM safe_domains_list ORDER BY domain ASC")
+	// Built-ins (org_id NULL) are visible to every org; other orgs' rows are not.
+	rows, err := h.db.Query(
+		"SELECT id, domain, description, created_at FROM safe_domains_list WHERE org_id IS NULL OR org_id::text = $1 ORDER BY domain ASC",
+		orgID)
 	if err != nil {
 		log.Printf("safe domains list error: %v", err)
 		Internal(w)
@@ -546,8 +550,8 @@ func (h *BaselinesHandler) ListSafeDomains(w http.ResponseWriter, r *http.Reques
 
 // AddSafeDomain handles POST /api/v1/baselines/safe-domains
 func (h *BaselinesHandler) AddSafeDomain(w http.ResponseWriter, r *http.Request) {
-	_, ok := middleware.OrgFromContext(r.Context())
-	if !ok {
+	orgID, ok := middleware.OrgFromContext(r.Context())
+	if !ok || orgID == "" {
 		Unauthorized(w, "missing org context")
 		return
 	}
@@ -565,19 +569,20 @@ func (h *BaselinesHandler) AddSafeDomain(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	d, err := h.safeDomainStore.Add(r.Context(), body.Domain, body.Description)
+	// Rows are tenant-owned: built-ins (org_id NULL) come only from migrations.
+	d, err := h.safeDomainStore.Add(r.Context(), orgID, body.Domain, body.Description)
 	if err != nil {
 		log.Printf("safe domain add error: %v", err)
 		Internal(w)
 		return
 	}
 
-	// Retroactive suppression: auto-resolve any pending findings that reference
-	// this domain. This closes the gap where a finding was created before the
-	// domain was added to the safe list.
+	// Retroactive suppression: auto-resolve any of this org's pending findings that
+	// reference the domain. This closes the gap where a finding was created before
+	// the domain was added to the safe list.
 	var retroCount int64
 	if h.findingStore != nil {
-		count, orgIDs, err := h.findingStore.AutoResolveBySafeDomain(d.Domain)
+		count, orgIDs, err := h.findingStore.AutoResolveBySafeDomainForOrg(orgID, d.Domain)
 		if err != nil {
 			log.Printf("WARN: retroactive safe domain suppression failed for %s: %v", d.Domain, err)
 		} else if count > 0 {
@@ -613,8 +618,8 @@ func (h *BaselinesHandler) AddSafeDomain(w http.ResponseWriter, r *http.Request)
 
 // DeleteSafeDomain handles DELETE /api/v1/baselines/safe-domains/{id}
 func (h *BaselinesHandler) DeleteSafeDomain(w http.ResponseWriter, r *http.Request) {
-	_, ok := middleware.OrgFromContext(r.Context())
-	if !ok {
+	orgID, ok := middleware.OrgFromContext(r.Context())
+	if !ok || orgID == "" {
 		Unauthorized(w, "missing org context")
 		return
 	}
@@ -626,8 +631,9 @@ func (h *BaselinesHandler) DeleteSafeDomain(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.safeDomainStore.Delete(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+	// Only the org's own rows are deletable; built-ins and other orgs' rows read as not found.
+	if err := h.safeDomainStore.Delete(r.Context(), orgID, id); err != nil {
+		if errors.Is(err, storage.ErrSafeDomainNotFound) || strings.Contains(err.Error(), "not found") {
 			NotFound(w, "safe domain not found")
 		} else {
 			log.Printf("safe domain delete error: %v", err)

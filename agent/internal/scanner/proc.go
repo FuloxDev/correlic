@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,22 @@ func NewProcScanner(logger *slog.Logger, dockerResolver *ebpf.DockerResolver) *P
 	}
 }
 
+type procInfo struct {
+	pid       int
+	ppid      int
+	comm      string
+	argv      []string
+	exePath   string
+	startTime time.Time
+	isAI      bool   // direct pattern/container match (AI root candidate)
+	aiType    string // matched pattern for roots
+	container bool   // matched via container name/image rather than argv
+}
+
+// Scan walks /proc once, registers already-running AI process trees with the
+// lineage tracker and emits synthetic process_exec events for them. Emitted
+// payloads carry ai_session_id, is_ai and ai_type so the canonical events
+// built from them are attributed like live exec events.
 func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -39,16 +56,6 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 
 	// Track visited ancestors to avoid duplicate emissions per scan
 	visitedAncestors := make(map[int]bool)
-
-	type procInfo struct {
-		pid       int
-		ppid      int
-		comm      string
-		cmdline   string
-		exePath   string
-		startTime time.Time
-		isAI      bool
-	}
 
 	procs := make(map[int]procInfo)
 	children := make(map[int][]int)
@@ -72,10 +79,7 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 		}
 		comm = strings.TrimSpace(comm)
 
-		cmdline, err := readFile(filepath.Join("/proc", pidStr, "cmdline"))
-		if err == nil {
-			cmdline = strings.ReplaceAll(cmdline, "\x00", " ")
-		}
+		argv := readArgv(pidStr)
 
 		ppid, startTime, err := getProcessStat(pidStr)
 		if err != nil {
@@ -84,36 +88,51 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 
 		exePath, _ := os.Readlink(filepath.Join("/proc", pidStr, "exe"))
 
-		// Check if it's a direct AI pattern match (comm, cmdline, or container name/image)
-		isAI := s.tracker.CheckPattern(comm) || s.tracker.CheckPattern(cmdline)
-
-		// If comm/cmdline didn't match, check Docker container name/image
-		if !isAI {
-			containerID := ebpf.DetectContainerID(uint32(pid))
-			if containerID != "" && s.dockerResolver != nil {
-				isAI = s.dockerResolver.CheckContainerPatterns(containerID, s.tracker)
-			}
-		}
-
+		// Direct AI match: comm, exe or an argv token (whole-token semantics).
 		p := procInfo{
 			pid:       pid,
 			ppid:      ppid,
 			comm:      comm,
-			cmdline:   cmdline,
+			argv:      argv,
 			exePath:   exePath,
 			startTime: startTime,
-			isAI:      isAI,
+		}
+		if aiType, ok := s.tracker.MatchProcess(uint32(pid), comm, exePath, argv); ok {
+			p.isAI, p.aiType = true, aiType
+		} else if s.dockerResolver != nil {
+			// If comm/cmdline didn't match, check Docker container name/image
+			if containerID := ebpf.DetectContainerID(uint32(pid)); containerID != "" {
+				if aiType, ok := s.dockerResolver.MatchContainerPatterns(containerID, s.tracker); ok {
+					p.isAI, p.aiType, p.container = true, aiType, true
+				}
+			}
 		}
 		procs[pid] = p
 		children[ppid] = append(children[ppid], pid)
 
-		if isAI {
+		if p.isAI {
 			aiRoots = append(aiRoots, pid)
 		}
 	}
 
-	// Pass 2: BFS from AI roots to mark all descendants
-	queue := append([]int{}, aiRoots...)
+	// Pass 2: BFS from the topmost AI roots to mark all descendants. A matching
+	// process below another matching process is a descendant, not a root: the
+	// walk starts only from roots without an AI ancestor, so parents are
+	// registered before children and a nested match inherits the session
+	// instead of opening its own.
+	rootSet := make(map[int]bool, len(aiRoots))
+	for _, pid := range aiRoots {
+		rootSet[pid] = true
+	}
+	top := make(map[int]bool, len(aiRoots))
+	var queue []int
+	for _, pid := range aiRoots {
+		if !hasAIAncestor(pid, procs, rootSet) {
+			top[pid] = true
+			queue = append(queue, pid)
+		}
+	}
+	sort.Ints(queue)
 	seen := make(map[int]bool)
 
 	count := 0
@@ -132,30 +151,32 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 		}
 
 		// Register with tracker
-		if s.tracker.RegisterProcess(uint32(p.pid), uint32(p.ppid), p.comm) {
+		if s.register(p) {
 			count++
-			if p.isAI {
-				s.logger.Info("found existing AI root", "pid", p.pid, "comm", p.comm)
+			if top[curPID] {
+				s.logger.Info("found existing AI root", "pid", p.pid, "comm", p.comm, "ai_type", s.tracker.GetAIType(uint32(p.pid)))
 			} else {
-				s.logger.Debug("found existing AI descendant", "pid", p.pid, "comm", p.comm)
+				s.logger.Debug("found existing AI descendant", "pid", p.pid, "comm", p.comm, "direct_match", p.isAI)
 			}
 
-			// Emit synthetic process_exec event
+			// Emit synthetic process_exec event with the AI attribution the
+			// tracker assigned (session + type).
 			payload := map[string]any{
 				"pid":        p.pid,
 				"ppid":       p.ppid,
 				"comm":       p.comm,
 				"exe":        p.exePath,
-				"cmdline":    strings.Split(p.cmdline, " "),
+				"cmdline":    argvOrComm(p.argv, p.comm),
 				"start_time": p.startTime.Format(time.RFC3339Nano),
 				"trace_role": "existing_process",
 				"role":       ebpf.CheckRole(p.comm),
 				"source":     "proc_scanner",
 			}
+			s.tracker.Annotate(payload, uint32(p.pid))
 			emit("process_exec", payload)
 
 			// Harvest ancestors for roots to bridge gaps
-			if p.isAI {
+			if top[curPID] {
 				s.harvestAncestors(p.ppid, emit, visitedAncestors)
 			}
 		}
@@ -168,6 +189,40 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 
 	s.logger.Info("proc scan complete", "ai_processes_and_descendants_found", count)
 	return nil
+}
+
+// hasAIAncestor reports whether any ancestor of pid (walking ppid links
+// through procs, bounded) is itself a direct AI match.
+func hasAIAncestor(pid int, procs map[int]procInfo, roots map[int]bool) bool {
+	cur, ok := procs[pid]
+	if !ok {
+		return false
+	}
+	for depth := 0; depth < 64 && cur.ppid > 1; depth++ {
+		if roots[cur.ppid] {
+			return true
+		}
+		parent, ok := procs[cur.ppid]
+		if !ok {
+			return false
+		}
+		cur = parent
+	}
+	return false
+}
+
+// register adds p to the lineage tracker. Container-matched roots have no
+// matching token, so they are marked explicitly with the container's ai_type.
+func (s *ProcScanner) register(p procInfo) bool {
+	pid, ppid := uint32(p.pid), uint32(p.ppid)
+	if s.tracker.RegisterProcessWithCommand(pid, ppid, p.comm, p.exePath, p.argv) {
+		return true
+	}
+	if p.isAI && p.container {
+		s.tracker.MarkAIWithType(pid, ppid, p.aiType)
+		return true
+	}
+	return false
 }
 
 // harvestAncestors walks up the process tree and emits events for ancestors
@@ -205,34 +260,21 @@ func (s *ProcScanner) harvestAncestors(pid int, emit func(eventType string, payl
 		}
 		comm = strings.TrimSpace(comm)
 
-		cmdline, err := readFile(filepath.Join("/proc", ppidStr, "cmdline"))
-		if err == nil {
-			cmdline = strings.ReplaceAll(cmdline, "\x00", " ")
-		}
-
 		exePath, _ := os.Readlink(filepath.Join("/proc", ppidStr, "exe"))
-		_, startTime, _ := getProcessStat(ppidStr)
+		gppid, startTime, _ := getProcessStat(ppidStr)
 
-		// Emit parent event
+		// Emit parent event (ancestors are context only: they are not part of
+		// the AI session, so no AI attribution is added).
 		payload := map[string]any{
-			"pid": ppid,
-			// Grandparent is needed for next iteration's link, but we'll get it in next loop
-			// For this specific event, we need the grandparent ID.
-			// Let's get grandparent now.
-			"ppid":       0, // Will be filled in next block or if we continue
+			"pid":        ppid,
+			"ppid":       gppid,
 			"comm":       comm,
 			"exe":        exePath,
-			"cmdline":    strings.Split(cmdline, " "),
+			"cmdline":    argvOrComm(readArgv(ppidStr), comm),
 			"start_time": startTime.Format(time.RFC3339Nano),
 			"trace_role": "inferred_ancestor",
 			"role":       ebpf.CheckRole(comm),
 			"source":     "proc_scanner",
-		}
-
-		// Get grandparent for ppid field
-		gppid, _, err := getProcessStat(ppidStr)
-		if err == nil {
-			payload["ppid"] = gppid
 		}
 
 		// Filter out system/desktop infrastructure processes to keep the tree focused on the AI application.
@@ -251,6 +293,26 @@ func (s *ProcScanner) harvestAncestors(pid int, emit func(eventType string, payl
 		currentPID = ppid
 		depth++
 	}
+}
+
+// readArgv returns /proc/<pid>/cmdline split on NUL (nil when unreadable or empty).
+func readArgv(pidStr string) []string {
+	data, err := os.ReadFile(filepath.Join("/proc", pidStr, "cmdline"))
+	if err != nil {
+		return nil
+	}
+	raw := strings.TrimRight(string(data), "\x00")
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, "\x00")
+}
+
+func argvOrComm(argv []string, comm string) []string {
+	if len(argv) > 0 {
+		return argv
+	}
+	return []string{comm}
 }
 
 func readFile(path string) (string, error) {
@@ -279,7 +341,7 @@ func getProcessStat(pidStr string) (int, time.Time, error) {
 	}
 
 	parts := strings.Fields(content[lastParen+2:])
-	if len(parts) < 20 { // PPID is 0th (actually 3rd field overall), starttime is 19th (22nd overall) but fields are shifting
+	if len(parts) < 20 {
 		// The fields after comm are:
 		// 0: state
 		// 1: ppid
@@ -293,15 +355,8 @@ func getProcessStat(pidStr string) (int, time.Time, error) {
 		return 0, time.Time{}, fmt.Errorf("invalid ppid")
 	}
 
-	// Calculate start time
-	// This requires system boot time and clock ticks.
-	// Simplified: just return current time for "discovery" time or try to calculate.
-	// For accurate "start_time", we need /proc/stat btime.
-	// Let's rely on backend or just use time.Now() - uptime + starttime_ticks/hz.
-	// For MVP, using time.Now() is acceptable as "detection time", OR we try to read uptime.
-	// Better: use the file modification time of /proc/<pid> as a proxy?
-	// /proc/<pid> dir mod time is usually start time.
-
+	// /proc/<pid> dir mod time is a good proxy for the start time without
+	// needing btime + clock tick arithmetic.
 	fi, err := os.Stat(filepath.Join("/proc", pidStr))
 	if err == nil {
 		return ppid, fi.ModTime(), nil

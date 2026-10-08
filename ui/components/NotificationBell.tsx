@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { usePolling } from '@/lib/use-polling'
 import { Bell, Check, CheckCheck, X, ShieldAlert, AlertTriangle, Info } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import {
@@ -121,7 +122,7 @@ export default function NotificationBell() {
         } catch { /* silent — don't block UI for desktop notification failure */ }
     }, [])
 
-    // Poll unread count every 10s
+    // Poll the unread count every 30s while the tab is visible.
     const fetchCount = useCallback(async () => {
         try {
             const data = await getNotificationCount()
@@ -139,29 +140,27 @@ export default function NotificationBell() {
         } catch { /* silent */ }
     }, [showDesktopNotification])
 
-    useEffect(() => {
-        fetchCount()
-        const interval = setInterval(fetchCount, 10000)
-        return () => clearInterval(interval)
-    }, [fetchCount])
+    usePolling(fetchCount, 30_000)
+
+    const loadNotifications = useCallback(() => {
+        setLoading(true)
+        getNotifications(false, 50)
+            .then(data => setNotifications(data.notifications ?? []))
+            .catch(() => {})
+            .finally(() => setLoading(false))
+    }, [])
 
     // Request notification permission proactively on first user interaction with bell
     const handleBellClick = useCallback(() => {
         if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
             Notification.requestPermission()
         }
-        setIsOpen(prev => !prev)
-    }, [])
-
-    // Load notifications when panel opens
-    useEffect(() => {
-        if (!isOpen) return
-        setLoading(true)
-        getNotifications(false, 50)
-            .then(data => setNotifications(data.notifications))
-            .catch(() => {})
-            .finally(() => setLoading(false))
-    }, [isOpen])
+        setIsOpen(prev => {
+            const next = !prev
+            if (next) loadNotifications()
+            return next
+        })
+    }, [loadNotifications])
 
     // Close on outside click
     useEffect(() => {
@@ -224,10 +223,14 @@ export default function NotificationBell() {
     return (
         <div className="relative" ref={panelRef}>
             <button
+                type="button"
                 onClick={handleBellClick}
                 className="relative p-2 hover:bg-white/10 rounded-xl transition-all duration-200"
+                aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+                aria-haspopup="dialog"
+                aria-expanded={isOpen}
             >
-                <Bell className="w-5 h-5" />
+                <Bell className="w-5 h-5" aria-hidden="true" />
                 {unreadCount > 0 && (
                     <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center px-1">
                         {unreadCount > 99 ? '99+' : unreadCount}
@@ -236,7 +239,7 @@ export default function NotificationBell() {
             </button>
 
             {isOpen && (
-                <div className="absolute right-0 top-full mt-2 w-96 bg-[#1a1a2e] border border-orange-900/30 rounded-xl shadow-2xl shadow-black/50 z-50 overflow-hidden">
+                <div role="dialog" aria-label="Notifications" className="absolute right-0 top-full mt-2 w-[min(24rem,calc(100vw-1.5rem))] bg-[#1a1a2e] border border-orange-900/30 rounded-xl shadow-2xl shadow-black/50 z-50 overflow-hidden">
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
                         <h3 className="text-sm font-semibold">Notifications</h3>
@@ -254,10 +257,10 @@ export default function NotificationBell() {
                     {/* List */}
                     <div className="max-h-[400px] overflow-y-auto">
                         {loading && (
-                            <div className="p-8 text-center text-gray-500 text-sm">Loading...</div>
+                            <div className="p-8 text-center text-dim text-sm">Loading...</div>
                         )}
                         {!loading && grouped.length === 0 && (
-                            <div className="p-8 text-center text-gray-500 text-sm">No notifications</div>
+                            <div className="p-8 text-center text-dim text-sm">No notifications</div>
                         )}
                         {!loading && grouped.map(g => {
                             const n = g.latest
@@ -284,9 +287,9 @@ export default function NotificationBell() {
                                             )}
                                         </div>
                                         {n.summary && (
-                                            <p className="text-xs text-gray-500 mt-0.5 truncate">{n.summary}</p>
+                                            <p className="text-xs text-dim mt-0.5 truncate">{n.summary}</p>
                                         )}
-                                        <span className="text-[10px] text-gray-600 mt-1 block">
+                                        <span className="text-[10px] text-dim mt-1 block">
                                             {timeAgo(n.created_at)}
                                             {n.host_id && ` · ${n.host_id}`}
                                         </span>
@@ -303,16 +306,18 @@ export default function NotificationBell() {
                                                 }}
                                                 className="p-1 hover:bg-white/10 rounded-lg font-medium border border-transparent transition-all duration-200"
                                                 title="Mark read"
+                                                aria-label="Mark read"
                                             >
-                                                <Check className="w-3.5 h-3.5 text-gray-500" />
+                                                <Check className="w-3.5 h-3.5 text-dim" />
                                             </button>
                                         )}
                                         <button
                                             onClick={(e) => { e.stopPropagation(); handleDismiss(g.allIds, g.unreadCount) }}
                                             className="p-1 hover:bg-white/10 rounded-lg font-medium border border-transparent transition-all duration-200"
                                             title="Dismiss"
+                                            aria-label="Dismiss notification"
                                         >
-                                            <X className="w-3.5 h-3.5 text-gray-500" />
+                                            <X className="w-3.5 h-3.5 text-dim" />
                                         </button>
                                     </div>
                                 </div>

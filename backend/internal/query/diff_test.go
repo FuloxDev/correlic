@@ -159,3 +159,13 @@ func TestDiffOpenPorts_AddedRemoved(t *testing.T) {
 		t.Errorf("Removed[0].Port = %d want 9090", res.Removed[0].Port)
 	}
 }
+
+func (m *memStore) AppendIdempotentForOrg(ctx context.Context, _ string, evt event.Event) error {
+	return m.AppendIdempotent(ctx, evt)
+}
+func (m *memStore) GetByIDForOrg(ctx context.Context, _ string, id string) (*event.Event, error) {
+	return m.GetByID(ctx, id)
+}
+func (m *memStore) GetRangeForOrg(ctx context.Context, _ string, hostID string, from, to time.Time) ([]event.Event, error) {
+	return m.GetRange(ctx, hostID, from, to)
+}

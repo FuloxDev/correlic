@@ -119,6 +119,7 @@ func (r *DNSRunner) Start(ctx context.Context) {
 						"suspicious": suspicious,
 					},
 				}
+				lineage.GetLineageTracker().Annotate(canonEvt.Context, ev.PID)
 				canonEvt.ID = event.GenerateID(r.hostID, ts.UnixNano(), "esf", "net_dns", int(ev.PID), domain)
 				r.disp.Enqueue(canonEvt)
 			}

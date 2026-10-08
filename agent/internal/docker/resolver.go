@@ -139,37 +139,41 @@ func (dr *Resolver) fetchContainer(containerID string) *ContainerInfo {
 
 // CheckContainerPatterns checks if a container's name or image matches any AI pattern.
 func (dr *Resolver) CheckContainerPatterns(containerID string, tracker *lineage.LineageTracker) bool {
+	_, ok := dr.MatchContainerPatterns(containerID, tracker)
+	return ok
+}
+
+// MatchContainerPatterns checks the container's name and image against the AI
+// patterns and returns the matched pattern (used as ai_type).
+func (dr *Resolver) MatchContainerPatterns(containerID string, tracker *lineage.LineageTracker) (string, bool) {
 	if dr == nil || containerID == "" || tracker == nil {
-		return false
+		return "", false
 	}
 
 	info := dr.Resolve(containerID)
 	if info == nil {
-		return false
+		return "", false
 	}
 
-	if tracker.CheckPattern(info.Name) {
+	if p, ok := tracker.MatchString(info.Name); ok {
 		dr.logger.Info("AI process detected via container name",
-			"container_id", containerID, "name", info.Name)
-		return true
+			"container_id", containerID, "name", info.Name, "ai_type", p)
+		return p, true
 	}
 
-	if tracker.CheckPattern(info.Image) {
+	// Image references are "registry/repo/name:tag"; match the path
+	// components with and without the tag.
+	image := info.Image
+	if idx := strings.LastIndex(image, ":"); idx > 0 && !strings.Contains(image[idx:], "/") {
+		image = image[:idx]
+	}
+	if p, ok := tracker.MatchString(image); ok {
 		dr.logger.Info("AI process detected via container image",
-			"container_id", containerID, "image", info.Image)
-		return true
+			"container_id", containerID, "image", info.Image, "ai_type", p)
+		return p, true
 	}
 
-	if idx := strings.LastIndex(info.Image, ":"); idx > 0 {
-		imageNoTag := info.Image[:idx]
-		if tracker.CheckPattern(imageNoTag) {
-			dr.logger.Info("AI process detected via container image (no tag)",
-				"container_id", containerID, "image", imageNoTag)
-			return true
-		}
-	}
-
-	return false
+	return "", false
 }
 
 // InvalidateContainer removes a container from the cache.

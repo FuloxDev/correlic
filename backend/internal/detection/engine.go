@@ -85,7 +85,8 @@ func (e *Engine) Evaluate(ctx *EvalContext) []Finding {
 		}
 		for i := range results {
 			// Stamp each finding with standard fields
-			results[i].ID = generateFindingID(ctx.Ctx, meta.ID, ctx.Event, &results[i])
+			results[i].OrgID = ctx.OrgID
+			results[i].ID = generateFindingID(ctx.Ctx, ctx.OrgID, meta.ID, ctx.Event, &results[i])
 			results[i].DetectionID = meta.ID
 			results[i].HostID = ctx.HostID
 			if results[i].Severity == "" {
@@ -156,25 +157,26 @@ func safeEvaluate(d Detection, ctx *EvalContext) (findings []Finding) {
 	return d.Evaluate(ctx)
 }
 
-// generateFindingID creates a deterministic ID for deduplication.
-// Uses detection rule + host + pattern key, so the same AI behavior on the same
-// host produces one finding (the INSERT's ON CONFLICT DO NOTHING takes care of the rest).
+// generateFindingID creates a deterministic, org-qualified ID for deduplication:
+// "org:detection:host:pattern". The same AI behavior on the same host in the same
+// org produces one finding (the INSERT's ON CONFLICT DO NOTHING takes care of the
+// rest), while identical behavior in another tenant gets its own row.
 // If the finding's context contains a "pattern" key (set by windowed rules like
 // ai.excessive_writes), that takes priority over the per-event pattern key.
-func generateFindingID(ctx context.Context, detectionID string, evt *event.Event, f *Finding) string {
+func generateFindingID(ctx context.Context, orgID, detectionID string, evt *event.Event, f *Finding) string {
 	// Prefer the finding-level pattern (set by the detection rule) for windowed
 	// detections that aggregate multiple events into one finding.
 	if f != nil && f.Context != nil {
 		if p, ok := f.Context["pattern"].(string); ok && p != "" {
-			return fmt.Sprintf("%s:%s:%s", detectionID, evt.HostID, p)
+			return fmt.Sprintf("%s:%s:%s:%s", orgID, detectionID, evt.HostID, p)
 		}
 	}
 	patternKey := extractPatternKey(ctx, evt)
 	if patternKey != "" {
-		return fmt.Sprintf("%s:%s:%s", detectionID, evt.HostID, patternKey)
+		return fmt.Sprintf("%s:%s:%s:%s", orgID, detectionID, evt.HostID, patternKey)
 	}
 	// Fallback: use event ID (no dedup possible)
-	return fmt.Sprintf("%s:%s", detectionID, evt.ID)
+	return fmt.Sprintf("%s:%s:%s", orgID, detectionID, evt.ID)
 }
 
 // extractPatternKey returns a stable key representing the behavior pattern of the event.

@@ -56,7 +56,7 @@ func (d *AIDataExfiltration) Evaluate(ctx *detection.EvalContext) []detection.Fi
 	since := evt.Timestamp.Add(-exfiltrationLookbackWindow)
 	pids := []int{evt.Process.PID}
 	correlationScope := "pid_tree"
-	recentFileEvents := []event.Event{}
+	var recentFileEvents []event.Event
 	// SessionID "0" is the kernel/unset sentinel — treat as missing and fall back to PID-tree.
 	if evt.Process.SessionID != "" && evt.Process.SessionID != "0" {
 		correlationScope = "session"

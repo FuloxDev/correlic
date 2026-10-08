@@ -4,77 +4,30 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"log/slog"
-	"os"
 	"time"
 
-	"github.com/correlic/correlic-agent/internal/collect"
-	"github.com/correlic/correlic-agent/internal/config"
-	"github.com/correlic/correlic-agent/internal/dispatch"
-	"github.com/correlic/correlic-agent/internal/enforcer"
 	windows "github.com/correlic/correlic-agent/internal/windows"
 )
 
 // startPlatformCollectors wires Windows ETW-based runners and starts them.
-func startPlatformCollectors(
-	ctx context.Context,
-	cfg config.Config,
-	logger *slog.Logger,
-	hostID string,
-	emit collect.EventSink,
-	disp dispatch.Dispatcher,
-) {
+func startPlatformCollectors(ctx context.Context, d platformDeps) {
+	cfg, logger := d.cfg, d.logger
 	if !cfg.ETWEnabled {
 		logger.Warn("ETW disabled in config — no Windows collectors started")
 		return
 	}
 
 	// Create runners (no session arg — they create their own collectors).
-	execRunner := windows.NewExecRunner(emit, logger, hostID, disp)
-	fileRunner := windows.NewFileRunner(emit, logger, hostID, disp)
-	netRunner := windows.NewNetworkRunner(emit, logger, hostID, disp)
-	dnsRunner := windows.NewDNSRunner(emit, logger, hostID, disp)
+	execRunner := windows.NewExecRunner(d.emit, logger, d.hostID, d.disp)
+	fileRunner := windows.NewFileRunner(d.emit, logger, d.hostID, d.disp)
+	netRunner := windows.NewNetworkRunner(d.emit, logger, d.hostID, d.disp)
+	dnsRunner := windows.NewDNSRunner(d.emit, logger, d.hostID, d.disp)
 
-	// Soft-block enforcer
-	if cfg.BlockEnabled && !cfg.BlockEmergencyBypass {
-		enf := enforcer.New(logger, true)
-		// Protect the agent's own PID
-		enf.AddProtectedPID(uint32(os.Getpid()))
-
-		// Build TLS config with client certs for mTLS
-		var syncTLS *tls.Config
-		if cfg.TLSClientCertFile != "" && cfg.TLSClientKeyFile != "" {
-			cert, err := tls.LoadX509KeyPair(cfg.TLSClientCertFile, cfg.TLSClientKeyFile)
-			if err != nil {
-				logger.Error("failed to load client cert for block rule sync", "error", err)
-			} else {
-				syncTLS = &tls.Config{
-					Certificates: []tls.Certificate{cert},
-					MinVersion:   tls.VersionTLS12,
-				}
-				if cfg.TLSCAFile != "" {
-					pem, err := os.ReadFile(cfg.TLSCAFile)
-					if err == nil {
-						pool := x509.NewCertPool()
-						pool.AppendCertsFromPEM(pem)
-						syncTLS.RootCAs = pool
-					}
-				}
-			}
-		}
-
-		// Start rule sync from backend
-		ruleSync := enforcer.NewRuleSync(enf, cfg.TelemetryURL, cfg.APIKey, cfg.BlockSyncInterval, logger, syncTLS)
-		go ruleSync.Start(ctx)
-
-		execRunner.SetEnforcer(enf)
-		netRunner.SetEnforcer(enf)
-		fileRunner.SetEnforcer(enf)
-		logger.Info("soft-block enforcer enabled", "sync_interval", cfg.BlockSyncInterval)
-	} else if cfg.BlockEmergencyBypass {
-		logger.Warn("soft-block EMERGENCY BYPASS active — all blocking disabled")
+	// Soft-block enforcer (built and synced by runAgent when block_enabled).
+	if d.enf != nil {
+		execRunner.SetEnforcer(d.enf)
+		netRunner.SetEnforcer(d.enf)
+		fileRunner.SetEnforcer(d.enf)
 	}
 
 	// Create a single ETW session that dispatches events to all collectors.
@@ -91,7 +44,8 @@ func startPlatformCollectors(
 		}
 	})
 
-	// Enable Windows Security Audit policies (requires admin)
+	// Enable Windows Security Audit policies (requires admin). The prior
+	// state is recorded in the state dir and restored on "service uninstall".
 	if err := windows.EnableRequiredAuditPolicies(logger); err != nil {
 		logger.Warn("some audit policies could not be enabled", "error", err)
 	}
@@ -112,39 +66,47 @@ func startPlatformCollectors(
 	go auditSub.Start()
 
 	// Audit runner for registry, privilege, and scheduled task events
-	auditRunner := windows.NewAuditRunner(auditSub, logger, hostID, disp)
-	go auditRunner.Start(ctx)
+	auditRunner := windows.NewAuditRunner(auditSub, logger, d.hostID, d.disp)
+	d.rt.spawn("etw_audit", func() { auditRunner.Start(ctx) })
 
-	// Scan running processes and register AI agents with lineage tracker.
-	scanner := windows.NewProcScanner(logger, disp, hostID)
-	_ = scanner.Scan(func(eventType string, payload any) bool {
-		if emit != nil {
-			return emit(eventType, payload)
+	// Scan running processes and register AI agents with lineage tracker once
+	// the AI pattern list is known.
+	procScanner := windows.NewProcScanner(logger, d.disp, d.hostID)
+	d.rt.spawn("proc_scanner", func() {
+		d.waitPatterns(ctx)
+		if ctx.Err() != nil {
+			return
 		}
-		return true
+		_ = procScanner.Scan(func(eventType string, payload any) bool {
+			if d.emit != nil {
+				return d.emit(eventType, payload)
+			}
+			return true
+		})
 	})
 
 	// Start all runners.
-	go execRunner.Start(ctx)
+	d.rt.spawn("etw_exec", func() { execRunner.Start(ctx) })
 	if cfg.FileMonitorEnabled {
-		go fileRunner.Start(ctx)
+		d.rt.spawn("etw_file", func() { fileRunner.Start(ctx) })
 		logger.Info("ETW file monitor started")
 	}
 	if cfg.NetworkMonitorEnabled {
-		go netRunner.Start(ctx)
+		d.rt.spawn("etw_network", func() { netRunner.Start(ctx) })
 		logger.Info("ETW network monitor started")
 	}
 	if cfg.DNSMonitorEnabled {
-		go dnsRunner.Start(ctx)
+		d.rt.spawn("etw_dns", func() { dnsRunner.Start(ctx) })
 		logger.Info("ETW DNS monitor started")
 	}
 
 	// Start ETW session (blocks until context cancelled).
-	go session.Start(ctx)
+	d.rt.spawn("etw_session", func() { session.Start(ctx) })
 
 	logger.Info("Windows ETW collectors started",
 		"file_monitor", cfg.FileMonitorEnabled,
 		"network_monitor", cfg.NetworkMonitorEnabled,
 		"dns_monitor", cfg.DNSMonitorEnabled,
+		"block_rules", d.enf != nil,
 	)
 }

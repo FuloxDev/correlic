@@ -172,12 +172,7 @@ func (r *FileRunner) Start(ctx context.Context) {
 						"file_exists": true,
 					},
 				}
-				if aiSess := tracker.GetSessionID(ev.PID); aiSess != "" {
-					canonEvt.Context["ai_session_id"] = aiSess
-				}
-				if aiType := tracker.GetAIType(ev.PID); aiType != "" {
-					canonEvt.Context["ai_type"] = aiType
-				}
+				tracker.Annotate(canonEvt.Context, ev.PID)
 				canonEvt.ID = event.GenerateID(
 					r.hostID, ts.UnixNano(),
 					canonEvt.Source, canonEvt.Type,

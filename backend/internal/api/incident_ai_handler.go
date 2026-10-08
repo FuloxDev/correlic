@@ -32,14 +32,14 @@ type IncidentAIHandler struct {
 	settingsStore  *provider.SettingsStore
 	assembler      *incident.ContextAssembler
 	findingStore   *storage.FindingStore
-	summaryStore   *ai.IncidentSummaryStore   // nil-safe
-	dossierStore   *dossier.Store             // nil-safe
-	dossierBuilder *dossier.DossierBuilder    // nil-safe
-	convStore      *conversation.Store        // nil-safe
-	toolRegistry   map[string]*tools.Tool     // nil-safe — tool-calling disabled when nil
-	queryService   *query.Service             // nil-safe — required for tool execution
-	graphStore     *neo4jstore.GraphStore     // nil-safe — graph tools unavailable when nil
-	intStore       *intelligence.Store        // nil-safe — intelligence tools unavailable when nil
+	summaryStore   *ai.IncidentSummaryStore // nil-safe
+	dossierStore   *dossier.Store           // nil-safe
+	dossierBuilder *dossier.DossierBuilder  // nil-safe
+	convStore      *conversation.Store      // nil-safe
+	toolRegistry   map[string]*tools.Tool   // nil-safe — tool-calling disabled when nil
+	queryService   *query.Service           // nil-safe — required for tool execution
+	graphStore     *neo4jstore.GraphStore   // nil-safe — graph tools unavailable when nil
+	intStore       *intelligence.Store      // nil-safe — intelligence tools unavailable when nil
 }
 
 // maxToolIterations is the maximum number of tool-calling loop iterations per chat request.

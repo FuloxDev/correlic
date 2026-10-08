@@ -103,6 +103,7 @@ func (s *ProcScanner) scanInternal(emit func(eventType string, payload any) bool
 				"role":       classify.CheckRole(p.comm),
 				"source":     "proc_scanner",
 			}
+			s.tracker.Annotate(payload, uint32(p.pid))
 			emit("process_exec", payload)
 		}
 
@@ -204,4 +205,3 @@ func (s *ProcScanner) listProcesses() (map[int]darwinProcInfo, error) {
 
 	return procs, nil
 }
-

@@ -18,15 +18,25 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-const exitEventSize = 4 + 4 + 4 + 4 + 8 + 16 // pid, ppid, exit_code, pad(4), timestamp_ns @16, comm[16] @24 = 40
+// exitEventSize mirrors struct exit_event in bpf/exit.bpf.c:
+// pid(4) @0, tid(4) @4, ppid(4) @8, exit_code(4) @12, timestamp_ns(8) @16, comm[16] @24 = 40 bytes.
+// Four __u32 fields precede the __u64, so no padding is inserted.
+const exitEventSize = 4 + 4 + 4 + 4 + 8 + 16
 
-// ExitEvent is a process exit event from the eBPF ring buffer.
+// ExitEvent is a task exit event from the eBPF ring buffer.
 type ExitEvent struct {
-	PID       int
+	PID       int // thread group id
+	TID       int // thread id; equals PID for the thread group leader
 	PPID      int
 	ExitCode  int
 	Timestamp time.Time
 	Comm      string
+}
+
+// IsProcessExit reports whether this event marks the end of the whole
+// process (thread group leader) rather than a single thread.
+func (e ExitEvent) IsProcessExit() bool {
+	return e.TID == e.PID
 }
 
 // ExitCollector manages the exit eBPF program and ring buffer.
@@ -109,8 +119,12 @@ func (c *ExitCollector) Start(ctx context.Context) {
 			continue
 		}
 
-		// Never drop exit events: block until enqueued.
-		c.events <- ev
+		// Never drop exit events: block until enqueued (or shutdown).
+		select {
+		case c.events <- ev:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -137,8 +151,9 @@ func parseExitEvent(data []byte) (ExitEvent, error) {
 	_ = binary.LittleEndian.Uint64(data[16:24]) // Read but don't use boot time
 	return ExitEvent{
 		PID:       int(binary.LittleEndian.Uint32(data[0:4])),
-		PPID:      int(binary.LittleEndian.Uint32(data[4:8])),
-		ExitCode:  int(binary.LittleEndian.Uint32(data[8:12])),
+		TID:       int(binary.LittleEndian.Uint32(data[4:8])),
+		PPID:      int(binary.LittleEndian.Uint32(data[8:12])),
+		ExitCode:  int(binary.LittleEndian.Uint32(data[12:16])),
 		Timestamp: time.Now(), // Use wall-clock time, not boot time
 		Comm:      nullTerminatedString(data[24:40]),
 	}, nil

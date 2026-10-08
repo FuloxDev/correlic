@@ -83,6 +83,9 @@ func (r *BindRunner) Start(ctx context.Context) {
 				"risk":       category,
 				"is_ai":      isAI,
 			}
+			if isAI {
+				tracker.Annotate(payload, bindEvt.PID)
+			}
 
 			ok := r.emit("net_bind", payload)
 			if !ok {
@@ -114,6 +117,7 @@ func (r *BindRunner) Start(ctx context.Context) {
 						"is_exposed": bindEvt.IsWildcard(),
 					},
 				}
+				tracker.Annotate(canonicalEvent.Context, bindEvt.PID)
 				canonicalEvent.ID = event.GenerateID(
 					r.HostID,
 					ts.UnixNano(),

@@ -59,7 +59,7 @@ func TimelineHandler(builder *correlation.Builder) http.Handler {
 				http.Error(w, "anchor event not found", http.StatusNotFound)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "build timeline", err)
 			return
 		}
 

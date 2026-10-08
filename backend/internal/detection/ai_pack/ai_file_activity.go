@@ -253,11 +253,7 @@ func isCodeTamperTarget(path string) bool {
 
 	// Credential-overlap guard: .pem/.key/.crt are credential_access territory
 	credExts := map[string]bool{".pem": true, ".key": true, ".crt": true}
-	if credExts[ext] {
-		return true
-	}
-
-	return false
+	return credExts[ext]
 }
 
 // isPersistencePath checks if a file would be caught by ai.persistence.

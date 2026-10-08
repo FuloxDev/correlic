@@ -18,11 +18,11 @@ import (
 
 // wevtapi.dll function pointers
 var (
-	wevtapi                  = syscall.NewLazyDLL("wevtapi.dll")
-	procEvtSubscribe         = wevtapi.NewProc("EvtSubscribe")
-	procEvtRender            = wevtapi.NewProc("EvtRender")
-	procEvtClose             = wevtapi.NewProc("EvtClose")
-	procEvtCreateRenderCtx   = wevtapi.NewProc("EvtCreateRenderContext")
+	wevtapi                = syscall.NewLazyDLL("wevtapi.dll")
+	procEvtSubscribe       = wevtapi.NewProc("EvtSubscribe")
+	procEvtRender          = wevtapi.NewProc("EvtRender")
+	procEvtClose           = wevtapi.NewProc("EvtClose")
+	procEvtCreateRenderCtx = wevtapi.NewProc("EvtCreateRenderContext")
 )
 
 // EvtSubscribe flags
@@ -33,18 +33,18 @@ const (
 
 // AuditEvent represents a parsed Windows Security event.
 type AuditEvent struct {
-	EventID    uint16
-	PID        uint32
-	PPID       uint32
-	Cmdline    string
-	User       string
-	ExePath    string
-	Timestamp  time.Time
+	EventID   uint16
+	PID       uint32
+	PPID      uint32
+	Cmdline   string
+	User      string
+	ExePath   string
+	Timestamp time.Time
 	// Registry (4657)
-	RegKey     string
-	RegValue   string
-	RegOldVal  string
-	RegNewVal  string
+	RegKey    string
+	RegValue  string
+	RegOldVal string
+	RegNewVal string
 	// Access (4656)
 	AccessMask uint32
 	ObjectPath string
@@ -52,8 +52,8 @@ type AuditEvent struct {
 	// Privilege (4672)
 	Privileges []string
 	// Scheduled task (4698)
-	TaskName   string
-	TaskXML    string
+	TaskName string
+	TaskXML  string
 }
 
 // AuditSubscriber subscribes to the Windows Security event log and emits
@@ -120,7 +120,7 @@ func (s *AuditSubscriber) Start() error {
 	// EvtSubscribe(Session, SignalEvent, ChannelPath, Query, Bookmark, Context, Callback, Flags)
 	r, _, callErr := procEvtSubscribe.Call(
 		0,                                     // Session (NULL = local)
-		uintptr(signalEvent), // SignalEvent
+		uintptr(signalEvent),                  // SignalEvent
 		uintptr(unsafe.Pointer(channelUTF16)), // ChannelPath
 		uintptr(unsafe.Pointer(queryUTF16)),   // Query
 		0,                                     // Bookmark (NULL)
@@ -250,11 +250,11 @@ func (s *AuditSubscriber) renderEvent(handle uintptr) *AuditEvent {
 	var bufferSize uint32
 	var propertyCount uint32
 	procEvtRender.Call(
-		0,                // Context
-		handle,           // Event
+		0,                 // Context
+		handle,            // Event
 		evtRenderEventXml, // Flags
-		0,                // BufferSize
-		0,                // Buffer
+		0,                 // BufferSize
+		0,                 // Buffer
 		uintptr(unsafe.Pointer(&bufferSize)),
 		uintptr(unsafe.Pointer(&propertyCount)),
 	)

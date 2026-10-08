@@ -1,32 +1,47 @@
+// Package logging configures the process-wide slog logger.
 package logging
 
 import (
+	"io"
 	"log/slog"
 	"os"
+	"strings"
 )
 
-/*
-Init initializes the logging system with the specified log level.
-*/
-func Init(level string) {
-	var logLevel slog.Level
+// Level is the dynamic level shared by every handler the agent installs.
+// Changing it (SetLevel) takes effect on all platforms, including the
+// Windows service file handler.
+var Level = new(slog.LevelVar)
 
-	switch level {
+// ParseLevel converts a config log_level string to a slog.Level. Unknown
+// values map to Info.
+func ParseLevel(level string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
-		logLevel = slog.LevelDebug
-	case "warn":
-		logLevel = slog.LevelWarn
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
 	case "error":
-		logLevel = slog.LevelError
+		return slog.LevelError
 	default:
-		logLevel = slog.LevelInfo
+		return slog.LevelInfo
 	}
+}
 
-	// create a new JSON handler for logging
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel,
-	})
+// SetLevel updates the shared level from a config log_level string.
+func SetLevel(level string) {
+	Level.Set(ParseLevel(level))
+}
 
-	// set the default logger to use the new handler
-	slog.SetDefault(slog.New(handler))
+// Init installs a text handler writing to w (stderr when nil) at the given
+// level, sets it as the default logger and returns it.
+func Init(level string, w io.Writer) *slog.Logger {
+	if w == nil {
+		w = os.Stderr
+	}
+	SetLevel(level)
+	handler := slog.NewTextHandler(w, &slog.HandlerOptions{Level: Level})
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+	return logger
 }

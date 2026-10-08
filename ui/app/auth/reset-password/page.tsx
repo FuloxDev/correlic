@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Card, Button, Input } from '@/component/ui'
 import { useToast } from '@/component/ToastProvider'
@@ -12,30 +12,24 @@ function ResetPasswordPageInner() {
   const searchParams = useSearchParams()
   const { showToast } = useToast()
   
-  const [email, setEmail] = useState('')
+  const emailParam = searchParams.get('email') ?? ''
+  const [email, setEmail] = useState(emailParam)
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    const emailParam = searchParams.get('email')
-    if (emailParam) {
-      setEmail(emailParam)
-    }
-  }, [searchParams])
-
   const handleReset = async () => {
     if (!email.trim()) {
       setError('Email is required')
       return
     }
-    if (!oldPassword.trim()) {
+    if (!oldPassword) {
       setError('Current password is required')
       return
     }
-    if (!newPassword.trim()) {
+    if (!newPassword) {
       setError('New password is required')
       return
     }
@@ -52,30 +46,27 @@ function ResetPasswordPageInner() {
     setError('')
 
     try {
-      const res = await fetchJSON<{ success: boolean; message: string }>('/auth/password/reset', {
+      // Passwords are sent exactly as typed.
+      await fetchJSON<{ success: boolean; message: string }>('/auth/password/reset', {
         method: 'POST',
         body: JSON.stringify({
           email: email.trim(),
-          old_password: oldPassword.trim() || undefined,
-          new_password: newPassword.trim(),
+          old_password: oldPassword,
+          new_password: newPassword,
         }),
       })
 
       showToast('Password updated successfully', 'success')
       router.push('/login')
-    } catch (err: any) {
-      setError(err.message || 'Failed to reset password')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to reset password')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div 
-      className="min-h-screen flex items-center justify-center p-4"
-      style={{ background: 'var(--background)' }}
-    >
-      <Card className="w-full max-w-md p-8">
+      <Card className="w-full p-8">
         <div className="text-center mb-8">
           <div 
             className="w-16 h-16 rounded-xl mx-auto mb-4 flex items-center justify-center"
@@ -109,7 +100,7 @@ function ResetPasswordPageInner() {
             placeholder="you@company.com"
             value={email}
             onChange={e => setEmail(e.target.value)}
-            disabled={!!searchParams.get('email')}
+            disabled={!!emailParam}
           />
           <Input
             label="Current Password"
@@ -150,7 +141,6 @@ function ResetPasswordPageInner() {
           </Button>
         </div>
       </Card>
-    </div>
   )
 }
 

@@ -164,14 +164,16 @@ func (r *ExecRunner) handleExec(ev ProcEvent, tracker *lineage.LineageTracker) {
 	// Dispatch canonical event via shared exec handler.
 	if r.Dispatcher != nil {
 		raw := exechandler.RawExecEvent{
-			PID:       pid,
-			PPID:      ppid,
-			UID:       0,
-			Comm:      comm,
-			Exe:       exe,
-			Args:      cmdline,
-			SessionID: sessionID,
-			Role:      role,
+			PID:         pid,
+			PPID:        ppid,
+			UID:         0,
+			Comm:        comm,
+			Exe:         exe,
+			Args:        cmdline,
+			SessionID:   sessionID,
+			Role:        role,
+			AISessionID: tracker.GetSessionID(pid),
+			AIType:      tracker.GetAIType(pid),
 		}
 		r.handler.Handle(raw)
 	}
@@ -207,6 +209,8 @@ func (r *ExecRunner) handleExit(ev ProcEvent, tracker *lineage.LineageTracker) {
 				SessionID: sessionIDStr,
 			},
 		}
+		exitEvt.Context = map[string]any{}
+		tracker.Annotate(exitEvt.Context, pid)
 		exitEvt.ID = event.GenerateID(
 			r.HostID,
 			ts.UnixNano(),

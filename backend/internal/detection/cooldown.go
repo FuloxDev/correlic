@@ -10,9 +10,10 @@ import (
 // time window. This prevents alert fatigue when an AI agent repeatedly triggers the same
 // detection on the same target (e.g. accessing the same SSH key 3 times = 1 alert).
 //
-// Key: finding ID — encodes "detection_id:host_id:pattern_key" so each unique target
-// (file, IP, domain) gets its own cooldown window. Different targets under the same rule
-// can all fire independently within the same window.
+// Key: "org_id|finding ID" — the finding ID already encodes
+// "org:detection_id:host_id:pattern_key", so each unique target (file, IP, domain)
+// in each tenant gets its own cooldown window. Different targets under the same rule
+// can all fire independently within the same window, and two orgs never share a window.
 // Chain findings (DetectionID prefixed with "chain.") always bypass cooldown.
 type FindingCooldown struct {
 	mu        sync.Mutex
@@ -51,9 +52,11 @@ func (c *FindingCooldown) ShouldEmit(f Finding) bool {
 		return true
 	}
 
-	// Key on finding ID: encodes detection_id:host_id:pattern_key.
-	// Different targets (files, IPs) under the same rule each have their own window.
-	key := f.ID
+	// Key on org + finding ID (org:detection_id:host_id:pattern_key).
+	// Different targets (files, IPs) under the same rule each have their own window,
+	// and the explicit org prefix keeps tenants apart even for findings whose ID was
+	// built elsewhere without an org component.
+	key := f.OrgID + "|" + f.ID
 	cooldown := c.defaults
 	if override, ok := c.overrides[f.DetectionID]; ok {
 		cooldown = override

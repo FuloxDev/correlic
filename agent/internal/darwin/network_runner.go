@@ -120,6 +120,7 @@ func (r *NetworkRunner) Start(ctx context.Context) {
 						"category": category,
 					},
 				}
+				lineage.GetLineageTracker().Annotate(canonEvt.Context, ev.PID)
 				canonEvt.ID = event.GenerateID(
 					r.HostID,
 					ts.UnixNano(),

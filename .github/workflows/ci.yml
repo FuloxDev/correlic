@@ -23,6 +23,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - run: go build ./...
       - run: go vet ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
       - run: go test ./...
 
   agent:
@@ -65,9 +66,8 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
-      # Lint has pre-existing findings (mostly explicit any); report them without failing the build for now.
+      - run: npx tsc --noEmit
       - run: npm run lint
-        continue-on-error: true
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"

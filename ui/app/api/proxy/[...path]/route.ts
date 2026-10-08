@@ -1,168 +1,101 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { PROXY_BASE, authorizationHeader, getSessionToken } from '@/lib/server/session'
 
-// Route everything through ui-proxy (it handles routing to correct backend)
-const PROXY_BASE = process.env.PROXY_BASE_URL || 'http://localhost:8788'
-const SESSION_COOKIE = 'correlic_session'
-const EMAIL_COOKIE = 'correlic_user_email'
+type RouteContext = { params: Promise<{ path: string[] }> }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
-) {
+export async function GET(request: NextRequest, ctx: RouteContext) {
+  return proxyRequest(request, ctx)
+}
+
+export async function POST(request: NextRequest, ctx: RouteContext) {
+  return proxyRequest(request, ctx)
+}
+
+export async function PUT(request: NextRequest, ctx: RouteContext) {
+  return proxyRequest(request, ctx)
+}
+
+export async function PATCH(request: NextRequest, ctx: RouteContext) {
+  return proxyRequest(request, ctx)
+}
+
+export async function DELETE(request: NextRequest, ctx: RouteContext) {
+  return proxyRequest(request, ctx)
+}
+
+/** Upstream response headers the browser is allowed to see. */
+const PASSTHROUGH_RESPONSE_HEADERS = [
+  'content-type',
+  'content-disposition',
+  'location',
+  'x-request-id',
+  'retry-after',
+]
+
+async function proxyRequest(request: NextRequest, { params }: RouteContext) {
+  const token = getSessionToken(request)
+  if (!token) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
+
+  // Take the path from the raw URL to preserve URL-encoding (e.g. %2F inside
+  // finding IDs). Next.js decodes `params` and `nextUrl.pathname`, which would
+  // break IDs that contain slashes.
   const { path } = await params
-  return proxyRequest(request, path)
-}
-
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await params
-  return proxyRequest(request, path)
-}
-
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await params
-  return proxyRequest(request, path)
-}
-
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await params
-  return proxyRequest(request, path)
-}
-
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await params
-  return proxyRequest(request, path)
-}
-
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-User-Email',
-    },
-  })
-}
-
-async function proxyRequest(request: NextRequest, _pathSegments: string[]) {
-  // Extract path from raw URL to preserve URL-encoding (e.g. %2F in finding IDs).
-  // Next.js decodes pathSegments and nextUrl.pathname, which breaks IDs containing slashes.
+  const prefix = '/api/proxy'
   const rawUrl = request.url
-  const proxyPrefix = '/api/proxy'
-  const prefixIdx = rawUrl.indexOf(proxyPrefix)
-  const afterProxy = prefixIdx >= 0 ? rawUrl.slice(prefixIdx + proxyPrefix.length) : '/' + _pathSegments.join('/')
-  // Split off query string — we'll reconstruct it below
-  const [rawPath] = afterProxy.split('?', 2)
-  const searchParams = request.nextUrl.searchParams.toString()
-  // Route everything through ui-proxy (it knows how to route to API vs Telemetry backends)
-  const url = `${PROXY_BASE}${rawPath}${searchParams ? '?' + searchParams : ''}`
+  const prefixIdx = rawUrl.indexOf(prefix + '/')
+  const afterPrefix = prefixIdx >= 0 ? rawUrl.slice(prefixIdx + prefix.length) : '/' + path.join('/')
+  const rawPath = afterPrefix.split('?', 1)[0]
+  const url = `${PROXY_BASE}${rawPath}${request.nextUrl.search}`
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  }
+  const headers = new Headers()
+  headers.set('Authorization', authorizationHeader(token))
+  const accept = request.headers.get('accept')
+  if (accept) headers.set('Accept', accept)
 
-  // Forward Authorization header from request, or use fallback from env
-  // Next.js headers are case-insensitive, but we check both lowercase and the actual header name
-  const authHeader =
-    request.headers.get('authorization') ||
-    request.headers.get('Authorization') ||
-    request.headers.get('x-api-key') ||
-    request.headers.get('X-API-Key')
-  
-  if (authHeader && authHeader.trim() !== '') {
-    headers['Authorization'] = authHeader.trim()
-  } else {
-    const cookieToken = request.cookies.get(SESSION_COOKIE)?.value
-    if (cookieToken && cookieToken.trim() !== '') {
-      headers['Authorization'] = cookieToken.trim()
-    } else {
-      // Try multiple env var names for API key
-      const apiKey = process.env.API_KEY || process.env.NEXT_PUBLIC_API_KEY
-      if (apiKey && apiKey.trim() !== '' && apiKey !== '<RAW_API_KEY>') {
-        headers['Authorization'] = apiKey
-      } else {
-        console.warn('[Next.js Proxy] No API key found in request or environment')
-      }
-    }
-  }
-
-  // Forward X-User-Email header
-  const userEmail = request.headers.get('x-user-email') || request.cookies.get(EMAIL_COOKIE)?.value
-  if (userEmail) {
-    headers['X-User-Email'] = userEmail
-  }
-
-  const options: RequestInit = {
+  const init: RequestInit = {
     method: request.method,
     headers,
+    redirect: 'manual',
+    signal: request.signal,
   }
 
-  // Forward request body for methods that typically have one
-  if (request.method === 'POST' || request.method === 'PUT' || request.method === 'PATCH') {
-    try {
-      const body = await request.text()
-      if (body) {
-        options.body = body
-      }
-    } catch (e) {
-      // No body, continue
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    const body = await request.arrayBuffer()
+    if (body.byteLength > 0) {
+      init.body = body
+      headers.set('Content-Type', request.headers.get('content-type') || 'application/json')
     }
   }
 
+  let upstream: Response
   try {
-    const response = await fetch(url, options)
-    const contentType = response.headers.get('content-type') || 'application/json'
-
-    console.log(`[Next.js Proxy] ${request.method} ${rawPath} -> ${response.status}`)
-
-    // Stream SSE responses unbuffered
-    if (contentType.includes('text/event-stream') && response.body) {
-      return new NextResponse(response.body as ReadableStream, {
-        status: response.status,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'X-Accel-Buffering': 'no',
-        },
-      })
-    }
-
-    // Handle 204 No Content
-    if (response.status === 204) {
-      return new NextResponse(null, { status: 204 })
-    }
-
-    const text = await response.text()
-    if (response.status >= 400) {
-      console.log(`[Next.js Proxy] Error response body: ${text.substring(0, 200)}`)
-    }
-
-    return new NextResponse(text, {
-      status: response.status,
-      headers: {
-        'Content-Type': contentType,
-      },
-    })
+    upstream = await fetch(url, init)
   } catch (error) {
-    console.error('[Next.js Proxy] Proxy error:', error)
-    return NextResponse.json(
-      { error: 'Upstream request failed' },
-      { status: 502 }
-    )
+    if (request.signal.aborted) {
+      return new NextResponse(null, { status: 499 })
+    }
+    console.error('[proxy] upstream request failed:', error instanceof Error ? error.message : 'unknown error')
+    return NextResponse.json({ error: 'Upstream request failed' }, { status: 502 })
   }
-}
 
-// Removed selectBase - ui-proxy handles routing to correct backend
+  const responseHeaders = new Headers()
+  for (const name of PASSTHROUGH_RESPONSE_HEADERS) {
+    const value = upstream.headers.get(name)
+    if (value) responseHeaders.set(name, value)
+  }
+  const contentType = upstream.headers.get('content-type') || ''
+  if (contentType.includes('text/event-stream')) {
+    responseHeaders.set('Cache-Control', 'no-cache')
+    responseHeaders.set('X-Accel-Buffering', 'no')
+  }
+
+  const status = upstream.status
+  if (status === 204 || status === 304 || !upstream.body) {
+    return new NextResponse(null, { status, headers: responseHeaders })
+  }
+
+  // Stream the upstream body through unbuffered (SSE and large responses alike).
+  return new NextResponse(upstream.body, { status, headers: responseHeaders })
+}

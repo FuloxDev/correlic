@@ -3,9 +3,29 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Key, Cpu, Bell, Copy, Eye, EyeOff, Check, RefreshCw, Plus, Trash2, Send,
-    Webhook, Bot, Sparkles, AlertTriangle, Loader2, Shield, ChevronDown, ChevronUp,
-    Zap, Lock, Radio, MessageSquare, Settings2, ExternalLink, Hash
+    Key,
+    Cpu,
+    Bell,
+    Copy,
+    Eye,
+    EyeOff,
+    Check,
+    RefreshCw,
+    Plus,
+    Trash2,
+    Send,
+    Webhook,
+    Bot,
+    Sparkles,
+    AlertTriangle,
+    Loader2,
+    ChevronUp,
+    Zap,
+    Lock,
+    Radio,
+    MessageSquare,
+    ExternalLink,
+    Hash
 } from 'lucide-react';
 import { PageHeading } from '@/components/ui/page-heading';
 import {
@@ -189,16 +209,17 @@ export default function Settings() {
             const cleaned = text.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
             const parsed = JSON.parse(cleaned);
             if (Array.isArray(parsed)) {
-                setSuggestions(parsed.map((item: any) => ({
-                    pattern: String(item.pattern || ''),
-                    agent_type: String(item.agent_type || ''),
-                    description: String(item.description || ''),
-                })).filter((s: any) => s.pattern && s.agent_type));
+                setSuggestions((parsed as Array<Record<string, unknown>>).map((item) => ({
+                    pattern: String(item?.pattern || ''),
+                    agent_type: String(item?.agent_type || ''),
+                    description: String(item?.description || ''),
+                })).filter((s) => s.pattern && s.agent_type));
             } else {
                 setSuggestError('Unexpected response format from AI.');
             }
-        } catch (err: any) {
-            if (err?.message?.includes('400') || err?.message?.includes('no LLM provider')) {
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : '';
+            if (message.includes('400') || message.includes('no LLM provider')) {
                 setSuggestError('Configure an LLM provider first.');
             } else {
                 setSuggestError('Failed to get suggestions. Try again.');
@@ -210,7 +231,7 @@ export default function Settings() {
 
     async function handleCreateEndpoint() {
         if (!endpointForm.name || !endpointForm.url) return;
-        const config: Record<string, any> = endpointForm.channel_type === 'slack'
+        const config: Record<string, unknown> = endpointForm.channel_type === 'slack'
             ? { webhook_url: endpointForm.url }
             : { url: endpointForm.url, ...(endpointForm.secret ? { secret: endpointForm.secret } : {}) };
         try {
@@ -240,8 +261,9 @@ export default function Settings() {
             setSuggestions([]);
             setSuggestQuery('');
             fetchData();
-        } catch (err: any) {
-            if (err?.message?.includes('409') || err?.message?.includes('already exists')) {
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : '';
+            if (message.includes('409') || message.includes('already exists')) {
                 setPatternError('This pattern already exists.');
             } else {
                 setPatternError('Failed to create pattern.');
@@ -333,7 +355,7 @@ export default function Settings() {
                                         <p className="text-xs text-gray-400">Manage authentication keys for agents and integrations</p>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <div className="flex items-center gap-2 text-xs text-dim">
                                     <Lock className="w-3.5 h-3.5" />
                                     <span>{apiKeys.length} key{apiKeys.length !== 1 ? 's' : ''}</span>
                                 </div>
@@ -342,7 +364,7 @@ export default function Settings() {
                             {/* Create new key */}
                             <div className="flex items-center gap-2 mb-5">
                                 <div className="relative flex-1">
-                                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                                     <input
                                         type="text"
                                         value={newKeyName}
@@ -411,7 +433,7 @@ export default function Settings() {
                                                 <Key className="w-10 h-10 text-amber-400/30 mx-auto mb-3" />
                                             </motion.div>
                                             <p className="text-sm text-gray-400">No API keys yet</p>
-                                            <p className="text-xs text-gray-500 mt-1">Generate a key to connect agents to your workspace</p>
+                                            <p className="text-xs text-dim mt-1">Generate a key to connect agents to your workspace</p>
                                         </motion.div>
                                     ) : apiKeys.map((key) => (
                                         <motion.div
@@ -430,9 +452,9 @@ export default function Settings() {
                                                 <div>
                                                     <p className="text-sm font-medium text-white">{key.name}</p>
                                                     <div className="flex items-center gap-2 mt-0.5">
-                                                        <span className="text-xs text-gray-500 font-mono">{key.key_prefix}...</span>
+                                                        <span className="text-xs text-dim font-mono">{key.key_prefix}...</span>
                                                         {key.last_used && (
-                                                            <span className="text-xs text-gray-500">· Last used {new Date(key.last_used).toLocaleDateString()}</span>
+                                                            <span className="text-xs text-dim">· Last used {new Date(key.last_used).toLocaleDateString()}</span>
                                                         )}
                                                     </div>
                                                 </div>
@@ -441,7 +463,7 @@ export default function Settings() {
                                                 whileHover={{ scale: 1.1 }}
                                                 whileTap={{ scale: 0.9 }}
                                                 onClick={() => handleDeleteAPIKey(key.id)}
-                                                className="p-2 rounded-xl text-gray-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200"
+                                                className="p-2 rounded-xl text-dim hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200"
                                                 title="Revoke key"
                                             >
                                                 <Trash2 className="w-4 h-4" />
@@ -507,9 +529,9 @@ export default function Settings() {
                                                 <span className={isSelected ? 'text-[var(--accent)]' : 'text-gray-400'}>{meta.icon}</span>
                                             </div>
                                             <div className="text-sm font-semibold mb-0.5 text-white">{meta.label}</div>
-                                            <div className="text-xs text-gray-500">{meta.sub}</div>
+                                            <div className="text-xs text-dim">{meta.sub}</div>
                                             {config && (
-                                                <div className={`text-[10px] mt-2 font-medium flex items-center justify-center gap-1 ${config.enabled ? 'text-green-400' : 'text-gray-500'}`}>
+                                                <div className={`text-[10px] mt-2 font-medium flex items-center justify-center gap-1 ${config.enabled ? 'text-green-400' : 'text-dim'}`}>
                                                     <span className={`w-1.5 h-1.5 rounded-full ${config.enabled ? 'bg-green-400' : 'bg-gray-600'}`} />
                                                     {config.enabled ? 'Active' : 'Configured'}
                                                 </div>
@@ -595,7 +617,7 @@ export default function Settings() {
                                         <div className="bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-2xl p-5 space-y-4">
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                 <div>
-                                                    <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Channel Name</label>
+                                                    <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Channel Name</label>
                                                     <input
                                                         type="text"
                                                         value={endpointForm.name}
@@ -605,7 +627,7 @@ export default function Settings() {
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Type</label>
+                                                    <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Type</label>
                                                     <div className="flex gap-2">
                                                         {(['webhook', 'slack'] as const).map(type => (
                                                             <button
@@ -626,11 +648,11 @@ export default function Settings() {
                                             </div>
 
                                             <div>
-                                                <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">
+                                                <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">
                                                     {endpointForm.channel_type === 'slack' ? 'Slack Webhook URL' : 'Webhook URL'}
                                                 </label>
                                                 <div className="relative">
-                                                    <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                                                    <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                                                     <input
                                                         type="url"
                                                         value={endpointForm.url}
@@ -643,9 +665,9 @@ export default function Settings() {
 
                                             {endpointForm.channel_type === 'webhook' && (
                                                 <div>
-                                                    <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">HMAC Secret (optional)</label>
+                                                    <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">HMAC Secret (optional)</label>
                                                     <div className="relative">
-                                                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                                                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                                                         <input
                                                             type="text"
                                                             value={endpointForm.secret}
@@ -659,7 +681,7 @@ export default function Settings() {
 
                                             <div className="flex items-center justify-between">
                                                 <div>
-                                                    <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Min Severity</label>
+                                                    <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Min Severity</label>
                                                     <div className="flex gap-1.5">
                                                         {(['low', 'medium', 'high', 'critical'] as const).map(sev => {
                                                             const s = severityBadge[sev];
@@ -670,7 +692,7 @@ export default function Settings() {
                                                                     className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all duration-200 capitalize ${
                                                                         endpointForm.min_severity === sev
                                                                             ? `${s.bg} ${s.border} ${s.text}`
-                                                                            : 'bg-[#0d1117]/60 border-white/[0.07] text-gray-500 hover:text-gray-300 hover:border-white/[0.14]'
+                                                                            : 'bg-[#0d1117]/60 border-white/[0.07] text-dim hover:text-gray-300 hover:border-white/[0.14]'
                                                                     }`}
                                                                 >
                                                                     {sev}
@@ -712,7 +734,7 @@ export default function Settings() {
                                                 <Bell className="w-10 h-10 text-cyan-400/30 mx-auto mb-3" />
                                             </motion.div>
                                             <p className="text-sm text-gray-400">No notification channels configured</p>
-                                            <p className="text-xs text-gray-500 mt-1">Add a webhook or Slack channel to receive incident alerts</p>
+                                            <p className="text-xs text-dim mt-1">Add a webhook or Slack channel to receive incident alerts</p>
                                         </motion.div>
                                     ) : endpoints.map((ep) => {
                                         const sevStyle = severityBadge[ep.min_severity] || severityBadge.medium;
@@ -729,8 +751,8 @@ export default function Settings() {
                                                 <div className="flex items-center gap-3 min-w-0 flex-1">
                                                     <div className={`p-2 rounded-xl ${ep.enabled ? 'bg-cyan-500/10' : 'bg-white/5'}`}>
                                                         {ep.channel_type === 'slack'
-                                                            ? <MessageSquare className={`w-4 h-4 ${ep.enabled ? 'text-cyan-400' : 'text-gray-500'}`} />
-                                                            : <Webhook className={`w-4 h-4 ${ep.enabled ? 'text-cyan-400' : 'text-gray-500'}`} />
+                                                            ? <MessageSquare className={`w-4 h-4 ${ep.enabled ? 'text-cyan-400' : 'text-dim'}`} />
+                                                            : <Webhook className={`w-4 h-4 ${ep.enabled ? 'text-cyan-400' : 'text-dim'}`} />
                                                         }
                                                     </div>
                                                     <div className="min-w-0 flex-1">
@@ -741,7 +763,7 @@ export default function Settings() {
                                                                 {ep.min_severity}+
                                                             </span>
                                                         </div>
-                                                        <p className="text-xs text-gray-500 mt-0.5 truncate">
+                                                        <p className="text-xs text-dim mt-0.5 truncate">
                                                             {(ep.channel_type === 'slack' ? ep.config.webhook_url as string : ep.config.url as string) || '—'}
                                                         </p>
                                                     </div>
@@ -778,7 +800,7 @@ export default function Settings() {
                                                             setTestingEndpoint(null);
                                                         }}
                                                         disabled={testingEndpoint === ep.id}
-                                                        className="p-2 rounded-xl text-gray-500 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all duration-200"
+                                                        className="p-2 rounded-xl text-dim hover:text-cyan-400 hover:bg-cyan-500/10 transition-all duration-200"
                                                         title="Send test"
                                                     >
                                                         <Send className={`w-4 h-4 ${testingEndpoint === ep.id ? 'animate-pulse text-cyan-400' : ''}`} />
@@ -811,7 +833,7 @@ export default function Settings() {
                                                             await deleteNotificationEndpoint(ep.id);
                                                             fetchData();
                                                         }}
-                                                        className="p-2 rounded-xl text-gray-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200"
+                                                        className="p-2 rounded-xl text-dim hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200"
                                                         title="Delete"
                                                     >
                                                         <Trash2 className="w-4 h-4" />
@@ -869,7 +891,7 @@ export default function Settings() {
                                                 </label>
                                                 <div className="flex items-center gap-2">
                                                     <div className="relative flex-1">
-                                                        <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                                                        <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                                                         <input
                                                             type="text"
                                                             value={suggestQuery}
@@ -910,7 +932,7 @@ export default function Settings() {
                                                             exit={{ opacity: 0, y: -5 }}
                                                             className="space-y-1.5"
                                                         >
-                                                            <p className="text-xs text-gray-500">Click a suggestion to auto-fill:</p>
+                                                            <p className="text-xs text-dim">Click a suggestion to auto-fill:</p>
                                                             {suggestions.map((s, i) => (
                                                                 <motion.button
                                                                     key={i}
@@ -935,7 +957,7 @@ export default function Settings() {
                                                                         )}
                                                                     </div>
                                                                     {s.description && (
-                                                                        <p className="text-xs text-gray-500 mt-1">{s.description}</p>
+                                                                        <p className="text-xs text-dim mt-1">{s.description}</p>
                                                                     )}
                                                                 </motion.button>
                                                             ))}
@@ -951,7 +973,7 @@ export default function Settings() {
                                                 <label className="text-sm text-gray-400">Manual entry</label>
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                     <div>
-                                                        <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Process Name</label>
+                                                        <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Process Name</label>
                                                         <input
                                                             type="text"
                                                             value={patternForm.pattern}
@@ -961,7 +983,7 @@ export default function Settings() {
                                                         />
                                                     </div>
                                                     <div>
-                                                        <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Agent Type</label>
+                                                        <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Agent Type</label>
                                                         <input
                                                             type="text"
                                                             value={patternForm.agent_type}
@@ -972,7 +994,7 @@ export default function Settings() {
                                                     </div>
                                                 </div>
                                                 <div>
-                                                    <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Description (optional)</label>
+                                                    <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Description (optional)</label>
                                                     <input
                                                         type="text"
                                                         value={patternForm.description}
@@ -1041,7 +1063,7 @@ export default function Settings() {
                                                 <Bot className="w-10 h-10 text-emerald-400/30 mx-auto mb-3" />
                                             </motion.div>
                                             <p className="text-sm text-gray-400">No AI agent patterns configured</p>
-                                            <p className="text-xs text-gray-500 mt-1">Add patterns to track AI coding agent processes</p>
+                                            <p className="text-xs text-dim mt-1">Add patterns to track AI coding agent processes</p>
                                         </motion.div>
                                     ) : agentPatterns.map((p) => (
                                         <motion.div
@@ -1069,7 +1091,7 @@ export default function Settings() {
                                                         )}
                                                     </div>
                                                     {p.description && (
-                                                        <p className="text-xs text-gray-500 mt-0.5">{p.description}</p>
+                                                        <p className="text-xs text-dim mt-0.5">{p.description}</p>
                                                     )}
                                                 </div>
                                             </div>
@@ -1085,7 +1107,7 @@ export default function Settings() {
                                                         console.error('Failed to delete pattern:', err);
                                                     }
                                                 }}
-                                                className="p-2 rounded-xl text-gray-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200"
+                                                className="p-2 rounded-xl text-dim hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200"
                                                 title="Delete pattern"
                                             >
                                                 <Trash2 className="w-4 h-4" />

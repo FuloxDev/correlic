@@ -43,7 +43,7 @@ func ProcessTimelineHandler(timelineService *query.TimelineService) http.Handler
 		// Get active processes with stats
 		response, err := timelineService.GetActiveProcesses(r.Context(), since, aiOnly)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "process timeline query", err)
 			return
 		}
 
@@ -68,21 +68,6 @@ func ProcessActivityHandler(timelineService *query.TimelineService) http.Handler
 		_ = orgID
 
 		// Support both single "pid" and comma-separated "pids"
-		var pids []int
-		if pidStr := r.URL.Query().Get("pid"); pidStr != "" {
-			if pid, err := strconv.Atoi(pidStr); err == nil {
-				pids = append(pids, pid)
-			}
-		}
-		if pidsStr := r.URL.Query().Get("pids"); pidsStr != "" {
-			// Split by comma
-			// For now, let's just parse the comma separated string if provided
-			// Note: simpler to just use pids=1,2,3
-			// But since we are modifying, let's just handle "pids" param manually splitting
-			// or loop if multiple "pid" params? standard is usually ?pid=1&pid=2 but comma is easier for single param
-		}
-
-		// Let's implement robust parsing
 		ids := []int{}
 
 		// 1. Check "pid" (single)
@@ -137,7 +122,7 @@ func ProcessActivityHandler(timelineService *query.TimelineService) http.Handler
 		// Get network events for the processes
 		activity, err := timelineService.GetProcessNetworkEvents(r.Context(), ids, hostID, limit)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "process timeline query", err)
 			return
 		}
 
@@ -182,7 +167,7 @@ func ProcessNetworkSummaryHandler(timelineService *query.TimelineService) http.H
 
 		summary, err := timelineService.GetNetworkSummary(r.Context(), socket.Pids, socket.HostID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "process timeline query", err)
 			return
 		}
 

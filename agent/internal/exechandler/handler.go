@@ -3,6 +3,7 @@ package exechandler
 import (
 	"os/user"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/correlic/correlic-agent/internal/dispatch"
@@ -42,9 +43,17 @@ func (h *ExecHandler) Handle(raw RawExecEvent) {
 		Context: map[string]any{},
 	}
 
-	// Tag with AI session ID if available (cross-PID correlation).
+	// Tag with the AI session (cross-PID correlation). Every event of an AI
+	// process tree carries ai_session_id + is_ai, and ai_type when known.
 	if raw.AISessionID != "" {
 		evt.Context["ai_session_id"] = raw.AISessionID
+		evt.Context["is_ai"] = true
+		if raw.AIType != "" {
+			evt.Context["ai_type"] = raw.AIType
+		}
+	}
+	if raw.ContainerID != "" {
+		evt.Context["container_id"] = raw.ContainerID
 	}
 	// Tag blocked events so the detection engine sets status="blocked" on findings.
 	if raw.Blocked {
@@ -78,11 +87,35 @@ func (h *ExecHandler) Handle(raw RawExecEvent) {
 	h.Dispatcher.Enqueue(evt)
 }
 
-// ResolveUser converts a UID to a username string.
+// userCacheMax bounds the uid → username cache. Hosts rarely have more than a
+// few hundred distinct uids; the cache is simply cleared when it fills.
+const userCacheMax = 1024
+
+var userCache = struct {
+	sync.Mutex
+	m map[uint32]string
+}{m: make(map[uint32]string)}
+
+// ResolveUser converts a UID to a username string. Lookups hit NSS (and
+// possibly LDAP/sssd) so results, including failures, are cached.
 func ResolveUser(uid uint32) string {
-	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
-	if err != nil {
-		return strconv.FormatUint(uint64(uid), 10)
+	userCache.Lock()
+	name, ok := userCache.m[uid]
+	userCache.Unlock()
+	if ok {
+		return name
 	}
-	return u.Username
+
+	name = strconv.FormatUint(uint64(uid), 10)
+	if u, err := user.LookupId(name); err == nil && u.Username != "" {
+		name = u.Username
+	}
+
+	userCache.Lock()
+	if len(userCache.m) >= userCacheMax {
+		userCache.m = make(map[uint32]string)
+	}
+	userCache.m[uid] = name
+	userCache.Unlock()
+	return name
 }

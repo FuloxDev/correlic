@@ -3,13 +3,13 @@ package ingest
 import (
 	"log"
 	"math/rand"
-	"sync"
 	"sync/atomic"
 
 	"github.com/correlic/correlic-backend/internal/event"
 )
 
 // Sampler makes intelligent decisions about which events to keep vs. drop.
+// All state is atomic, so it is safe for concurrent use without a mutex.
 type Sampler struct {
 	rules   *SamplingRules
 	enabled atomic.Bool
@@ -18,8 +18,6 @@ type Sampler struct {
 	totalSeen    atomic.Int64
 	totalKept    atomic.Int64
 	totalDropped atomic.Int64
-
-	mu sync.RWMutex
 }
 
 // NewSampler creates a new event sampler with the given rules.

@@ -45,6 +45,12 @@ func NewExitRunner(logger *slog.Logger, hostID string, disp dispatch.Dispatcher)
 }
 
 // Start runs the exit collector and dispatches canonical process_exit events until ctx is done.
+//
+// sched_process_exit fires once per exiting thread. Only the thread group
+// leader's exit (tid == pid) is a process exit: it is dispatched and releases
+// the PID from the lineage tracker. Thread exits are ignored so a live
+// multithreaded AI process (node, python, Electron) is never unregistered
+// early.
 func (r *ExitRunner) Start(ctx context.Context) {
 	go r.collector.Start(ctx)
 
@@ -54,6 +60,7 @@ func (r *ExitRunner) Start(ctx context.Context) {
 		HostID:     r.HostID,
 		Dispatcher: r.Dispatcher,
 	}
+	tracker := GetLineageTracker()
 
 	for {
 		select {
@@ -62,15 +69,18 @@ func (r *ExitRunner) Start(ctx context.Context) {
 			r.collector.Close()
 			return
 		case ev := <-r.collector.Events():
+			if !ev.IsProcessExit() {
+				continue // a thread exited; the process is still alive
+			}
 			pid := uint32(ev.PID)
 			// FILTER: Only dispatch exit events for tracked AI processes
-			if !GetLineageTracker().IsAI(pid) {
+			if !tracker.IsAI(pid) {
 				continue
 			}
 			r.logger.Debug("AI process exit", "pid", pid, "exit_code", ev.ExitCode)
 			handler.Handle(ev)
 			// Clean up: remove PID from lineage tracking and BPF maps via removal listeners
-			GetLineageTracker().UnregisterProcess(pid)
+			tracker.UnregisterProcess(pid)
 		}
 	}
 }

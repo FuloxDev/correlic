@@ -18,7 +18,7 @@ type NetInfo struct {
 }
 
 type cacheEntry struct {
-	info    NetInfo
+	info     NetInfo
 	cachedAt time.Time
 }
 

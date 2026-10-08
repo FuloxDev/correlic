@@ -259,13 +259,28 @@ All detection rules work identically on Linux and Windows thanks to path normali
 
 ### Requirements
 - Linux 5.8+ with BTF (`/sys/kernel/btf/vmlinux`)
-- Root or `CAP_BPF` + `CAP_PERFMON` capabilities
-- Go 1.21+ (build time)
+- Root or `CAP_BPF` + `CAP_PERFMON` + `CAP_SYS_ADMIN` capabilities
+- Go 1.25+ and clang/llvm/libbpf-dev (build time)
 
 ### Running
+The agent reads one YAML file, located by `CORRELIC_CONFIG` or `--config`
+(`correlic-admin bootstrap` writes it next to the certificates):
 ```bash
-export CORRELIC_API_KEY="your-key"
-sudo -E go run ./cmd/agent
+sudo CORRELIC_CONFIG=/path/to/agent.yaml ./correlic-agent
+```
+```yaml
+backend_url: "https://localhost:8080"
+telemetry_url: "https://localhost:8081"
+api_key: "<agent key from correlic-admin create-api-key --type agent>"
+tls_ca_file: "/path/certs/ca.crt"
+tls_client_cert_file: "/path/certs/client.crt"
+tls_client_key_file: "/path/certs/client.key"
+heartbeat_interval: 30s
+ebpf_enabled: true
+process_exec_enabled: true
+file_monitor_enabled: true
+network_monitor_enabled: true
+dns_monitor_enabled: true
 ```
 
 ### Service (systemd)
@@ -275,10 +290,11 @@ Description=Correlic Security Agent
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/correlic-agent
+ExecStart=/usr/bin/correlic-agent
+Environment=CORRELIC_CONFIG=/etc/correlic/agent.yaml
+AmbientCapabilities=CAP_BPF CAP_SYS_ADMIN CAP_PERFMON CAP_SYS_RESOURCE
 Restart=always
 RestartSec=5
-Environment=CORRELIC_API_KEY=sk-...
 
 [Install]
 WantedBy=multi-user.target

@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,13 +11,8 @@ import (
 	"github.com/correlic/correlic-backend/internal/ingest"
 	"github.com/correlic/correlic-backend/internal/model"
 	"github.com/correlic/correlic-backend/internal/storage"
+	"github.com/google/uuid"
 )
-
-// hashAPIKey hashes the API key using SHA-256 (same as auth middleware)
-func hashAPIKey(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
 
 const maxHeartbeatBodyBytes = 1 << 20 // 1MiB
 
@@ -39,9 +32,9 @@ func NewHeartbeatHandler(service *ingest.HeartbeatService, agentCertStore storag
 	}
 }
 
-// ServeHTTP handles heartbeat requests
+// ServeHTTP handles heartbeat requests. It is reachable by the agent role
+// (agent API keys and mTLS-only callers) as well as members and admins.
 func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Debug log removed
 	if r.Method != http.MethodPost {
 		MethodNotAllowed(w, http.MethodPost)
 		return
@@ -103,15 +96,17 @@ func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Extract user_id from API key (if agent token is used)
-	// The auth middleware already resolved the API key and stored user_id in actorID
+	// Link the agent to the key's owner when the API key is tied to a user.
+	// The auth middleware stores the user_id as the actor ID for such keys;
+	// for keys without an owner the actor ID is the key hash, which must not
+	// be written into agents.user_id (it is a UUID foreign key to users).
 	var userID string
 	actorType, actorID, hasActor := middleware.ActorFromContext(r.Context())
-	if hasActor && actorType == "api_key" && actorID != "" {
-		// actorID contains the user_id if the API key is linked to a user
-		// (set by auth middleware when it calls LookupKeyInfo)
-		userID = actorID
-		log.Printf("heartbeat: linking agent %s to user %s (from API key)", payload.AgentID, userID)
+	if hasActor && actorType == middleware.ActorTypeAPIKey && actorID != "" {
+		if _, err := uuid.Parse(actorID); err == nil {
+			userID = actorID
+			log.Printf("heartbeat: linking agent %s to user %s (from API key)", payload.AgentID, userID)
+		}
 	}
 
 	agent := &model.Agent{

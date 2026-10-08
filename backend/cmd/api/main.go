@@ -102,28 +102,24 @@ func main() {
 
 	// Neo4j connection (optional - gracefully degrades if unavailable)
 	var graphPersister *neo4j.GraphPersister
+	// Neo4j is opt-in: no NEO4J_URI means no graph (no localhost or password defaults).
+	// Detection still runs without it — rules take AI attribution from event tags.
+	// One driver is created per process and shared by every graph consumer below.
 	neo4jURI := os.Getenv("NEO4J_URI")
-	if neo4jURI == "" {
-		neo4jURI = "bolt://localhost:7687"
-	}
 	neo4jUser := os.Getenv("NEO4J_USERNAME")
-	if neo4jUser == "" {
-		neo4jUser = "neo4j"
-	}
 	neo4jPass := os.Getenv("NEO4J_PASSWORD")
-	if neo4jPass == "" {
-		neo4jPass = "correlic123"
-	}
 
 	var neo4jClient *neo4j.Client
-	if neo4jURI == "disabled" || neo4jURI == "none" {
-		log.Println("Neo4j disabled by configuration — detection rules and graph features unavailable")
+	if neo4jURI == "" || neo4jURI == "disabled" || neo4jURI == "none" {
+		log.Println("Neo4j disabled (NEO4J_URI not set) — running without graph context; detection remains enabled")
 	} else {
 		var err error
 		neo4jClient, err = neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
 		if err != nil {
-			log.Printf("WARNING: Neo4j connection failed (graph persistence disabled): %v", err)
+			log.Printf("WARNING: Neo4j connection failed, running without graph (uri=%s): %v", neo4jURI, err)
+			neo4jClient = nil
 		} else {
+			defer neo4jClient.Close(context.Background())
 			graphStore := neo4j.NewGraphStore(neo4jClient)
 			if err := graphStore.InitializeSchema(context.Background()); err != nil {
 				log.Printf("WARNING: Neo4j schema initialization failed: %v", err)
@@ -149,7 +145,6 @@ func main() {
 	var timelineService *query.TimelineService
 	var investigationService *query.InvestigationService
 	if graphPersister != nil {
-		neo4jClient, _ := neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
 		graphStore := neo4j.NewGraphStore(neo4jClient)
 		timelineService = query.NewTimelineService(neo4jClient, graphStore, db)
 		investigationService = query.NewInvestigationService(neo4jClient)
@@ -159,9 +154,8 @@ func main() {
 	// Tier 1: Real-time process tree writer (if Neo4j is available)
 	var processTreeWriter *correlation.ProcessTreeWriter
 	if graphPersister != nil {
-		// Create a dedicated GraphStore for the process tree writer
-		ptNeo4jClient, _ := neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
-		ptGraphStore := neo4j.NewGraphStore(ptNeo4jClient)
+		// Dedicated GraphStore (own pattern cache) on the shared Neo4j driver
+		ptGraphStore := neo4j.NewGraphStore(neo4jClient)
 		if err := ptGraphStore.LoadAIPatterns(db); err != nil {
 			log.Printf("WARNING: Failed to load AI patterns for ProcessTreeWriter: %v", err)
 		}
@@ -193,14 +187,16 @@ func main() {
 	detectionEngine.RegisterPack(ai_pack.NewAIPack())
 	log.Printf("Detection engine enabled: %d rules registered", detectionEngine.RuleCount())
 
+	// AI attribution for detection comes from event tags (ai_session_id / is_ai) and a
+	// bounded (host,pid) cache shared across batches; Neo4j only adds look-back context.
+	attributionCache := detection.NewAttributionCache(0, 0)
 	var detectionQuerier detection.GraphQuerier
 	if graphPersister != nil {
-		dqNeo4jClient, _ := neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
-		detectionQuerier = detection.NewNeo4jGraphQuerier(dqNeo4jClient)
+		detectionQuerier = detection.NewNeo4jGraphQuerier(neo4jClient)
 		log.Println("Detection graph querier enabled (Neo4j)")
 	} else {
-		log.Printf("WARN: Detection graph querier not available — ai.unexpected_network, " +
-			"ai.data_exfiltration, and ai.excessive_writes will not fire. Set NEO4J_URI to enable.")
+		log.Printf("Detection graph querier disabled — rules use event attribution tags; " +
+			"look-back rules (ai.data_exfiltration, ai.excessive_writes) need NEO4J_URI.")
 	}
 
 	baselineCollector := detection.NewBaselineCollector(db)
@@ -228,8 +224,7 @@ func main() {
 	incidentCorrelator := incident.NewIncidentCorrelator(incidentStore, findingStore)
 	var graphStoreForIncidents *neo4j.GraphStore
 	if graphPersister != nil {
-		incNeo4jClient, _ := neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
-		graphStoreForIncidents = neo4j.NewGraphStore(incNeo4jClient)
+		graphStoreForIncidents = neo4j.NewGraphStore(neo4jClient)
 	}
 	contextAssembler := incident.NewContextAssembler(incidentStore, findingStore, graphStoreForIncidents, canonicalEventStore)
 	summaryStore := ai.NewIncidentSummaryStore(db)
@@ -285,6 +280,7 @@ func main() {
 	rateLimiter := middleware.NewRateLimiter(limitPerMin, time.Minute)
 	apiKeyStore := storage.NewPostgresAPIKeyStore(db)
 	clientCertStore := storage.NewPostgresClientCertStore(db)
+	sessionStore := storage.NewPostgresSessionStore(db)
 	auth := middleware.NewAuthMiddleware(apiKeyStore, clientCertStore, userStore, db)
 	mtlsFP := middleware.NewMTLSFingerprintMiddleware()
 	roleGuard := middleware.NewRoleGuard(userStore)
@@ -292,32 +288,46 @@ func main() {
 	// Common middleware chain for authenticated endpoints.
 	// Order matters:
 	// - rate limiter can reject quickly based on the provided key
-	// - auth injects org_id and actor into the request context
-	// - audit runs after auth so it can log org_id
-	// - role guard runs after auth so it can check the actor
-	wrapAuthed := func(h http.Handler) http.Handler {
+	// - auth injects org_id, actor and role into the request context
+	// - audit runs after auth so it can log the actor
+	// - role guards run after auth so they can check the actor
+	//
+	// Route policy (see middleware.RoleAgent):
+	// - wrapAgent: agent, member and admin. Only for routes agents need
+	//   (heartbeat, telemetry, ingest, pattern list).
+	// - wrapAuthed: member and admin; the agent role gets 403.
+	// - wrapAdminWrites: like wrapAuthed, but non-GET methods are admin only.
+	// - wrapAdmin: admin only, every method.
+	wrapAgent := func(h http.Handler) http.Handler {
 		return rateLimiter.Wrap(
 			middleware.RequireMTLS(mtlsFP.Wrap(auth.Wrap(middleware.Audit(h)))),
 		)
 	}
-
-	// Wrap with role guard (must run AFTER auth so actor is set in context)
-	wrapAuthedWithRole := func(role string, h http.Handler) http.Handler {
-		return wrapAuthed(roleGuard.RequireRole(role)(h))
+	wrapAuthed := func(h http.Handler) http.Handler {
+		return wrapAgent(middleware.DenyRole(middleware.RoleAgent)(h))
+	}
+	wrapAdminWrites := func(h http.Handler) http.Handler {
+		return wrapAuthed(middleware.AdminForWrites()(h))
+	}
+	wrapAdmin := func(h http.Handler) http.Handler {
+		return wrapAuthed(roleGuard.RequireRole(middleware.RoleAdmin)(h))
 	}
 
-	// Wrap for unauthenticated endpoints (like login) - only rate limiting, no auth required
+	// Wrap for unauthenticated endpoints (like login): rate limited by client
+	// IP only, no auth required.
 	wrapUnauthed := func(h http.Handler) http.Handler {
-		return rateLimiter.Wrap(h)
+		return rateLimiter.WrapUnauthenticated(h)
 	}
 
-	mux.Handle("/heartbeat", wrapAuthed(api.NewHeartbeatHandler(heartbeatService, agentCertStore, apiKeyStore)))
+	mux.Handle("/heartbeat", wrapAgent(api.NewHeartbeatHandler(heartbeatService, agentCertStore, apiKeyStore)))
 	mux.Handle("/agents", wrapAuthed(api.NewListAgentsHandler(inventoryService)))
-	mux.Handle("/orgs/", wrapAuthed(api.NewOrgsHandler(orgStore)))
-	mux.Handle("/users", wrapAuthedWithRole("admin", api.NewUsersHandler(userStore, store, auditStore)))
-	mux.Handle("/api-keys", wrapAuthedWithRole("admin", api.NewAPIKeysHandler(db, userStore, auditStore)))
-	mux.Handle("/agent-tokens", wrapAuthed(api.NewAgentTokensHandler(db, userStore, auditStore)))
-	mux.Handle("/auth/sessions", wrapUnauthed(api.NewSessionsHandler(userStore, auditStore)))          // Allow unauthenticated for login
+	mux.Handle("/orgs/", wrapAdminWrites(api.NewOrgsHandler(orgStore)))
+	mux.Handle("/users", wrapAdminWrites(api.NewUsersHandler(userStore, store, auditStore)))
+	mux.Handle("/api-keys", wrapAdminWrites(api.NewAPIKeysHandler(db, userStore, auditStore)))
+	mux.Handle("/agent-tokens", wrapAdminWrites(api.NewAgentTokensHandler(db, userStore, auditStore)))
+	// Login (POST) and logout (DELETE, revokes the presented token) are
+	// unauthenticated routes: rate limited per client IP, no auth middleware.
+	mux.Handle("/auth/sessions", wrapUnauthed(api.NewSessionsHandler(userStore, sessionStore, auditStore)))
 	mux.Handle("/auth/password/reset", wrapAuthed(api.NewPasswordResetHandler(userStore, auditStore))) // Requires auth (session or API key)
 
 	// User profile (self-service)
@@ -333,9 +343,14 @@ func main() {
 		}
 	})))
 
-	// Google OAuth sign-in
-	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
-	mux.Handle("/auth/google", wrapUnauthed(api.NewGoogleAuthHandler(userStore, googleClientID)))
+	// Google OAuth sign-in. Registered only when a client ID is configured:
+	// without one the token audience cannot be verified.
+	if googleClientID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")); googleClientID != "" {
+		mux.Handle("/auth/google", wrapUnauthed(api.NewGoogleAuthHandler(userStore, googleClientID)))
+		log.Println("Google sign-in enabled: /auth/google")
+	} else {
+		log.Println("Google sign-in disabled (GOOGLE_CLIENT_ID not set)")
+	}
 
 	// Email verification
 	frontendURL := os.Getenv("FRONTEND_URL")
@@ -356,7 +371,7 @@ func main() {
 		log.Printf("Loaded %d AI process patterns from database", len(needles))
 	}
 
-	mux.Handle("/telemetry", wrapAuthed(api.NewTelemetryHandler(telemetryStore, attributionService)))
+	mux.Handle("/telemetry", wrapAgent(api.NewTelemetryHandler(telemetryStore, agentCertStore, attributionService)))
 	mux.Handle("/network/summary", wrapAuthed(api.NewNetworkSummaryHandler(telemetryStore)))
 	mux.Handle("/network/domain", wrapAuthed(api.NewNetworkDomainHandler(telemetryStore)))
 	mux.Handle("/network/destination", wrapAuthed(api.NewNetworkDestinationHandler(telemetryStore)))
@@ -379,16 +394,17 @@ func main() {
 			"built-in default must set it to \"correlic-default-key-change-in-prod!\" to keep " +
 			"existing provider settings readable, then rotate.")
 	}
+	// A bad key must not silently drop the AI routes (the agent fetches its
+	// pattern list from /api/v1/ai/patterns), so this is fatal.
 	if llmSettingsStore, err := provider.NewSettingsStore(db, llmEncryptionKey); err != nil {
-		log.Printf("WARNING: LLM settings store initialization failed: %v", err)
+		log.Fatalf("LLM settings store initialization failed: %v", err)
 	} else {
 		var graphStoreForAI *neo4j.GraphStore
 		if graphPersister != nil {
-			neo4jClient, _ := neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
 			graphStoreForAI = neo4j.NewGraphStore(neo4jClient)
 		}
 		aiHandler := api.NewAIHandler(llmSettingsStore, telemetryStore, graphStoreForAI, attributionService)
-		aiHandler.RegisterRoutes(mux, wrapAuthed)
+		aiHandler.RegisterRoutes(mux, wrapAuthed, wrapAgent, wrapAdminWrites)
 
 		// Incident + Finding AI endpoints (explain, ask, chat)
 		incidentAIHandler := api.NewIncidentAIHandler(llmSettingsStore, contextAssembler, findingStore, summaryStore, dossierStore, dossierBuilder, convStore, queryService, graphStoreForIncidents, intelligenceStore)
@@ -421,9 +437,9 @@ func main() {
 		log.Println("BYOK LLM AI endpoints enabled: /api/v1/ai/*, /api/v1/incidents/{id}/{explain,ask,ask/stream,chat}, /api/v1/findings/{id}/explain")
 	}
 
-	mux.Handle("/health", api.HealthHandler(detectionQuerier != nil))
+	mux.Handle("/health", api.HealthHandler(detectionEngine != nil, detectionQuerier != nil))
 	mux.Handle("/readiness", api.ReadinessHandler(db))
-	mux.Handle("/ingest/events", wrapAuthed(api.NewLiveIngestHandler(telemetryStore, canonicalEventStore, eventBuffer, eventSampler, attributionService, processTreeWriter, detectionEngine, baselineCollector, findingStore, detectionQuerier, safeDomainStore, ruleExceptionStore, ruleSettingsStore, cooldown, chainCorrelator, incidentCorrelator, notifManager, neverBaselineStore)))
+	mux.Handle("/ingest/events", wrapAgent(api.NewLiveIngestHandler(telemetryStore, canonicalEventStore, agentCertStore, eventBuffer, eventSampler, attributionService, processTreeWriter, detectionEngine, baselineCollector, findingStore, detectionQuerier, attributionCache, safeDomainStore, ruleExceptionStore, ruleSettingsStore, cooldown, chainCorrelator, incidentCorrelator, notifManager, neverBaselineStore)))
 
 	// Detection findings API
 	findingsHandler := api.NewFindingsHandler(findingStore, baselineCollector, incidentStore)
@@ -451,14 +467,14 @@ func main() {
 
 	// Detection rule settings API (per-org tunable thresholds)
 	ruleSettingsHandler := api.NewRuleSettingsHandler(ruleSettingsStore)
-	mux.Handle("/api/v1/detection/settings", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/detection/settings", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			ruleSettingsHandler.ListSettings(w, r)
 		} else {
 			api.MethodNotAllowed(w, "GET")
 		}
 	})))
-	mux.Handle("/api/v1/detection/settings/", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/detection/settings/", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPut:
 			ruleSettingsHandler.UpsertSetting(w, r)
@@ -471,7 +487,7 @@ func main() {
 
 	// Per-rule exceptions API
 	exceptionsHandler := api.NewExceptionsHandler(ruleExceptionStore)
-	mux.Handle("/api/v1/exceptions", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/exceptions", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			exceptionsHandler.ListExceptions(w, r)
@@ -481,7 +497,7 @@ func main() {
 			api.MethodNotAllowed(w, "GET, POST")
 		}
 	})))
-	mux.Handle("/api/v1/exceptions/", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/exceptions/", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			exceptionsHandler.DeleteException(w, r)
 		} else {
@@ -491,7 +507,7 @@ func main() {
 
 	// Behavioral baselines API
 	baselinesHandler := api.NewBaselinesHandler(db, baselineCollector, safeDomainStore, findingStore, incidentStore, neverBaselineStore)
-	mux.Handle("/api/v1/baselines", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/baselines", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			baselinesHandler.ListBaselines(w, r)
@@ -501,9 +517,9 @@ func main() {
 			api.MethodNotAllowed(w, "GET, POST")
 		}
 	})))
-	mux.Handle("/api/v1/baselines/summary", wrapAuthed(http.HandlerFunc(baselinesHandler.BaselineSummary)))
+	mux.Handle("/api/v1/baselines/summary", wrapAdminWrites(http.HandlerFunc(baselinesHandler.BaselineSummary)))
 	neverBaselinesHandler := api.NewNeverBaselinesHandler(neverBaselineStore)
-	mux.Handle("/api/v1/baselines/never-baselines", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/baselines/never-baselines", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			neverBaselinesHandler.ListNeverBaselines(w, r)
@@ -513,23 +529,23 @@ func main() {
 			api.MethodNotAllowed(w, "GET, POST")
 		}
 	})))
-	mux.Handle("/api/v1/baselines/never-baselines/", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/baselines/never-baselines/", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			neverBaselinesHandler.DeleteNeverBaseline(w, r)
 		} else {
 			api.MethodNotAllowed(w, "DELETE")
 		}
 	})))
-	mux.Handle("/api/v1/baselines/exclusions", wrapAuthed(http.HandlerFunc(baselinesHandler.ListExclusions)))
-	mux.Handle("/api/v1/baselines/exclusions/", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/baselines/exclusions", wrapAdminWrites(http.HandlerFunc(baselinesHandler.ListExclusions)))
+	mux.Handle("/api/v1/baselines/exclusions/", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			baselinesHandler.DeleteExclusion(w, r)
 		} else {
 			api.MethodNotAllowed(w, "DELETE")
 		}
 	})))
-	mux.Handle("/api/v1/baselines/noise-filters", wrapAuthed(http.HandlerFunc(baselinesHandler.NoiseFilters)))
-	mux.Handle("/api/v1/baselines/safe-domains", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/baselines/noise-filters", wrapAdminWrites(http.HandlerFunc(baselinesHandler.NoiseFilters)))
+	mux.Handle("/api/v1/baselines/safe-domains", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			baselinesHandler.ListSafeDomains(w, r)
@@ -539,7 +555,7 @@ func main() {
 			api.MethodNotAllowed(w, "GET, POST")
 		}
 	})))
-	mux.Handle("/api/v1/baselines/safe-domains/", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/baselines/safe-domains/", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			baselinesHandler.DeleteSafeDomain(w, r)
 		} else {
@@ -549,7 +565,7 @@ func main() {
 	// --- Block Rules ---
 	blockRulesHandler := api.NewBlockRulesHandler(blockRuleStore)
 	blockEventsHandler := api.NewBlockEventsHandler(blockEventStore, blockRuleStore)
-	mux.Handle("/api/v1/block-rules", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/block-rules", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			blockRulesHandler.ListBlockRules(w, r)
@@ -559,7 +575,7 @@ func main() {
 			api.MethodNotAllowed(w, "GET, POST")
 		}
 	})))
-	mux.Handle("/api/v1/block-rules/", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/block-rules/", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPut:
 			blockRulesHandler.UpdateBlockRule(w, r)
@@ -584,7 +600,7 @@ func main() {
 		}
 	})))
 
-	mux.Handle("/api/v1/baselines/", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/baselines/", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/confirm") {
 			baselinesHandler.ConfirmBaseline(w, r)
 			return
@@ -637,7 +653,7 @@ func main() {
 		}
 	})))
 	// Notification endpoints (channel config)
-	mux.Handle("/api/v1/notification-endpoints", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/notification-endpoints", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			notifHandler.ListEndpoints(w, r)
@@ -647,7 +663,7 @@ func main() {
 			api.MethodNotAllowed(w, "GET, POST")
 		}
 	})))
-	mux.Handle("/api/v1/notification-endpoints/", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/notification-endpoints/", wrapAdminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/test") {
 			if r.Method == http.MethodPost {
 				notifHandler.TestEndpoint(w, r)
@@ -703,12 +719,21 @@ func main() {
 		mux.Handle("/processes/tree", wrapAuthed(api.ProcessTimelineHandler(timelineService)))
 		mux.Handle("/processes/activity", wrapAuthed(api.ProcessActivityHandler(timelineService)))
 		mux.Handle("/processes/summary", wrapAuthed(api.ProcessNetworkSummaryHandler(timelineService)))
-		// Agent activity stream (human-readable action feed)
-		mux.Handle("/agents/activity", wrapAuthed(api.AgentActivityHandler(timelineService)))
 		log.Println("Neo4j timeline endpoints enabled: /neo4j/timeline, /neo4j/process-tree, /neo4j/attack-path")
 		log.Println("Process timeline endpoints enabled: /processes/tree, /processes/activity, /processes/summary")
-		log.Println("Agent activity endpoint enabled: /agents/activity")
 	}
+	// Agent activity stream (human-readable action feed). Always available: the
+	// dashboard feed and the Agent Activity page depend on it. Served from the
+	// graph when Neo4j is configured, else from the events table via the
+	// agent's AI session tags.
+	var activitySource query.AgentActivitySource = query.NewPostgresActivityStream(db)
+	activityBackend := "postgres"
+	if timelineService != nil {
+		activitySource = timelineService
+		activityBackend = "neo4j"
+	}
+	mux.Handle("/agents/activity", wrapAuthed(api.AgentActivityHandler(activitySource)))
+	log.Printf("Agent activity endpoint enabled: /agents/activity (source: %s)", activityBackend)
 	if investigationService != nil {
 		mux.Handle("/neo4j/investigation/", wrapAuthed(api.InvestigationHandler(investigationService)))
 		log.Println("Neo4j investigation endpoints enabled: /neo4j/investigation/*")
@@ -726,23 +751,14 @@ func main() {
 		wrapAuthed(api.NewAgentsRouter(inventoryService, identityStore)),
 	)
 	if os.Getenv("ENABLE_DEBUG_ENDPOINTS") == "true" {
-		mux.Handle("/debug/vars", wrapAuthed(expvar.Handler()))
-		mux.HandleFunc("/debug/pprof/", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Index)).ServeHTTP(w, r)
-		})
-		mux.HandleFunc("/debug/pprof/cmdline", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Cmdline)).ServeHTTP(w, r)
-		})
-		mux.HandleFunc("/debug/pprof/profile", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Profile)).ServeHTTP(w, r)
-		})
-		mux.HandleFunc("/debug/pprof/symbol", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Symbol)).ServeHTTP(w, r)
-		})
-		mux.HandleFunc("/debug/pprof/trace", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Trace)).ServeHTTP(w, r)
-		})
-		log.Println("debug endpoints enabled: /debug/vars, /debug/pprof/*")
+		// Debug endpoints expose process internals: admin only.
+		mux.Handle("/debug/vars", wrapAdmin(expvar.Handler()))
+		mux.Handle("/debug/pprof/", wrapAdmin(http.HandlerFunc(pprof.Index)))
+		mux.Handle("/debug/pprof/cmdline", wrapAdmin(http.HandlerFunc(pprof.Cmdline)))
+		mux.Handle("/debug/pprof/profile", wrapAdmin(http.HandlerFunc(pprof.Profile)))
+		mux.Handle("/debug/pprof/symbol", wrapAdmin(http.HandlerFunc(pprof.Symbol)))
+		mux.Handle("/debug/pprof/trace", wrapAdmin(http.HandlerFunc(pprof.Trace)))
+		log.Println("debug endpoints enabled (admin only): /debug/vars, /debug/pprof/*")
 	}
 
 	log.Println("Correlic backend listening on :8080")
@@ -766,6 +782,8 @@ func main() {
 	}
 
 	srv.TLSConfig = tlsCfg
+	// Response hygiene headers on every response; HSTS only because TLS is on.
+	srv.Handler = middleware.SecurityHeaders(tlsEnabled)(mux)
 	// Require mTLS for agent endpoints.
 	if tlsCfg == nil || tlsCfg.ClientAuth != tls.RequireAndVerifyClientCert {
 		log.Fatal("mTLS is required: set MTLS_CA_FILE")

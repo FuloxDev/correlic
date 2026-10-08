@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Correlic UI
 
-## Getting Started
+Next.js dashboard for the Correlic security platform. It renders findings,
+incidents, baselines, the agent activity timeline and settings, and talks to
+the backend only through its own `/api/proxy/*` route handler, which forwards
+to the local **ui-proxy** (the process that holds the backend's mTLS client
+certificate).
 
-First, run the development server:
+## How requests flow
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+browser ──(cookie)──▶ Next.js /api/proxy/* ──(Authorization: Bearer)──▶ ui-proxy :8788 ──(mTLS)──▶ backend :8080
 ```
 
-Open [http://localhost:3001](http://localhost:3001) with your browser to see the result.
+* Signing in with a service API key or with email + password
+  (`POST /auth/sessions` on the backend) stores the credential in an
+  `httpOnly` cookie. There is no automatic login.
+* Signing out revokes backend sessions (`DELETE /auth/sessions`) and clears
+  the cookie.
+* Pages without a session redirect to `/login?from=…`; API calls without one
+  get a JSON 401.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PROXY_BASE_URL` | `http://localhost:8788` | Where the ui-proxy listens. |
+| `PORT` | `3001` | Port the dashboard serves on (`npm run dev` / `npm start`). |
+| `CORRELIC_API_URL` | _(unset)_ | Optional remote key server used as a fallback when validating API keys. |
+| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | _(unset)_ | Enables the Google sign-in button. |
+| `NEXT_ALLOWED_DEV_ORIGINS` | _(unset)_ | Comma-separated extra origins allowed by the dev server. |
 
-## Learn More
+## Running
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm install
+npm run dev        # http://localhost:3001 (needs ui-proxy on :8788)
+npm run build      # production build (standalone output)
+npm start
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+npm run lint       # eslint
+npm run typecheck  # tsc --noEmit
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The Docker image runs the standalone build with `node server.js`
+(see `Dockerfile`).

@@ -37,7 +37,7 @@ type ProcCollector struct {
 	events chan ProcEvent
 	logger *slog.Logger
 
-	mu         sync.Mutex
+	mu          sync.Mutex
 	watchedPIDs map[int]bool // PIDs being watched in kqueue
 }
 

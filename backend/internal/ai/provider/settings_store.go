@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -36,13 +37,22 @@ type SettingsStore struct {
 }
 
 // NewSettingsStore creates a new settings store.
+//
+// The AES-256 key is derived as SHA-256(LLM_ENCRYPTION_KEY), so the whole env value
+// contributes to the key regardless of its length. Releases before 1.0.1 used the
+// first 32 bytes of the env value directly; provider keys encrypted by those builds
+// are NOT readable by this one (acceptable pre-release — re-enter the provider key
+// in Settings).
 func NewSettingsStore(db *sql.DB, encryptionKey string) (*SettingsStore, error) {
-	if len(encryptionKey) < 32 {
-		return nil, fmt.Errorf("encryption key must be at least 32 bytes")
+	// The value is hashed to a 32-byte AES-256 key, so any length works; a
+	// short value is still a weak key, so insist on a minimum.
+	if len(encryptionKey) < 16 {
+		return nil, fmt.Errorf("LLM_ENCRYPTION_KEY must be at least 16 characters (generate one with `openssl rand -hex 32`)")
 	}
+	sum := sha256.Sum256([]byte(encryptionKey))
 	return &SettingsStore{
 		db:            db,
-		encryptionKey: []byte(encryptionKey)[:32],
+		encryptionKey: sum[:],
 	}, nil
 }
 

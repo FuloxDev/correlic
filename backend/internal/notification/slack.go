@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // SlackSender delivers notifications via Slack incoming webhooks using Block Kit.
@@ -16,11 +15,10 @@ type SlackSender struct {
 	client *http.Client
 }
 
-// NewSlackSender creates a Slack sender with a 10-second timeout.
+// NewSlackSender creates a Slack sender with a 10-second timeout, no redirect
+// following and an SSRF-guarded dialer (see newOutboundClient).
 func NewSlackSender() *SlackSender {
-	return &SlackSender{
-		client: &http.Client{Timeout: 10 * time.Second},
-	}
+	return &SlackSender{client: newOutboundClient()}
 }
 
 // Send delivers a payload to a Slack incoming webhook as Block Kit blocks.
@@ -28,6 +26,11 @@ func (s *SlackSender) Send(ctx context.Context, endpoint Endpoint, payload map[s
 	webhookURL, _ := endpoint.Config["webhook_url"].(string)
 	if webhookURL == "" {
 		return fmt.Errorf("slack endpoint has no webhook_url configured")
+	}
+	// Re-validate at send time: the DNS answer may have changed since the
+	// endpoint was configured.
+	if err := validateOutboundURL(ctx, webhookURL); err != nil {
+		return fmt.Errorf("slack webhook_url rejected: %w", err)
 	}
 
 	slackPayload := buildSlackBlocks(payload)
@@ -47,12 +50,12 @@ func (s *SlackSender) Send(ctx context.Context, endpoint Endpoint, payload map[s
 		return fmt.Errorf("slack request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
 
-	if resp.StatusCode == 200 {
+	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	return fmt.Errorf("slack returned status %d", resp.StatusCode)
+	return fmt.Errorf("slack returned status %d: %w", resp.StatusCode, &HTTPStatusError{Status: resp.StatusCode})
 }
 
 // buildSlackBlocks constructs a Slack Block Kit message from the webhook payload.

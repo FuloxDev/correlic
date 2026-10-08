@@ -28,9 +28,9 @@ import (
 	"github.com/correlic/correlic-backend/internal/detection"
 	"github.com/correlic/correlic-backend/internal/detection/ai_pack"
 	"github.com/correlic/correlic-backend/internal/incident"
-	"github.com/correlic/correlic-backend/internal/notification"
 	"github.com/correlic/correlic-backend/internal/ingest"
 	"github.com/correlic/correlic-backend/internal/maintenance"
+	"github.com/correlic/correlic-backend/internal/notification"
 	"github.com/correlic/correlic-backend/internal/storage"
 	"github.com/correlic/correlic-backend/internal/storage/eventstore"
 	"github.com/correlic/correlic-backend/internal/storage/neo4j"
@@ -100,28 +100,24 @@ func main() {
 	var eventBuffer *correlation.EventBuffer
 	var eventSampler *ingest.Sampler
 	var processTreeWriter *correlation.ProcessTreeWriter
+	// Neo4j is opt-in: no NEO4J_URI means no graph (no localhost or password defaults).
+	// Detection still runs without it — rules take AI attribution from event tags.
+	// One driver is created per process and shared by every graph consumer below.
 	neo4jURI := os.Getenv("NEO4J_URI")
-	if neo4jURI == "" {
-		neo4jURI = "bolt://localhost:7687"
-	}
 	neo4jUser := os.Getenv("NEO4J_USERNAME")
-	if neo4jUser == "" {
-		neo4jUser = "neo4j"
-	}
 	neo4jPass := os.Getenv("NEO4J_PASSWORD")
-	if neo4jPass == "" {
-		neo4jPass = "correlic123"
-	}
 
 	var neo4jClient *neo4j.Client
-	if neo4jURI == "disabled" || neo4jURI == "none" {
-		log.Println("Neo4j disabled by configuration — detection rules and graph features unavailable")
+	if neo4jURI == "" || neo4jURI == "disabled" || neo4jURI == "none" {
+		log.Println("Neo4j disabled (NEO4J_URI not set) — running without graph context; detection remains enabled")
 	} else {
 		var err error
 		neo4jClient, err = neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
 		if err != nil {
-			log.Printf("WARNING: Neo4j connection failed (graph persistence disabled): %v", err)
+			log.Printf("WARNING: Neo4j connection failed, running without graph (uri=%s): %v", neo4jURI, err)
+			neo4jClient = nil
 		} else {
+			defer neo4jClient.Close(context.Background())
 			graphStore := neo4j.NewGraphStore(neo4jClient)
 			if err := graphStore.InitializeSchema(context.Background()); err != nil {
 				log.Printf("WARNING: Neo4j schema initialization failed: %v", err)
@@ -150,9 +146,8 @@ func main() {
 
 				log.Printf("Tier 2: Streaming correlation enabled (buffer: %d, window: %v, flush: %v)", bufferSize, windowSize, flushInterval)
 
-				// Tier 1: Real-time process tree writer
-				ptNeo4jClient, _ := neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
-				ptGraphStore := neo4j.NewGraphStore(ptNeo4jClient)
+				// Tier 1: Real-time process tree writer (shares the single Neo4j driver)
+				ptGraphStore := neo4j.NewGraphStore(neo4jClient)
 				if err := ptGraphStore.LoadAIPatterns(db); err != nil {
 					log.Printf("WARNING: Failed to load AI patterns for ProcessTreeWriter: %v", err)
 				}
@@ -190,10 +185,21 @@ func main() {
 	mtlsFP := middleware.NewMTLSFingerprintMiddleware()
 
 	// Wrap the handler with the middleware chain.
-	wrapAuthed := func(h http.Handler) http.Handler {
+	//
+	// Route policy (see middleware.RoleAgent):
+	// - wrapAgent: agent, member and admin — ingest, telemetry and /agent/*.
+	// - wrapAuthed: member and admin; the agent role gets 403.
+	// - wrapAdmin: admin only (debug endpoints).
+	wrapAgent := func(h http.Handler) http.Handler {
 		return rateLimiter.Wrap(
 			middleware.RequireMTLS(mtlsFP.Wrap(auth.Wrap(middleware.Audit(h)))),
 		)
+	}
+	wrapAuthed := func(h http.Handler) http.Handler {
+		return wrapAgent(middleware.DenyRole(middleware.RoleAgent)(h))
+	}
+	wrapAdmin := func(h http.Handler) http.Handler {
+		return wrapAuthed(middleware.RequireAnyRole(middleware.RoleAdmin)(h))
 	}
 
 	// Phase 2: Detection engine + behavioral baseline
@@ -201,11 +207,15 @@ func main() {
 	detectionEngine.RegisterPack(ai_pack.NewAIPack())
 	log.Printf("Detection engine enabled: %d rules registered", detectionEngine.RuleCount())
 
+	// AI attribution for detection comes from event tags (ai_session_id / is_ai) and a
+	// bounded (host,pid) cache shared across batches; Neo4j only adds look-back context.
+	attributionCache := detection.NewAttributionCache(0, 0)
 	var detectionQuerier detection.GraphQuerier
 	if neo4jClient != nil {
-		dqNeo4jClient, _ := neo4j.NewClient(neo4jURI, neo4jUser, neo4jPass)
-		detectionQuerier = detection.NewNeo4jGraphQuerier(dqNeo4jClient)
+		detectionQuerier = detection.NewNeo4jGraphQuerier(neo4jClient)
 		log.Println("Detection graph querier enabled (Neo4j)")
+	} else {
+		log.Println("Detection graph querier disabled — rules use event attribution tags; look-back rules (ai.data_exfiltration, ai.excessive_writes) need NEO4J_URI")
 	}
 
 	baselineCollector := detection.NewBaselineCollector(db)
@@ -249,10 +259,10 @@ func main() {
 	// Register the handlers with the mux.
 	attributionStore := attribution.NewPostgresStore(db)
 	attributionService := attribution.NewService(attributionStore)
-	mux.Handle("/health", api.HealthHandler(detectionQuerier != nil))
+	mux.Handle("/health", api.HealthHandler(detectionEngine != nil, detectionQuerier != nil))
 	mux.Handle("/readiness", api.ReadinessHandler(db))
-	mux.Handle("/ingest/events", wrapAuthed(api.NewLiveIngestHandler(telemetryStore, canonicalEventStore, eventBuffer, eventSampler, attributionService, processTreeWriter, detectionEngine, baselineCollector, findingStore, detectionQuerier, safeDomainStore, ruleExceptionStore, ruleSettingsStore, cooldown, chainCorrelator, incidentCorrelator, telNotifManager, neverBaselineStore)))
-	mux.Handle("/telemetry", wrapAuthed(telemetry.NewIngestHandler(telemetryStore, agentCertStore, attributionService)))
+	mux.Handle("/ingest/events", wrapAgent(api.NewLiveIngestHandler(telemetryStore, canonicalEventStore, agentCertStore, eventBuffer, eventSampler, attributionService, processTreeWriter, detectionEngine, baselineCollector, findingStore, detectionQuerier, attributionCache, safeDomainStore, ruleExceptionStore, ruleSettingsStore, cooldown, chainCorrelator, incidentCorrelator, telNotifManager, neverBaselineStore)))
+	mux.Handle("/telemetry", wrapAgent(telemetry.NewIngestHandler(telemetryStore, agentCertStore, attributionService)))
 	mux.Handle("/telemetry/recent", wrapAuthed(telemetry.NewRecentHandler(telemetryStore)))
 
 	// Agent block rule sync + block event reporting
@@ -260,9 +270,9 @@ func main() {
 	defer blockRuleStore.Stop()
 	blockEventStore := storage.NewBlockEventStore(db)
 	agentBlockRulesHandler := api.NewAgentBlockRulesHandler(blockRuleStore)
-	mux.Handle("/agent/block-rules", wrapAuthed(http.HandlerFunc(agentBlockRulesHandler.GetBlockRules)))
+	mux.Handle("/agent/block-rules", wrapAgent(http.HandlerFunc(agentBlockRulesHandler.GetBlockRules)))
 	blockEventsHandler := api.NewBlockEventsHandler(blockEventStore, blockRuleStore)
-	mux.Handle("/agent/block-events", wrapAuthed(http.HandlerFunc(blockEventsHandler.ReportBlockEvents)))
+	mux.Handle("/agent/block-events", wrapAgent(http.HandlerFunc(blockEventsHandler.ReportBlockEvents)))
 
 	// AI Intelligence worker — builds context windows, system profiles, and rollups
 	intelligenceWorker := intelligence.NewWorker(db)
@@ -274,23 +284,14 @@ func main() {
 	// agent ingestion — no query endpoints exposed to reduce attack surface.
 
 	if os.Getenv("ENABLE_DEBUG_ENDPOINTS") == "true" {
-		mux.Handle("/debug/vars", wrapAuthed(expvar.Handler()))
-		mux.HandleFunc("/debug/pprof/", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Index)).ServeHTTP(w, r)
-		})
-		mux.HandleFunc("/debug/pprof/cmdline", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Cmdline)).ServeHTTP(w, r)
-		})
-		mux.HandleFunc("/debug/pprof/profile", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Profile)).ServeHTTP(w, r)
-		})
-		mux.HandleFunc("/debug/pprof/symbol", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Symbol)).ServeHTTP(w, r)
-		})
-		mux.HandleFunc("/debug/pprof/trace", func(w http.ResponseWriter, r *http.Request) {
-			wrapAuthed(http.HandlerFunc(pprof.Trace)).ServeHTTP(w, r)
-		})
-		log.Println("debug endpoints enabled: /debug/vars, /debug/pprof/*")
+		// Debug endpoints expose process internals: admin only.
+		mux.Handle("/debug/vars", wrapAdmin(expvar.Handler()))
+		mux.Handle("/debug/pprof/", wrapAdmin(http.HandlerFunc(pprof.Index)))
+		mux.Handle("/debug/pprof/cmdline", wrapAdmin(http.HandlerFunc(pprof.Cmdline)))
+		mux.Handle("/debug/pprof/profile", wrapAdmin(http.HandlerFunc(pprof.Profile)))
+		mux.Handle("/debug/pprof/symbol", wrapAdmin(http.HandlerFunc(pprof.Symbol)))
+		mux.Handle("/debug/pprof/trace", wrapAdmin(http.HandlerFunc(pprof.Trace)))
+		log.Println("debug endpoints enabled (admin only): /debug/vars, /debug/pprof/*")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -316,6 +317,8 @@ func main() {
 	}
 
 	srv.TLSConfig = tlsCfg
+	// Response hygiene headers on every response; HSTS only because TLS is on.
+	srv.Handler = middleware.SecurityHeaders(tlsEnabled)(mux)
 	// Require a CA so presented client certs can be verified;
 	// agent endpoints are still enforced as mTLS-only by middleware.RequireMTLS.
 	if tlsCfg == nil || tlsCfg.ClientCAs == nil || tlsCfg.ClientAuth != tls.VerifyClientCertIfGiven {

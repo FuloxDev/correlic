@@ -1,15 +1,16 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, CheckCircle, XCircle, Eye, RefreshCw, Search, X, ChevronDown, ChevronUp, ChevronRight, Bot, ShieldAlert, FolderOpen, FolderClosed, FileText, FolderPlus, Shield, Loader2, Zap, Terminal, Globe, Ban, ShieldOff } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, Eye, RefreshCw, Search, X, ChevronRight, Bot, ShieldAlert, FolderOpen, FolderClosed, FileText, FolderPlus, Shield, Loader2, Zap, Terminal, Globe, ShieldOff, Calculator } from 'lucide-react';
 import {
-    getFindingsWithTotals, resolveFinding, resolveFindingWithExpiry, createException,
+    getFindingsWithTotals, resolveFinding, resolveFindingWithExpiry,
     createBaseline, deleteBaseline, createNeverBaseline, createBlockRule, resolveFindingDomain, addSafeDomain, reconcileFindings, aiAgentDisplayName,
     type Finding, type DomainResolution
 } from '@/lib/api-client';
 import { ApiError } from '@/lib/api';
+import { usePolling } from '@/lib/use-polling';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { PageHeading } from '@/components/ui/page-heading';
 import AnimatedNumber from '@/components/dashboard/AnimatedNumber';
@@ -165,7 +166,7 @@ export default function FindingsPage() {
             const rest = cmdline.substring(idx + prefix.length);
             const closeChar = prefix === "eval '" ? "'" : '"';
             const endIdx = rest.indexOf(closeChar);
-            let evalContent = endIdx > 0 ? rest.substring(0, endIdx) : rest.replace(/['"\s]+$/, '');
+            const evalContent = endIdx > 0 ? rest.substring(0, endIdx) : rest.replace(/['"\s]+$/, '');
             // Strip "cd /path && " prefix
             const cdMatch = evalContent.match(/^cd\s+\S+\s*&&\s*(.*)/);
             if (cdMatch) return cdMatch[1];
@@ -271,14 +272,10 @@ export default function FindingsPage() {
         return ids;
     }
 
-    const didReconcileRef = useRef(false);
+    const [reconciling, setReconciling] = useState(false);
 
-    useEffect(() => {
-        if (didReconcileRef.current) return;
-        didReconcileRef.current = true;
-        reconcileFindings().catch(() => {});
-        fetchData();
-    }, []);
+    // Initial load only (interval 0); refreshes are manual.
+    usePolling(fetchData, 0);
 
     async function fetchData() {
         try {
@@ -290,6 +287,20 @@ export default function FindingsPage() {
             console.error('Failed to fetch findings:', err);
         } finally {
             setLoading(false);
+        }
+    }
+
+    // Re-evaluates every pending finding against the current baselines. This is
+    // a heavy backend operation, so it only runs when an analyst asks for it.
+    async function handleRecalculate() {
+        setReconciling(true);
+        try {
+            await reconcileFindings();
+            await fetchData();
+        } catch (err) {
+            console.error('Failed to recalculate findings:', err);
+        } finally {
+            setReconciling(false);
         }
     }
 
@@ -440,8 +451,8 @@ export default function FindingsPage() {
         return arr;
     })();
 
-    // Search filter — applied to agent groups
-    const filteredAgentGroups = useMemo(() => {
+    // Search filter — applied to agent groups (agentGroups is rebuilt each render, so no memo)
+    const filteredAgentGroups = (() => {
         if (!searchQuery.trim()) return agentGroups;
         const q = searchQuery.toLowerCase();
         return agentGroups.map(agent => {
@@ -459,7 +470,7 @@ export default function FindingsPage() {
             if (filteredGroups.length === 0) return null;
             return { ...agent, groups: filteredGroups, pendingIds: filteredGroups.flatMap(g => g.pendingIds) };
         }).filter(Boolean) as typeof agentGroups;
-    }, [agentGroups, searchQuery]);
+    })();
 
     const allPendingIds = findings.filter(f => f.status === 'pending').map(f => f.id);
 
@@ -481,13 +492,27 @@ export default function FindingsPage() {
                 title="Findings"
                 subtitle="AI detection engine findings"
                 actions={
-                    <button
-                        onClick={fetchData}
-                        className="p-2 bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-2xl text-gray-400 hover:text-white hover:bg-white/[0.06] hover:border-white/[0.13] transition-all duration-200"
-                        title="Refresh"
-                    >
-                        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={handleRecalculate}
+                            disabled={reconciling || loading}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-2xl text-xs font-medium text-gray-400 hover:text-white hover:bg-white/[0.06] hover:border-white/[0.13] transition-all duration-200 disabled:opacity-50"
+                            title="Re-check every pending finding against the current baselines"
+                        >
+                            <Calculator className={`w-4 h-4 ${reconciling ? 'animate-pulse' : ''}`} aria-hidden="true" />
+                            {reconciling ? 'Recalculating…' : 'Recalculate'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={fetchData}
+                            className="p-2 bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-2xl text-gray-400 hover:text-white hover:bg-white/[0.06] hover:border-white/[0.13] transition-all duration-200"
+                            title="Refresh"
+                            aria-label="Refresh findings"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                        </button>
+                    </div>
                 }
             >
                 {totalPendingCount > 0 && (
@@ -741,7 +766,7 @@ export default function FindingsPage() {
 
                 {/* Search */}
                 <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                     <input
                         type="text"
                         placeholder="Search findings..."
@@ -750,14 +775,14 @@ export default function FindingsPage() {
                         className="pl-8 pr-8 py-2 text-sm bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-2xl text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/40 focus:ring-1 focus:ring-purple-500/20 w-56"
                     />
                     {searchQuery && (
-                        <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                        <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dim hover:text-white">
                             <X className="w-3.5 h-3.5" />
                         </button>
                     )}
                 </div>
 
                 {searchQuery && (
-                    <span className="text-sm text-gray-500 tabular-nums">
+                    <span className="text-sm text-dim tabular-nums">
                         {filteredAgentGroups.reduce((s, a) => s + a.groups.reduce((s2, g) => s2 + g.findings.length, 0), 0)} results
                     </span>
                 )}
@@ -811,11 +836,11 @@ export default function FindingsPage() {
                                 transition={{ type: 'spring', stiffness: 200, damping: 15, delay: 0.1 }}
                             >
                                 {searchQuery ? (
-                                    <Search className="w-14 h-14 text-gray-500/50 mx-auto mb-4" />
+                                    <Search className="w-14 h-14 text-dim/50 mx-auto mb-4" />
                                 ) : findingsSubTab === 'pending' ? (
                                     <Shield className="w-14 h-14 text-green-400/50 mx-auto mb-4" />
                                 ) : (
-                                    <Eye className="w-14 h-14 text-gray-500/50 mx-auto mb-4" />
+                                    <Eye className="w-14 h-14 text-dim/50 mx-auto mb-4" />
                                 )}
                             </motion.div>
                             <h3 className="text-xl font-semibold mb-2">
@@ -905,7 +930,7 @@ export default function FindingsPage() {
                                                 <Bot className={`w-5 h-5 ${agentPendingCount > 0 ? 'text-cyan-400' : 'text-gray-400'}`} />
                                             </div>
                                             <span className="text-[15px] font-semibold text-white/90">{agent.ai_type}</span>
-                                            <span className="text-xs text-gray-500 tabular-nums">{agentTotalCount} finding{agentTotalCount !== 1 ? 's' : ''}</span>
+                                            <span className="text-xs text-dim tabular-nums">{agentTotalCount} finding{agentTotalCount !== 1 ? 's' : ''}</span>
                                             {findingsSubTab === 'pending' && agentPendingCount > 0 && (
                                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/20">
                                                     {agentPendingCount} pending
@@ -913,7 +938,7 @@ export default function FindingsPage() {
                                             )}
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            <ChevronRight className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isAgentExpanded ? 'rotate-90' : ''}`} />
+                                            <ChevronRight className={`w-4 h-4 text-dim transition-transform duration-200 ${isAgentExpanded ? 'rotate-90' : ''}`} />
                                         </div>
                                     </div>
                                 </div>
@@ -974,7 +999,7 @@ export default function FindingsPage() {
 
                                                             {/* Row 2: example summaries (collapsed only) */}
                                                             {!isRuleExpanded && exampleSummaries.length > 0 && (
-                                                                <p className="text-xs text-gray-500 font-mono mt-2 ml-10 truncate">
+                                                                <p className="text-xs text-dim font-mono mt-2 ml-10 truncate">
                                                                     {exampleSummaries[0]}{totalCount > 1 ? ` (+${totalCount - 1} more)` : ''}
                                                                 </p>
                                                             )}
@@ -991,7 +1016,7 @@ export default function FindingsPage() {
                                                                     <span className="font-semibold text-white/80">{totalCount}</span> total
                                                                 </span>
                                                                 <span className="text-white/10">|</span>
-                                                                <span className="text-xs text-gray-500">{new Date(latestFinding?.created_at).toLocaleString()}</span>
+                                                                <span className="text-xs text-dim">{new Date(latestFinding?.created_at).toLocaleString()}</span>
                                                             </div>
                                                         </div>
 
@@ -1054,7 +1079,7 @@ export default function FindingsPage() {
                                                                                     )}
                                                                                     <span className="px-1 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shrink-0" style={{ color: fHex, background: `${fHex}15` }}>{f.severity}</span>
                                                                                     {f.status === 'allowed' && <span className="text-[10px] text-green-400 shrink-0 flex items-center gap-0.5"><CheckCircle className="w-2.5 h-2.5" />Allowed</span>}
-                                                                                    {f.status === 'dismissed' && <span className="text-[10px] text-gray-500 shrink-0">Dismissed</span>}
+                                                                                    {f.status === 'dismissed' && <span className="text-[10px] text-dim shrink-0">Dismissed</span>}
                                                                                     {!!(ctx.action === 'blocked' || ctx.blocked) && (
                                                                                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/25 shrink-0 flex items-center gap-0.5">
                                                                                             <ShieldOff className="w-2.5 h-2.5" /> Blocked
@@ -1102,7 +1127,7 @@ export default function FindingsPage() {
                                                                                                 {domainLoading[f.id] ? 'Resolving...' : 'Resolve'}
                                                                                             </button>
                                                                                         ) : null}
-                                                                                        {ctx.asn_name || domainResolutions[f.id]?.asn_name ? <span className="text-gray-500">({String(ctx.asn_name || domainResolutions[f.id]?.asn_name)})</span> : null}
+                                                                                        {ctx.asn_name || domainResolutions[f.id]?.asn_name ? <span className="text-dim">({String(ctx.asn_name || domainResolutions[f.id]?.asn_name)})</span> : null}
                                                                                     </div>
                                                                                 ) : null}
                                                                                 {sensitiveFiles.length > 0 ? (
@@ -1120,7 +1145,7 @@ export default function FindingsPage() {
                                                                                                 const dirPath = parts.join('/') + '/';
                                                                                                 return (
                                                                                                     <div key={i} className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono hover:bg-red-500/10 transition-colors ${i > 0 ? 'border-t border-red-500/5' : ''}`}>
-                                                                                                        <span className="truncate" title={fp}><span className="text-gray-600">{dirPath}</span><span className="text-red-300">{fileName}</span></span>
+                                                                                                        <span className="truncate" title={fp}><span className="text-dim">{dirPath}</span><span className="text-red-300">{fileName}</span></span>
                                                                                                     </div>
                                                                                                 );
                                                                                             })}
@@ -1144,14 +1169,14 @@ export default function FindingsPage() {
                                                                                 {!!ctx.dns_query && !hasNetwork ? (
                                                                                     <div className="mt-1 ml-3.5 text-[11px]">
                                                                                         <span className="text-cyan-400 font-mono">{String(ctx.dns_query)}</span>
-                                                                                        {ctx.category ? <span className="text-gray-600 ml-1.5">({String(ctx.category)})</span> : null}
+                                                                                        {ctx.category ? <span className="text-dim ml-1.5">({String(ctx.category)})</span> : null}
                                                                                     </div>
                                                                                 ) : null}
 
                                                                                 {/* Row 3: inline metadata */}
                                                                                 <div className="flex items-center gap-2 mt-1.5 ml-3.5 flex-wrap">
-                                                                                    {ctx.pid ? <span className="text-[10px] text-gray-600">PID {String(ctx.pid)}</span> : null}
-                                                                                    {ctx.binary ? <span className="text-[10px] text-gray-600">{String(ctx.binary)}</span> : null}
+                                                                                    {ctx.pid ? <span className="text-[10px] text-dim">PID {String(ctx.pid)}</span> : null}
+                                                                                    {ctx.binary ? <span className="text-[10px] text-dim">{String(ctx.binary)}</span> : null}
                                                                                     {ctx.ai_type ? <span className="text-[10px] text-purple-400/60">{aiAgentDisplayName(String(ctx.ai_type))}</span> : null}
                                                                                     {Array.isArray(ctx.mitre_techniques) && (ctx.mitre_techniques as string[]).length > 0 && (
                                                                                         <>
@@ -1161,7 +1186,7 @@ export default function FindingsPage() {
                                                                                             ))}
                                                                                         </>
                                                                                     )}
-                                                                                    <span className="text-[10px] text-gray-600 ml-auto tabular-nums">{new Date(f.created_at).toLocaleString()}</span>
+                                                                                    <span className="text-[10px] text-dim ml-auto tabular-nums">{new Date(f.created_at).toLocaleString()}</span>
                                                                                     {f.incident_id && (
                                                                                         <Link
                                                                                             href={`/incidents/${encodeURIComponent(f.incident_id)}`}
@@ -1287,7 +1312,7 @@ export default function FindingsPage() {
                                                                             >
                                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                                     {isLeaf ? (
-                                                                                        <FileText className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                                                                                        <FileText className="w-4 h-4 text-dim flex-shrink-0" />
                                                                                     ) : isOpen ? (
                                                                                         <FolderOpen className="w-4 h-4 text-yellow-500 flex-shrink-0" />
                                                                                     ) : (
@@ -1296,7 +1321,7 @@ export default function FindingsPage() {
                                                                                     <span className={`text-sm truncate ${isLeaf ? 'text-gray-300' : 'text-white font-medium'}`}>
                                                                                         {isLeaf ? node.name : node.name + '/'}
                                                                                     </span>
-                                                                                    <span className="text-xs text-gray-500 flex-shrink-0">({node.totalFindings})</span>
+                                                                                    <span className="text-xs text-dim flex-shrink-0">({node.totalFindings})</span>
                                                                                     {node.pendingCount > 0 && (
                                                                                         <span className="px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-300 rounded border border-purple-500/30 flex-shrink-0">
                                                                                             {node.pendingCount} pending
@@ -1314,7 +1339,7 @@ export default function FindingsPage() {
                                                                                         </button>
                                                                                     )}
                                                                                     {!isLeaf && (
-                                                                                        <ChevronRight className={`w-4 h-4 text-gray-500 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                                                                                        <ChevronRight className={`w-4 h-4 text-dim transition-transform ${isOpen ? 'rotate-90' : ''}`} />
                                                                                     )}
                                                                                 </div>
                                                                             </div>

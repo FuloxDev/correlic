@@ -127,10 +127,10 @@ export default function ProcessTreeView({ tree }: ProcessTreeViewProps) {
                     <Cpu className="w-5 h-5 text-orange-400" />
                     <h2 className="text-lg font-semibold">Process Tree</h2>
                 </div>
-                <div className="text-center py-12 text-gray-500">
+                <div className="text-center py-12 text-dim">
                     <Cpu className="w-8 h-8 mx-auto mb-2 opacity-30" />
                     <p className="text-sm">No process tree data available</p>
-                    <p className="text-xs text-gray-600 mt-1">Process tree requires Neo4j graph store</p>
+                    <p className="text-xs text-dim mt-1">Process tree requires Neo4j graph store</p>
                 </div>
             </div>
         );
@@ -143,7 +143,7 @@ export default function ProcessTreeView({ tree }: ProcessTreeViewProps) {
                 <div className="flex items-center gap-2">
                     <Cpu className="w-5 h-5 text-orange-400" />
                     <h2 className="text-lg font-semibold">Process Tree</h2>
-                    <span className="text-xs text-gray-500">{nodes.length} processes</span>
+                    <span className="text-xs text-dim">{nodes.length} processes</span>
                 </div>
                 <div className="flex items-center gap-1">
                     <button onClick={() => setTransform(t => ({ ...t, scale: Math.min(t.scale * 1.2, 3) }))} className="p-1.5 bg-white/5 rounded-xl hover:bg-white/10 transition-all duration-200" title="Zoom in">
@@ -235,17 +235,17 @@ export default function ProcessTreeView({ tree }: ProcessTreeViewProps) {
                                             {n.ai_type ? (
                                                 <Bot className="w-3 h-3 text-cyan-400 shrink-0" />
                                             ) : (
-                                                <Cpu className="w-3 h-3 text-gray-500 shrink-0" />
+                                                <Cpu className="w-3 h-3 text-dim shrink-0" />
                                             )}
                                             <span className="text-[11px] text-white font-medium truncate">{name}</span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
-                                            <span className="text-[9px] text-gray-500 font-mono">PID {n.pid}</span>
+                                            <span className="text-[9px] text-dim font-mono">PID {n.pid}</span>
                                             {n.ai_type && (
                                                 <span className="text-[8px] px-1 py-0.5 bg-cyan-500/15 text-cyan-400 rounded">{n.ai_type}</span>
                                             )}
                                             {n.user && (
-                                                <span className="text-[8px] text-gray-600 flex items-center gap-0.5">
+                                                <span className="text-[8px] text-dim flex items-center gap-0.5">
                                                     <User className="w-2.5 h-2.5" />{n.user}
                                                 </span>
                                             )}
@@ -276,8 +276,8 @@ export default function ProcessTreeView({ tree }: ProcessTreeViewProps) {
                         >
                             {n.exe_path && <div className="text-gray-300 font-mono break-all">{n.exe_path}</div>}
                             {n.user && <div className="text-gray-400">User: {n.user}</div>}
-                            <div className="text-gray-500">PID {n.pid} → PPID {n.ppid}</div>
-                            {n.started_at && <div className="text-gray-500">{new Date(n.started_at).toLocaleTimeString()}</div>}
+                            <div className="text-dim">PID {n.pid} → PPID {n.ppid}</div>
+                            {n.started_at && <div className="text-dim">{new Date(n.started_at).toLocaleTimeString()}</div>}
                             {n.finding_ids && n.finding_ids.length > 0 && (
                                 <div className="text-orange-400">{n.finding_ids.length} finding{n.finding_ids.length > 1 ? 's' : ''}</div>
                             )}

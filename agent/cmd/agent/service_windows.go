@@ -10,11 +10,14 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows/svc"
+
+	"github.com/correlic/correlic-agent/internal/logging"
 )
 
 // corService implements svc.Handler for running the agent as a Windows Service.
 type corService struct {
-	logger *slog.Logger
+	logger     *slog.Logger
+	configPath string
 }
 
 // Execute is called by the Windows service manager.
@@ -24,10 +27,15 @@ func (s *corService) Execute(args []string, r <-chan svc.ChangeRequest, changes 
 	// Run the agent in a background goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	var rt *agentRuntime
+	started := make(chan struct{})
 
 	go func() {
 		defer close(done)
-		if err := runAgent(ctx, s.logger); err != nil {
+		var err error
+		rt, err = runAgent(ctx, s.logger, s.configPath)
+		close(started)
+		if err != nil {
 			s.logger.Error("agent startup failed", "error", err)
 			// Write to file since service has no console
 			if exe, err2 := os.Executable(); err2 == nil {
@@ -38,6 +46,9 @@ func (s *corService) Execute(args []string, r <-chan svc.ChangeRequest, changes 
 		}
 		// runAgent starts goroutines and returns — keep alive until context cancelled.
 		<-ctx.Done()
+		if !rt.wait(shutdownTimeout) {
+			s.logger.Warn("drain timeout exceeded, forcing stop")
+		}
 	}()
 
 	changes <- svc.Status{
@@ -54,13 +65,13 @@ func (s *corService) Execute(args []string, r <-chan svc.ChangeRequest, changes 
 				changes <- req.CurrentStatus
 			case svc.Stop, svc.Shutdown:
 				changes <- svc.Status{State: svc.StopPending}
-				s.logger.Info("service stop requested, draining (10s deadline)...")
+				s.logger.Info("service stop requested, draining", "deadline", shutdownTimeout)
 				cancel()
 
 				// Wait for agent to finish or timeout.
 				select {
 				case <-done:
-				case <-time.After(10 * time.Second):
+				case <-time.After(shutdownTimeout + 2*time.Second):
 					s.logger.Warn("drain timeout exceeded, forcing stop")
 				}
 
@@ -68,7 +79,8 @@ func (s *corService) Execute(args []string, r <-chan svc.ChangeRequest, changes 
 				return false, 0
 			}
 		case <-done:
-			// Agent exited on its own (shouldn't happen in normal operation).
+			// Agent exited on its own (startup failure).
+			<-started
 			changes <- svc.Status{State: svc.Stopped}
 			return false, 0
 		}
@@ -77,7 +89,7 @@ func (s *corService) Execute(args []string, r <-chan svc.ChangeRequest, changes 
 
 // runAsService starts the agent as a Windows service if running under the service manager.
 // If not running as a service, returns immediately and main() continues in interactive mode.
-func runAsService(logger *slog.Logger) {
+func runAsService(logger *slog.Logger, configPath string) {
 	isService, err := svc.IsWindowsService()
 	if err != nil {
 		logger.Error("failed to detect service mode", "error", err)
@@ -90,20 +102,22 @@ func runAsService(logger *slog.Logger) {
 	}
 
 	// Running as Windows service — set up file-based logging since there's no console.
+	// The level follows log_level from agent.yaml via logging.Level once the
+	// config is loaded.
 	exePath, _ := os.Executable()
 	logDir := filepath.Join(filepath.Dir(exePath), "..", "logs")
 	os.MkdirAll(logDir, 0755)
 	logFile, err := os.OpenFile(filepath.Join(logDir, "agent.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
-		handler := slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelDebug})
+		handler := slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: logging.Level})
 		logger = slog.New(handler)
 		// Set as default so all packages (batcher, dispatch, etc.) also log to file
 		slog.SetDefault(logger)
 	}
 
-	logger.Info("starting as Windows service", "name", "CorrelicAgent")
+	logger.Info("starting as Windows service", "name", defaultServiceName)
 
-	err = svc.Run("CorrelicAgent", &corService{logger: logger})
+	err = svc.Run(defaultServiceName, &corService{logger: logger, configPath: configPath})
 	if err != nil {
 		logger.Error("service run failed", "error", err)
 		os.Exit(1)

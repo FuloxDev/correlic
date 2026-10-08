@@ -16,11 +16,11 @@ import (
 
 // IncidentsHandler handles HTTP requests for incidents.
 type IncidentsHandler struct {
-	assembler            *incident.ContextAssembler
-	store                *incident.IncidentStore
-	findingStore         *storage.FindingStore
-	baselineCollector    *detection.BaselineCollector
-	summaryInvalidator   incident.SummaryInvalidator // optional, nil-safe
+	assembler          *incident.ContextAssembler
+	store              *incident.IncidentStore
+	findingStore       *storage.FindingStore
+	baselineCollector  *detection.BaselineCollector
+	summaryInvalidator incident.SummaryInvalidator // optional, nil-safe
 }
 
 // NewIncidentsHandler creates a new incidents handler.

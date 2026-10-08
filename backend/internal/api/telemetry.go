@@ -12,6 +12,7 @@ import (
 
 	"github.com/correlic/correlic-backend/internal/ai/attribution"
 	"github.com/correlic/correlic-backend/internal/api/middleware"
+	"github.com/correlic/correlic-backend/internal/ingest"
 	"github.com/correlic/correlic-backend/internal/model"
 	"github.com/correlic/correlic-backend/internal/storage"
 )
@@ -21,11 +22,20 @@ const maxTelemetryBodyBytes = 4 << 20 // 4MiB for batch ingest
 // TelemetryHandler exposes telemetry event listing (GET) and batch ingest (POST) for agents.
 type TelemetryHandler struct {
 	store          storage.TelemetryStore
+	agentCertStore storage.AgentCertStore // optional: binds mTLS identity to agent_id
 	attributionSvc *attribution.Service
 }
 
-func NewTelemetryHandler(store storage.TelemetryStore, attributionSvc *attribution.Service) *TelemetryHandler {
-	return &TelemetryHandler{store: store, attributionSvc: attributionSvc}
+// TelemetryIngestResponse is the 202 body for POST /telemetry.
+type TelemetryIngestResponse struct {
+	Accepted int `json:"accepted"`
+	Rejected int `json:"rejected"`
+	Sampled  int `json:"sampled"`
+}
+
+// NewTelemetryHandler builds the handler. agentCertStore may be nil to skip host binding.
+func NewTelemetryHandler(store storage.TelemetryStore, agentCertStore storage.AgentCertStore, attributionSvc *attribution.Service) *TelemetryHandler {
+	return &TelemetryHandler{store: store, agentCertStore: agentCertStore, attributionSvc: attributionSvc}
 }
 
 func (h *TelemetryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,10 +82,63 @@ func (h *TelemetryHandler) servePost(w http.ResponseWriter, r *http.Request, org
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if err := h.store.InsertEvents(orgID, batch.Events); err != nil {
-		log.Printf("telemetry ingest insert error: %v", err)
-		Internal(w)
+	if len(batch.Events) > ingest.MaxEventsPerRequest {
+		PayloadTooLarge(w, "too many events in one request (max 500)")
 		return
+	}
+
+	// Bind the caller's identity to the agent it reports for: one agent_id per batch,
+	// and with mTLS the cert fingerprint must match the binding (created on first use).
+	agentID := ""
+	for i := range batch.Events {
+		id := batch.Events[i].AgentID
+		if id == "" {
+			continue
+		}
+		if agentID == "" {
+			agentID = id
+		} else if id != agentID {
+			BadRequest(w, "telemetry batch must contain a single agent_id")
+			return
+		}
+	}
+	if agentID != "" && h.agentCertStore != nil {
+		if fp, ok := middleware.ClientCertFingerprintFromContext(r.Context()); ok {
+			if err := h.agentCertStore.EnsureBound(orgID, agentID, fp); err != nil {
+				if errors.Is(err, storage.ErrAgentCertMismatch) || errors.Is(err, storage.ErrFingerprintAlreadyBound) {
+					middleware.AgentCertMismatchTotal.Add(1)
+					Unauthorized(w, "mTLS client cert does not match agent identity")
+					return
+				}
+				log.Printf("telemetry mTLS bind failed: org=%s agent_id=%s err=%v", orgID, agentID, err)
+				Internal(w)
+				return
+			}
+		}
+	}
+
+	// Drop events outside the sanity window (clock skew / replays) instead of storing them.
+	now := time.Now()
+	minTS, maxTS := now.Add(-ingest.MaxEventAge), now.Add(ingest.MaxFutureSkew)
+	kept := batch.Events[:0]
+	rejected := 0
+	for _, te := range batch.Events {
+		if te.AgentID == "" || te.EventType == "" || te.Timestamp.IsZero() ||
+			te.Timestamp.After(maxTS) || te.Timestamp.Before(minTS) || len(te.Payload) == 0 {
+			rejected++
+			continue
+		}
+		kept = append(kept, te)
+	}
+	batch.Events = kept
+
+	if len(batch.Events) > 0 {
+		// Raw storage is the retry boundary: a failed insert must surface as 5xx.
+		if err := h.store.InsertEvents(orgID, batch.Events); err != nil {
+			log.Printf("telemetry ingest insert error: %v", err)
+			Internal(w)
+			return
+		}
 	}
 
 	// Attribute process_exec events to AI agents
@@ -87,7 +150,9 @@ func (h *TelemetryHandler) servePost(w http.ResponseWriter, r *http.Request, org
 		}
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(TelemetryIngestResponse{Accepted: len(batch.Events), Rejected: rejected})
 }
 
 // serveGet lists telemetry events with optional filters (query params).

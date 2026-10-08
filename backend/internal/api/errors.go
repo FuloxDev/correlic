@@ -66,6 +66,14 @@ func Internal(w http.ResponseWriter) {
 	writeError(w, http.StatusInternalServerError, "internal", "internal server error")
 }
 
+// InternalErr logs err under op and writes a generic 500. Use it wherever a
+// handler used to echo err.Error() to the client: internal details (SQL,
+// Neo4j, file paths, upstream responses) belong in the server log only.
+func InternalErr(w http.ResponseWriter, op string, err error) {
+	log.Printf("ERROR: %s: %v", op, err)
+	Internal(w)
+}
+
 // Forbidden writes a forbidden error response to the response writer
 func Forbidden(w http.ResponseWriter, msg string) {
 	if msg == "" {
