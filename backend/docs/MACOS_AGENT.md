@@ -104,14 +104,37 @@ GOOS=darwin GOARCH=arm64 go build -o correlic-agent-darwin ./cmd/agent
 CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -tags esf -o correlic-agent-darwin-esf ./cmd/agent
 ```
 
+## Support status
+
+macOS is a best-effort preview, built from source. The project does not
+publish macOS binaries: a signed and notarized build, and the Endpoint
+Security entitlement below, both require a paid Apple Developer Program
+membership (renewed yearly, Organization account for the entitlement) that
+the project does not maintain. Contributions that keep the kqueue/FSEvents
+path working are welcome, but Linux is the supported platform.
+
+Recommended setup on a Mac:
+
+- Run the backend and dashboard with Docker (`install/docker-compose.yml` or
+  the all-in-one image).
+- Run the coding agent inside a Linux VM or container (Lima, OrbStack, UTM,
+  a devcontainer) and install the Linux agent there. A Docker container
+  cannot observe Cursor or Claude Code running on the macOS host.
+- Or build the macOS agent from source for the polling collectors above,
+  accepting the limitations below.
+
 ## Phase 2: ESF (Endpoint Security Framework)
 
 Implemented behind the `esf` build tag (`agent/internal/darwin/esf/`, wired in
-`agent/cmd/agent/platform_darwin_esf.go`). An esf-tagged binary opens an
-Endpoint Security client at startup and falls back to the kqueue/FSEvents
-collectors when the entitlement, root or Full Disk Access is missing. The
-Apple side (entitlement request, Developer ID, provisioning profile), the
-signed build and the install steps are in `MACOS_ESF_SETUP.md`.
+`agent/cmd/agent/platform_darwin_esf.go`) and compiled in CI so it does not
+rot. An esf-tagged binary opens an Endpoint Security client at startup and
+falls back to the kqueue/FSEvents collectors when the entitlement, root or
+Full Disk Access is missing. To actually run it you need your own Apple
+Developer Program Organization account, Apple's approval of the
+`com.apple.developer.endpoint-security.client` entitlement, a Developer ID
+certificate and a provisioning profile; then sign the binary with
+`agent/build/correlic-agent.entitlements`. None of that is provided or
+supported by the project.
 
 ## Known Limitations (MVP)
 

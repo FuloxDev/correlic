@@ -106,10 +106,10 @@ sudo CORRELIC_CONFIG=/etc/correlic/agent.yaml go run ./cmd/agent
 CPATH=<libbpf include> go generate ./internal/ebpf/...
 go build ./... && go vet ./... && go test -race ./...
 GOOS=darwin GOARCH=arm64 go build ./... && GOOS=windows GOARCH=amd64 go build ./...
-# macOS with Endpoint Security (needs a Mac with Xcode; see backend/docs/MACOS_ESF_SETUP.md)
+# macOS with Endpoint Security (compile check only; needs a Mac with Xcode)
 SDKROOT=$(xcrun --sdk macosx --show-sdk-path) CGO_ENABLED=1 go build -tags esf ./cmd/agent
 ```
-On macOS an `esf`-tagged binary tries Endpoint Security first (`platform_darwin_esf.go`) and falls back to kqueue/FSEvents/lsof when the entitlement, root or Full Disk Access is missing; builds without the tag always poll.
+On macOS an `esf`-tagged binary tries Endpoint Security first (`platform_darwin_esf.go`) and falls back to kqueue/FSEvents/lsof when the entitlement, root or Full Disk Access is missing; builds without the tag always poll. Running the ESF path needs the `com.apple.developer.endpoint-security.client` entitlement, which Apple only grants to a paid Developer Program Organization account, so the project does not ship it: macOS is a best-effort, build-from-source preview (see `backend/docs/MACOS_AGENT.md`).
 Shutdown: SIGTERM cancels the context; main waits up to 10 s for runners, the batcher, the ingest sink and the heartbeat (stopping/stopped) to drain.
 
 ## Key Files

@@ -71,9 +71,9 @@ jobs:
       - run: go build ./... && go vet ./...
       - run: go test ./...
       # The Endpoint Security bindings need cgo and the macOS SDK, so this is
-      # the only job that compiles them. Running them needs the entitlement.
-      # SDKROOT points clang at the SDK; without it the link step cannot find
-      # EndpointSecurity.framework (shipped as a .tbd stub in the SDK).
+      # the only job that compiles them (a compile check only: running them
+      # needs an entitlement the project does not hold). SDKROOT points clang
+      # at the SDK headers.
       - name: Build with Endpoint Security (-tags esf)
         env: { CGO_ENABLED: '1' }
         run: |
