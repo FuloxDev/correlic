@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,12 +13,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -125,10 +128,13 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Correlic admin CLI")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Usage:")
-	fmt.Fprintln(os.Stderr, "  admin migrate")
+	fmt.Fprintln(os.Stderr, "  admin migrate up|status|down")
 	fmt.Fprintln(os.Stderr, "  admin status [--api-url <url>] [--telemetry-url <url>] [--mtls-ca <path>] [--mtls-cert <path>] [--mtls-key <path>]")
+	fmt.Fprintln(os.Stderr, "  admin bootstrap --name <org_name> --certs-dir <dir> [--email <admin_email>] [--agent-email <email>] [--force]")
 	fmt.Fprintln(os.Stderr, "  admin create-org --name <org_name>")
-	fmt.Fprintln(os.Stderr, "  admin create-api-key --org-id <uuid> --name <key_name>")
+	fmt.Fprintln(os.Stderr, "  admin create-user --org-id <uuid> --email <email> --name <name> --role <admin|member>")
+	fmt.Fprintln(os.Stderr, "  admin create-service-account --org-id <uuid> --email <email> [--name <name>] [--role <admin|member>]")
+	fmt.Fprintln(os.Stderr, "  admin create-api-key --org-id <uuid> --user-id <uuid> --name <key_name> [--type service|agent] [--description <text>]")
 	fmt.Fprintln(os.Stderr, "  admin revoke-api-key --key-id <uuid>")
 	fmt.Fprintln(os.Stderr, "  admin enroll-client-cert --org-id <uuid> --name <label> (--cert-file <path> | --fingerprint <hex>)")
 	fmt.Fprintln(os.Stderr, "  admin revoke-client-cert --org-id <uuid> --fingerprint <hex>")
@@ -156,31 +162,72 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  admin emit-lazagne --org-id <uuid> --agent-id <agent_id>")
 	fmt.Fprintln(os.Stderr, "  admin emit-identity-snapshot --org-id <uuid> --agent-id <agent_id> [--ssh-fps <csv>] [--git-remotes <csv>] [--kube-contexts <csv>]")
 	fmt.Fprintln(os.Stderr, "  admin emit-git-event --org-id <uuid> --agent-id <agent_id> --op <clone|remote_add|remote_set_url|push|pull|fetch> [--remote-url <url>] [--repo-path <path>] [--branch <name>] [--result <ok|error>]")
-	fmt.Fprintln(os.Stderr, "  admin set-git-guard --org-id <uuid> [--clone-approval true|false] [--clone-alert true|false] [--remote-host-alert true|false]")
-	fmt.Fprintln(os.Stderr, "  admin link-github-installation --org-id <uuid> --installation-id <int> [--account-login <login>]")
-	fmt.Fprintln(os.Stderr, "  admin set-github-guard --org-id <uuid> --protected-branches <csv>")
-	fmt.Fprintln(os.Stderr, "  admin create-user --org-id <uuid> --email <email> --name <name> --role <admin|member>")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Environment:")
 	fmt.Fprintln(os.Stderr, "  DATABASE_URL (optional): postgres connection string")
 }
 
-// cmdMigrate applies all embedded migrations.
+// cmdMigrate manages the embedded migrations:
+//
+//	migrate up      applies every pending migration (default when no subcommand is given)
+//	migrate status  prints the applied migration names and anything still pending
+//	migrate down    not supported — migrations are forward-only (exit 2)
 func cmdMigrate(args []string) {
+	sub := "up"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub = args[0]
+		args = args[1:]
+	}
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	_ = fs.Parse(args)
 
-	db, err := openDB()
-	if err != nil {
-		log.Fatal(err)
+	switch sub {
+	case "up":
+		db, err := openDB()
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer db.Close()
+		pending, err := migrate.Pending(db)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := migrate.ApplyEmbedded(db); err != nil {
+			log.Fatal(err)
+		}
+		for _, p := range pending {
+			fmt.Printf("applied=%s\n", p)
+		}
+		fmt.Println("migrated=true")
+	case "status":
+		db, err := openDB()
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer db.Close()
+		applied, err := migrate.ListApplied(db)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pending, err := migrate.Pending(db)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("applied=%d\n", len(applied))
+		for _, m := range applied {
+			fmt.Printf("  %s  %s\n", m.Version, m.AppliedAt.UTC().Format(time.RFC3339))
+		}
+		fmt.Printf("pending=%d\n", len(pending))
+		for _, p := range pending {
+			fmt.Printf("  %s\n", p)
+		}
+	case "down":
+		fmt.Fprintln(os.Stderr, "migrate down: not supported (migrations are forward-only; restore from a backup to roll back)")
+		os.Exit(2)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown migrate subcommand %q (want up|status|down)\n", sub)
+		os.Exit(2)
 	}
-	defer db.Close()
-
-	if err := migrate.ApplyEmbedded(db); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("migrated=true")
 }
 
 // cmdStatus prints the status of the system
@@ -423,6 +470,7 @@ func cmdCreateAPIKey(args []string) {
 	userIDStr := fs.String("user-id", "", "user id (uuid) - required for service accounts")
 	name := fs.String("name", "", "key name")
 	description := fs.String("description", "", "key description (optional)")
+	keyType := fs.String("type", "service", "key type: service (dashboard/CI, carries the user's role) or agent (host agent ingest only)")
 	_ = fs.Parse(args)
 
 	if strings.TrimSpace(*orgIDStr) == "" {
@@ -434,6 +482,10 @@ func cmdCreateAPIKey(args []string) {
 	if strings.TrimSpace(*name) == "" {
 		log.Fatal("--name is required")
 	}
+	kt := strings.ToLower(strings.TrimSpace(*keyType))
+	if kt != "service" && kt != "agent" {
+		log.Fatal("--type must be 'service' or 'agent'")
+	}
 
 	orgID, err := uuid.Parse(*orgIDStr)
 	if err != nil {
@@ -444,23 +496,18 @@ func cmdCreateAPIKey(args []string) {
 		log.Fatal("invalid --user-id")
 	}
 
-	rawKey, err := generateRawAPIKey()
-	if err != nil {
-		log.Fatal(err)
-	}
-	keyHash := sha256Hex(rawKey)
-
 	db, err := openDB()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
 
-	// Verify user exists and is in the org
+	// Verify user exists and is in the org. Any member may hold an agent key; admin
+	// is not required for either type (the key carries the user's own role).
 	var exists bool
 	err = db.QueryRow(`
 		SELECT EXISTS(
-			SELECT 1 FROM org_users 
+			SELECT 1 FROM org_users
 			WHERE org_id = $1 AND user_id = $2
 		)
 	`, orgID, userID).Scan(&exists)
@@ -471,19 +518,15 @@ func cmdCreateAPIKey(args []string) {
 		log.Fatal("user not found in organization")
 	}
 
-	keyID := uuid.New()
-	desc := strings.TrimSpace(*description)
-	_, err = db.Exec(`
-		INSERT INTO api_keys (id, org_id, user_id, key_hash, name, description, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now())
-	`, keyID, orgID, userID, keyHash, *name, desc)
+	rawKey, keyID, err := insertAPIKey(db, orgID.String(), userID.String(), *name, strings.TrimSpace(*description), kt)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Print raw key once for operator to copy into agent config.
 	// Do not log raw key.
-	fmt.Printf("key_id=%s\n", keyID.String())
+	fmt.Printf("key_id=%s\n", keyID)
+	fmt.Printf("key_type=%s\n", kt)
 	fmt.Printf("api_key=%s\n", rawKey)
 }
 
@@ -1328,10 +1371,10 @@ func cmdCreateUser(args []string) {
 		log.Fatal(err)
 	}
 
-	// Create user if doesn't exist (generates random password)
-	var generatedPassword string
+	// Create user if doesn't exist (generates random password). The account is created
+	// email-verified so an installer-created admin can log in without the email flow;
+	// the generated password must still be changed on first login.
 	if user == nil {
-		// Generate password
 		randomPassword := generateRandomPassword()
 		hash, err := bcrypt.GenerateFromPassword([]byte(randomPassword), bcrypt.DefaultCost)
 		if err != nil {
@@ -1343,16 +1386,19 @@ func cmdCreateUser(args []string) {
 			log.Fatal(err)
 		}
 		if wasCreated {
-			generatedPassword = randomPassword
-			fmt.Printf("created_user_id=%s\n", user.ID)
-			fmt.Printf("password=%s\n", generatedPassword)
+			if _, err := db.Exec(`UPDATE users SET email_verified = true WHERE id = $1`, user.ID); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("user_id=%s\n", user.ID)
+			fmt.Printf("password=%s\n", randomPassword)
+			fmt.Printf("email_verified=true\n")
 			fmt.Printf("password_reset_required=true\n")
 		} else {
-			fmt.Printf("existing_user_id=%s\n", user.ID)
+			fmt.Printf("user_id=%s\n", user.ID)
 			fmt.Printf("password=not_generated (user already exists)\n")
 		}
 	} else {
-		fmt.Printf("existing_user_id=%s\n", user.ID)
+		fmt.Printf("user_id=%s\n", user.ID)
 		fmt.Printf("password=not_generated (user already exists)\n")
 	}
 
@@ -1380,18 +1426,79 @@ func generateRandomPassword() string {
 	return base64.URLEncoding.EncodeToString(b)[:24] // 24 chars, URL-safe
 }
 
-// cmdBootstrap is the one-command setup for local-first deployment
-// Creates: org, admin user, API key, TLS certs, enrolls client cert
+// insertAPIKey creates an API key row of the given type ("service" or "agent") for a
+// user in an org and returns the raw key (shown once) and the key id.
+func insertAPIKey(db *sql.DB, orgID, userID, name, description, keyType string) (rawKey, keyID string, err error) {
+	switch keyType {
+	case "service", "agent":
+	default:
+		return "", "", fmt.Errorf("invalid key type %q (want service or agent)", keyType)
+	}
+	rawKey, err = generateRawAPIKey()
+	if err != nil {
+		return "", "", err
+	}
+	keyID = uuid.New().String()
+	_, err = db.Exec(`
+		INSERT INTO api_keys (id, org_id, user_id, key_hash, name, description, key_type, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+	`, keyID, orgID, userID, sha256Hex(rawKey), name, description, keyType)
+	if err != nil {
+		return "", "", err
+	}
+	return rawKey, keyID, nil
+}
+
+// agentConfigTemplate is the agent.yaml bootstrap writes. Only keys the host agent
+// accepts may appear here — it rejects unknown keys.
+const agentConfigTemplate = `# Correlic agent configuration (generated by: correlic-admin bootstrap)
+# Start the agent with: sudo CORRELIC_CONFIG=%[1]s go run ./cmd/agent   (from the agent/ directory)
+
+backend_url: "https://localhost:8080"
+telemetry_url: "https://localhost:8081"
+
+# Agent API key (key_type=agent): only valid for ingest, heartbeat and agent endpoints.
+api_key: "%[2]s"
+
+# mTLS client identity (absolute paths)
+tls_ca_file: "%[3]s"
+tls_client_cert_file: "%[4]s"
+tls_client_key_file: "%[5]s"
+
+profile: "developer"
+log_level: "info"
+heartbeat_interval: 30s
+
+ebpf_enabled: true
+process_exec_enabled: true
+file_monitor_enabled: true
+network_monitor_enabled: true
+dns_monitor_enabled: true
+`
+
+// cmdBootstrap is the one-command setup for a local-first deployment. It creates the
+// org, an admin user, a dashboard (service) API key, a service account + agent API key
+// for the host agent, generates and enrolls mTLS certificates into --certs-dir, and
+// writes <certs-dir>/agent.yaml. Nothing is written to the current directory.
 func cmdBootstrap(args []string) {
 	fs := flag.NewFlagSet("bootstrap", flag.ExitOnError)
 	orgName := fs.String("name", "Local", "organization name")
 	email := fs.String("email", "admin@local.dev", "admin user email")
-	certsDir := fs.String("certs-dir", ".certs", "directory to store generated certificates")
+	agentEmail := fs.String("agent-email", "agent@local.dev", "service account email for the host agent")
+	certsDir := fs.String("certs-dir", ".certs", "directory for generated certificates and agent.yaml")
 	force := fs.Bool("force", false, "overwrite existing certs")
 	_ = fs.Parse(args)
 
-	fmt.Println("🚀 Correlic Bootstrap")
-	fmt.Println("=====================")
+	if strings.TrimSpace(*orgName) == "" {
+		log.Fatal("--name is required")
+	}
+	absCerts, err := filepath.Abs(*certsDir)
+	if err != nil {
+		log.Fatalf("resolve --certs-dir: %v", err)
+	}
+
+	fmt.Println("Correlic Bootstrap")
+	fmt.Println("==================")
 
 	db, err := openDB()
 	if err != nil {
@@ -1404,7 +1511,7 @@ func cmdBootstrap(args []string) {
 	if err := migrate.ApplyEmbedded(db); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("✓")
+	fmt.Println("ok")
 
 	// 1. Create org
 	fmt.Print("Creating organization... ")
@@ -1413,10 +1520,10 @@ func cmdBootstrap(args []string) {
 	if err := orgStore.CreateOrg(orgID, *orgName); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("✓")
-	fmt.Printf("  org_id=%s\n", orgID)
+	fmt.Println("ok")
+	fmt.Printf("org_id=%s\n", orgID)
 
-	// 2. Create admin user
+	// 2. Create admin user (verified, no forced reset — this is the first login)
 	fmt.Print("Creating admin user... ")
 	userStore := storage.NewPostgresUserStore(db)
 	password := generateRandomPassword()
@@ -1424,46 +1531,68 @@ func cmdBootstrap(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	user, _, err := userStore.CreateUserWithPassword(*email, "Admin", string(hash))
+	user, created, err := userStore.CreateUserWithPassword(*email, "Admin", string(hash))
 	if err != nil {
+		log.Fatal(err)
+	}
+	if !created {
+		log.Fatalf("user %s already exists; pass --email with an unused address or create-user to add it to the new org", *email)
+	}
+	if _, err := db.Exec(`UPDATE users SET email_verified = true, password_reset_required = false WHERE id = $1`, user.ID); err != nil {
 		log.Fatal(err)
 	}
 	if err := userStore.AddOrgUser(orgID, user.ID, "admin"); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("✓")
+	fmt.Println("ok")
 	fmt.Printf("  user_id=%s\n", user.ID)
 	fmt.Printf("  email=%s\n", *email)
 	fmt.Printf("  password=%s\n", password)
 
-	// 3. Create API key
-	fmt.Print("Creating API key... ")
-	apiKeyStore := storage.NewPostgresAPIKeyStore(db)
-	rawKey, err := generateRawAPIKey()
+	// 3. Dashboard (service) API key for the admin
+	fmt.Print("Creating admin API key (service)... ")
+	rawKey, _, err := insertAPIKey(db, orgID, user.ID, "admin-dashboard", "bootstrap: dashboard/CLI access", "service")
 	if err != nil {
 		log.Fatal(err)
 	}
-	keyHash := sha256Hex(rawKey)
-	keyID := uuid.New().String()
-	if err := apiKeyStore.Create(keyID, orgID, user.ID, "agent-key", keyHash); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("✓")
-	fmt.Printf("  api_key=%s\n", rawKey)
+	fmt.Println("ok")
+	fmt.Printf("api_key=%s\n", rawKey)
 
-	// 4. Generate TLS certs
-	fmt.Printf("Generating TLS certificates in %s... ", *certsDir)
-	if err := os.MkdirAll(*certsDir, 0700); err != nil {
+	// 4. Service account + agent key for the host agent
+	fmt.Print("Creating agent service account + key (agent)... ")
+	agentUser, err := userStore.CreateServiceAccount(*agentEmail, "Host Agent")
+	if err != nil {
 		log.Fatal(err)
 	}
-	if err := generateCerts(*certsDir, *force); err != nil {
+	if err := userStore.AddOrgUser(orgID, agentUser.ID, "member"); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("✓")
+	agentKey, _, err := insertAPIKey(db, orgID, agentUser.ID, "host-agent", "bootstrap: host agent ingest key", "agent")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("ok")
+	fmt.Printf("  agent_user_id=%s\n", agentUser.ID)
+	fmt.Printf("  agent_email=%s\n", *agentEmail)
+	fmt.Printf("agent_api_key=%s\n", agentKey)
 
-	// 5. Enroll client cert
+	// 5. Generate TLS certs
+	fmt.Printf("Generating TLS certificates in %s... ", absCerts)
+	if err := os.MkdirAll(absCerts, 0700); err != nil {
+		log.Fatal(err)
+	}
+	if err := generateCerts(absCerts, *force); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("ok")
+
+	// 6. Enroll client cert
 	fmt.Print("Enrolling client certificate... ")
-	clientCertPath := *certsDir + "/client.crt"
+	caPath := filepath.Join(absCerts, "ca.crt")
+	serverCertPath := filepath.Join(absCerts, "server.crt")
+	serverKeyPath := filepath.Join(absCerts, "server.key")
+	clientCertPath := filepath.Join(absCerts, "client.crt")
+	clientKeyPath := filepath.Join(absCerts, "client.key")
 	certData, err := os.ReadFile(clientCertPath)
 	if err != nil {
 		log.Fatal(err)
@@ -1477,76 +1606,36 @@ func cmdBootstrap(args []string) {
 	if err := clientStore.Enroll(orgID, "agent-cert", fp); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("✓")
+	fmt.Println("ok")
 
-	// 6. Generate agent config
-	agentConfigPath := "agent-config.yaml"
-	fmt.Printf("Generating agent config at %s... ", agentConfigPath)
-	// IMPORTANT: This file matches the schema used by correlic-agent/internal/config (flat keys).
-	// It is intentionally eBPF-first for local dev; /proc fallback remains available but disabled here.
-	agentConfig := fmt.Sprintf(`# Correlic Agent Configuration
-# Generated by: go run ./cmd/admin bootstrap
-
-# Backend endpoints
-backend_url: "https://localhost:8080"
-telemetry_url: "https://localhost:8081"
-
-# Auth (API key optional if you use mTLS client identity; we include it for simplicity)
-api_key: "%s"
-
-# TLS / mTLS
-tls_ca_file: "%s/ca.crt"
-tls_client_cert_file: "%s/client.crt"
-tls_client_key_file: "%s/client.key"
-
-# Runtime
-profile: "developer"
-log_level: "info"
-heartbeat_interval: 30s
-
-# eBPF-first
-process_exec_enabled: true
-ebpf_enabled: true
-disable_proc_fallback: true
-
-# eBPF collectors
-file_monitor_enabled: true
-network_monitor_enabled: true
-dns_monitor_enabled: true
-bind_monitor_enabled: true
-unlink_monitor_enabled: true
-setuid_monitor_enabled: true
-fork_monitor_enabled: true
-
-# Approval gate / local UI (optional)
-approval_gate_enforced: true
-notify_enabled: true
-approvals_poll_interval: 10s
-approvals_ui_enabled: true
-approvals_ui_addr: "127.0.0.1:8787"
-`, rawKey, *certsDir, *certsDir, *certsDir)
-
+	// 7. Agent config next to the certs (never in the current directory)
+	agentConfigPath := filepath.Join(absCerts, "agent.yaml")
+	fmt.Printf("Writing agent config %s... ", agentConfigPath)
+	agentConfig := fmt.Sprintf(agentConfigTemplate, agentConfigPath, agentKey, caPath, clientCertPath, clientKeyPath)
 	if err := os.WriteFile(agentConfigPath, []byte(agentConfig), 0600); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("✓")
+	fmt.Println("ok")
+	fmt.Printf("agent_config=%s\n", agentConfigPath)
 
+	tlsEnv := fmt.Sprintf("TLS_CERT_FILE=%s TLS_KEY_FILE=%s MTLS_CA_FILE=%s", serverCertPath, serverKeyPath, caPath)
 	fmt.Println("")
-	fmt.Println("=====================")
-	fmt.Println("✅ Bootstrap complete!")
+	fmt.Println("==================")
+	fmt.Println("Bootstrap complete")
 	fmt.Println("")
 	fmt.Println("Next steps:")
 	fmt.Println("")
-	fmt.Println("1. Start the backend:")
-	fmt.Printf("   TLS_CERT_FILE=%s/server.crt TLS_KEY_FILE=%s/server.key MTLS_CA_FILE=%s/ca.crt go run ./cmd/api\n", *certsDir, *certsDir, *certsDir)
-	fmt.Printf("   TLS_CERT_FILE=%s/server.crt TLS_KEY_FILE=%s/server.key MTLS_CA_FILE=%s/ca.crt go run ./cmd/telemetry\n", *certsDir, *certsDir, *certsDir)
+	fmt.Println("1. Start the backend (from the backend/ directory, two terminals):")
+	fmt.Printf("   %s LLM_ENCRYPTION_KEY=$(openssl rand -hex 32) go run ./cmd/api\n", tlsEnv)
+	fmt.Printf("   %s go run ./cmd/telemetry\n", tlsEnv)
 	fmt.Println("")
-	fmt.Println("2. Start the agent:")
-	fmt.Printf("   sudo go run ./cmd/agent --config %s\n", agentConfigPath)
+	fmt.Println("2. Start the host agent (needs root / CAP_BPF):")
+	fmt.Printf("   cd ../agent && sudo CORRELIC_CONFIG=%s go run ./cmd/agent\n", agentConfigPath)
 	fmt.Println("")
-	fmt.Println("Credentials:")
-	fmt.Printf("  API Key: %s\n", rawKey)
-	fmt.Printf("  Password: %s\n", password)
+	fmt.Println("3. Log in to the dashboard with the api_key above, or with:")
+	fmt.Printf("   email=%s password=%s\n", *email, password)
+	fmt.Println("")
+	fmt.Println("The agent_api_key is for the host agent only (already in agent.yaml); it cannot be used for the dashboard.")
 }
 
 // generateCerts creates CA, server, and client certificates
@@ -1615,10 +1704,21 @@ func generateCerts(dir string, force bool) error {
 	return nil
 }
 
-// runCmd executes a command silently
+// runCmd executes a command, discarding stdout but keeping stderr so a failing or
+// missing tool (e.g. openssl not installed) is reported with its actual message.
 func runCmd(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
+	var stderr bytes.Buffer
 	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return fmt.Errorf("%s is not installed or not on PATH (install it and retry)", name)
+		}
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
+		}
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return nil
 }

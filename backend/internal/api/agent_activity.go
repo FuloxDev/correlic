@@ -51,7 +51,7 @@ func AgentActivityHandler(timelineService *query.TimelineService) http.Handler {
 
 		response, err := timelineService.GetAgentActivityStream(r.Context(), since, minSignificance)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "agent activity query", err)
 			return
 		}
 

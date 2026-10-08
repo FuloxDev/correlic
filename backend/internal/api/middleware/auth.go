@@ -25,6 +25,25 @@ const actorTypeContextKey contextKey = "actor_type"
 const actorIDContextKey contextKey = "actor_id"
 const actorRoleContextKey contextKey = "actor_role"
 
+// Actor roles. Sessions and service API keys carry the user's org_users.role
+// (admin or member). Agent API keys and mTLS-only callers are always "agent".
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+	RoleAgent  = "agent"
+)
+
+// Actor types set by the auth middleware.
+const (
+	ActorTypeAPIKey      = "api_key"
+	ActorTypeUserSession = "user_session"
+	ActorTypeMTLS        = "mtls"
+)
+
+// ErrNoRoleMessage is returned (401) for a service API key whose owner has no
+// org_users row. There is no implicit "legacy admin" fallback.
+const ErrNoRoleMessage = "api key has no role; recreate it with correlic-admin create-api-key"
+
 // WithOrg injects the org ID into the context
 func WithOrg(ctx context.Context, orgID string) context.Context {
 	return context.WithValue(ctx, orgIDContextKey, orgID)
@@ -60,20 +79,24 @@ func ActorFromContext(ctx context.Context) (string, string, bool) {
 // ActorRoleFromContext extracts actor role from context.
 func ActorRoleFromContext(ctx context.Context) (string, bool) {
 	role, ok := ctx.Value(actorRoleContextKey).(string)
-	return role, ok
+	return role, ok && role != ""
 }
 
-// cachedKeyValidation stores the result of a remote key validation with TTL.
+// cachedKeyValidation stores the result of a remote key validation.
 type cachedKeyValidation struct {
 	Valid       bool
 	UserID      string
 	ExpiresAt   *time.Time // nil = no expiry
-	ValidatedAt time.Time  // when the remote key server last confirmed this key
+	ValidatedAt time.Time  // when the remote key server last answered for this key
 }
 
+// Remote key cache tuning. The cache never holds plaintext keys: entries are
+// keyed by SHA-256(key) and re-validation happens on the request path only.
 const (
-	cacheRevalidateInterval = 6 * time.Hour  // re-check the remote key server every 6h
-	gracePeriod             = 48 * time.Hour // allow offline for up to 48h
+	remoteCacheMaxEntries  = 1000
+	remoteCachePositiveTTL = 5 * time.Minute  // re-check a valid key after this
+	remoteCacheNegativeTTL = 30 * time.Second // re-check a rejected key after this
+	remoteGracePeriod      = 48 * time.Hour   // tolerate an unreachable key server this long
 )
 
 type AuthMiddleware struct {
@@ -88,12 +111,13 @@ type AuthMiddleware struct {
 	correlicAPIURL string
 	// defaultOrgID is the org UUID assigned to remotely validated keys
 	defaultOrgID string
-	// validatedKeys caches centrally validated keys with TTL
+	// validatedKeys is a bounded cache of remote validation results keyed by key hash.
 	validatedKeys   map[string]*cachedKeyValidation
-	validatedKeysMu sync.RWMutex
-	// rawKeys maps hash → plaintext for background re-validation
-	rawKeys   map[string]string
-	rawKeysMu sync.RWMutex
+	validatedKeysMu sync.Mutex
+	// httpClient talks to the remote key server.
+	httpClient *http.Client
+	// now is the clock (overridable in tests).
+	now func() time.Time
 }
 
 func NewAuthMiddleware(apiKeyStore storage.APIKeyStore, clientCertStore storage.ClientCertStore, userStore storage.UserStore, db *sql.DB) *AuthMiddleware {
@@ -118,7 +142,7 @@ func NewAuthMiddleware(apiKeyStore storage.APIKeyStore, clientCertStore storage.
 		}
 	}
 
-	m := &AuthMiddleware{
+	return &AuthMiddleware{
 		apiKeyStore:     apiKeyStore,
 		clientCertStore: clientCertStore,
 		userStore:       userStore,
@@ -129,63 +153,30 @@ func NewAuthMiddleware(apiKeyStore storage.APIKeyStore, clientCertStore storage.
 		correlicAPIURL: strings.TrimSpace(os.Getenv("CORRELIC_API_URL")),
 		defaultOrgID:   defaultOrgID,
 		validatedKeys:  make(map[string]*cachedKeyValidation),
-		rawKeys:        make(map[string]string),
-	}
-
-	// Start background re-validation goroutine
-	if m.correlicAPIURL != "" {
-		go m.backgroundRevalidation()
-	}
-
-	return m
-}
-
-// backgroundRevalidation periodically re-validates all cached keys against the remote key server.
-func (m *AuthMiddleware) backgroundRevalidation() {
-	ticker := time.NewTicker(cacheRevalidateInterval)
-	defer ticker.Stop()
-	for range ticker.C {
-		m.rawKeysMu.RLock()
-		keys := make(map[string]string, len(m.rawKeys))
-		for hash, raw := range m.rawKeys {
-			keys[hash] = raw
-		}
-		m.rawKeysMu.RUnlock()
-
-		for hash, rawKey := range keys {
-			result := m.callCorrelicVerify(rawKey)
-			m.validatedKeysMu.Lock()
-			if result != nil {
-				m.validatedKeys[hash] = result
-				if !result.Valid {
-					log.Printf("[AUTH] background re-validation: key %s…  is now INVALID", hash[:12])
-				}
-			}
-			m.validatedKeysMu.Unlock()
-		}
+		httpClient:     &http.Client{Timeout: 10 * time.Second},
+		now:            func() time.Time { return time.Now().UTC() },
 	}
 }
 
 // callCorrelicVerify calls {CORRELIC_API_URL}/keys/verify and returns the result, or nil on network error.
 func (m *AuthMiddleware) callCorrelicVerify(apiKey string) *cachedKeyValidation {
-	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/keys/verify", m.correlicAPIURL), nil)
 	if err != nil {
 		return nil
 	}
 	req.Header.Set("x-api-key", apiKey)
 
-	resp, err := client.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		log.Printf("[AUTH] remote key server unreachable: %v", err)
 		return nil // network error — let grace period handle it
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 
-	now := time.Now().UTC()
+	now := m.now()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		// Key rejected by server (revoked, expired, invalid)
 		return &cachedKeyValidation{Valid: false, ValidatedAt: now}
 	}
@@ -213,7 +204,46 @@ func (m *AuthMiddleware) callCorrelicVerify(apiKey string) *cachedKeyValidation 
 	return cached
 }
 
-// validateKeyAgainstCorrelic validates an API key with TTL cache and 48h grace period.
+// storeValidation inserts a validation result, evicting stale or oldest
+// entries so the cache never exceeds remoteCacheMaxEntries.
+func (m *AuthMiddleware) storeValidation(hash string, v *cachedKeyValidation) {
+	m.validatedKeysMu.Lock()
+	defer m.validatedKeysMu.Unlock()
+
+	if _, exists := m.validatedKeys[hash]; !exists && len(m.validatedKeys) >= remoteCacheMaxEntries {
+		m.evictLocked(v.ValidatedAt)
+	}
+	m.validatedKeys[hash] = v
+}
+
+// evictLocked drops entries that can no longer be useful (rejected entries past
+// the negative TTL, valid entries past the grace period) and, if the cache is
+// still full, the single oldest entry. Caller must hold validatedKeysMu.
+func (m *AuthMiddleware) evictLocked(now time.Time) {
+	for h, e := range m.validatedKeys {
+		age := now.Sub(e.ValidatedAt)
+		if (!e.Valid && age >= remoteCacheNegativeTTL) || (e.Valid && age >= remoteGracePeriod) {
+			delete(m.validatedKeys, h)
+		}
+	}
+	if len(m.validatedKeys) < remoteCacheMaxEntries {
+		return
+	}
+	var oldestHash string
+	var oldest time.Time
+	for h, e := range m.validatedKeys {
+		if oldestHash == "" || e.ValidatedAt.Before(oldest) {
+			oldestHash, oldest = h, e.ValidatedAt
+		}
+	}
+	if oldestHash != "" {
+		delete(m.validatedKeys, oldestHash)
+	}
+}
+
+// validateKeyAgainstCorrelic validates an API key against the remote key
+// server with a bounded TTL cache (5 min positive, 30 s negative) and a 48 h
+// grace period when the server is unreachable.
 // Returns the cached validation result and whether the key is valid.
 func (m *AuthMiddleware) validateKeyAgainstCorrelic(apiKey string) (*cachedKeyValidation, bool) {
 	if m.correlicAPIURL == "" {
@@ -221,59 +251,45 @@ func (m *AuthMiddleware) validateKeyAgainstCorrelic(apiKey string) (*cachedKeyVa
 	}
 
 	hash := hashAPIKey(apiKey)
-	now := time.Now().UTC()
+	now := m.now()
 
-	// Check cache — if fresh enough and key not expired, return cached
-	m.validatedKeysMu.RLock()
+	m.validatedKeysMu.Lock()
 	cached, hasCached := m.validatedKeys[hash]
-	m.validatedKeysMu.RUnlock()
+	m.validatedKeysMu.Unlock()
 
-	if hasCached && cached.Valid {
-		// Check if key has expired since last validation
-		if cached.ExpiresAt != nil && now.After(*cached.ExpiresAt) {
-			// Key expired — invalidate cache
-			m.validatedKeysMu.Lock()
-			cached.Valid = false
-			m.validatedKeysMu.Unlock()
-			return cached, false
+	if hasCached {
+		if cached.Valid && cached.ExpiresAt != nil && now.After(*cached.ExpiresAt) {
+			// Key expired since last validation — record the rejection.
+			expired := &cachedKeyValidation{Valid: false, ExpiresAt: cached.ExpiresAt, ValidatedAt: now}
+			m.storeValidation(hash, expired)
+			return expired, false
 		}
-		// If validated recently, use cache
-		if now.Sub(cached.ValidatedAt) < cacheRevalidateInterval {
+		age := now.Sub(cached.ValidatedAt)
+		if cached.Valid && age < remoteCachePositiveTTL {
 			return cached, true
+		}
+		if !cached.Valid && age < remoteCacheNegativeTTL {
+			return cached, false
 		}
 	}
 
 	// Call the remote key server
-	result := m.callCorrelicVerify(apiKey)
-
-	if result != nil {
-		// Server responded — update cache
-		m.validatedKeysMu.Lock()
-		m.validatedKeys[hash] = result
-		m.validatedKeysMu.Unlock()
-
-		// Store raw key for background re-validation
-		m.rawKeysMu.Lock()
-		m.rawKeys[hash] = apiKey
-		m.rawKeysMu.Unlock()
-
-		if result.Valid {
-			log.Printf("[AUTH] key validated via remote key server (expires: %v)", result.ExpiresAt)
-		} else {
+	if result := m.callCorrelicVerify(apiKey); result != nil {
+		m.storeValidation(hash, result)
+		if !result.Valid {
 			log.Printf("[AUTH] key rejected by remote key server")
 		}
 		return result, result.Valid
 	}
 
-	// Network error — apply grace period
+	// Network error — apply grace period to a previously valid entry.
 	if hasCached && cached.Valid {
-		if now.Sub(cached.ValidatedAt) < gracePeriod {
+		if now.Sub(cached.ValidatedAt) < remoteGracePeriod {
 			log.Printf("[AUTH] remote key server unreachable — using cached validation (grace period: %v remaining)",
-				gracePeriod-now.Sub(cached.ValidatedAt))
+				remoteGracePeriod-now.Sub(cached.ValidatedAt))
 			return cached, true
 		}
-		// Grace period exceeded
-		log.Printf("[AUTH] remote key server unreachable for >48h — lockout")
+		log.Printf("[AUTH] remote key server unreachable for >%v — lockout", remoteGracePeriod)
 		return cached, false
 	}
 
@@ -312,6 +328,17 @@ func hashAPIKey(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// writeUnauthorizedJSON writes a 401 with a machine-readable code.
+func writeUnauthorizedJSON(w http.ResponseWriter, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":   "unauthorized",
+		"code":    code,
+		"message": message,
+	})
+}
+
 // Wrap wraps the next handler with the authentication middleware
 func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
 
@@ -344,12 +371,23 @@ func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
 				keyInfo, err := m.apiKeyStore.LookupKeyInfo(tokenHash)
 				if err == nil && keyInfo != nil {
 					orgID = keyInfo.OrgID
-					actorType = "api_key"
+					actorType = ActorTypeAPIKey
 					actorID = keyInfo.UserID
 					if actorID == "" {
 						actorID = tokenHash
 					}
-					actorRole = keyInfo.Role
+					switch {
+					case keyInfo.KeyType == storage.APIKeyTypeAgent:
+						// Agent keys act as the agent role regardless of any org_users row.
+						actorRole = RoleAgent
+					case keyInfo.Role != "":
+						actorRole = keyInfo.Role
+					default:
+						// Service key whose owner has no org_users row: reject.
+						log.Printf("[AUTH] api key without org role rejected: org=%s remote=%s", orgID, r.RemoteAddr)
+						writeUnauthorizedJSON(w, "KEY_NO_ROLE", ErrNoRoleMessage)
+						return
+					}
 				} else if err != nil && err != sql.ErrNoRows {
 					http.Error(w, "internal server error", http.StatusInternalServerError)
 					return
@@ -363,7 +401,7 @@ func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
 					return
 				}
 				if session != nil {
-					if time.Now().UTC().After(session.ExpiresAt) {
+					if m.now().After(session.ExpiresAt) {
 						log.Printf("[AUTH] session expired user_id=%s remote=%s", session.UserID, r.RemoteAddr)
 						http.Error(w, "unauthorized", http.StatusUnauthorized)
 						return
@@ -374,18 +412,21 @@ func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
 						http.Error(w, "unauthorized", http.StatusUnauthorized)
 						return
 					}
-					// Get role from org_users
+					// Role comes from org_users only.
 					role, found, err := m.userStore.GetOrgUserRole(oid, session.UserID)
 					if err != nil {
 						http.Error(w, "internal server error", http.StatusInternalServerError)
 						return
 					}
-					orgID = oid
-					actorType = "user_session"
-					actorID = session.UserID
-					if found {
-						actorRole = role
+					if !found || role == "" {
+						log.Printf("[AUTH] session user without org role rejected user_id=%s org=%s", session.UserID, oid)
+						http.Error(w, "unauthorized", http.StatusUnauthorized)
+						return
 					}
+					orgID = oid
+					actorType = ActorTypeUserSession
+					actorID = session.UserID
+					actorRole = role
 				}
 			}
 
@@ -395,26 +436,30 @@ func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
 			if orgID == "" && m.correlicAPIURL != "" {
 				if cached, valid := m.validateKeyAgainstCorrelic(apiKey); valid && cached != nil {
 					orgID = m.defaultOrgID
-					actorType = "api_key"
+					actorType = ActorTypeAPIKey
 					centrallyValidated = true
 					actorID = cached.UserID
 					if actorID == "" {
 						actorID = tokenHash
 					}
-					actorRole = "admin"
+					// Centrally validated keys are never implicitly admin: they
+					// get "member" unless a local org_users row says otherwise.
+					actorRole = RoleMember
+					if m.userStore != nil && cached.UserID != "" {
+						if role, found, err := m.userStore.GetOrgUserRole(orgID, cached.UserID); err == nil && found && role != "" {
+							actorRole = role
+						}
+					}
 				} else if cached != nil && !cached.Valid {
 					// Key explicitly rejected (expired or revoked)
-					if cached.ExpiresAt != nil && time.Now().UTC().After(*cached.ExpiresAt) {
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusUnauthorized)
-						w.Write([]byte(`{"error":"unauthorized","code":"KEY_EXPIRED","message":"API key expired"}`))
+					if cached.ExpiresAt != nil && m.now().After(*cached.ExpiresAt) {
+						writeUnauthorizedJSON(w, "KEY_EXPIRED", "API key expired")
 						return
 					}
 				}
 			}
 
 			if orgID == "" {
-				// log.Printf("[AUTH DEBUG] Authorization token not found in API keys or sessions")
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -440,15 +485,14 @@ func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
 			}
 		} else {
 			// No API key: allow mTLS-only if we can map fingerprint -> org.
+			// An enrolled client certificate on its own identifies an agent.
 			if !hasFP || m.clientCertStore == nil {
-				log.Printf("!!! [AUTH DEBUG] No API key and no mTLS fp. Rejecting! !!!")
 				http.Error(w, "missing credentials", http.StatusUnauthorized)
 				return
 			}
 			oid, err := m.clientCertStore.LookupOrgIDByFingerprint(fp)
 			if err != nil {
 				if err == sql.ErrNoRows {
-					log.Printf("!!! [AUTH DEBUG] mTLS fingerprint not enrolled in client_certs: %s !!!", fp)
 					MTLSUnenrolledCertTotal.Add(1)
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
@@ -457,8 +501,9 @@ func (m *AuthMiddleware) Wrap(next http.Handler) http.Handler {
 				return
 			}
 			orgID = oid
-			actorType = "mtls"
+			actorType = ActorTypeMTLS
 			actorID = fp
+			actorRole = RoleAgent
 		}
 
 		ctx := WithOrg(r.Context(), orgID)

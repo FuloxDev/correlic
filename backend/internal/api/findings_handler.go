@@ -230,11 +230,6 @@ func (h *FindingsHandler) ResolveFinding(w http.ResponseWriter, r *http.Request)
 				baselineMode = "command" // default: baseline the command pattern
 			}
 
-			detectionID, _ := finding.Context["detection_id"].(string)
-			if detectionID == "" {
-				detectionID = finding.DetectionID
-			}
-
 			// Handle baseline_mode for command-based findings (any rule with "binary" in context)
 			switch baselineMode {
 			case "binary":
@@ -285,7 +280,7 @@ func (h *FindingsHandler) ResolveFinding(w http.ResponseWriter, r *http.Request)
 				// checks file_pattern baselines) can match this directory glob against
 				// ALL file-related signal types at detection time.
 				if filePath, ok := finding.Context["file_path"].(string); ok && filePath != "" {
-				filePath = filepath.ToSlash(filePath) // normalize Windows backslashes
+					filePath = filepath.ToSlash(filePath) // normalize Windows backslashes
 					dirPath := filePath[:strings.LastIndex(filePath, "/")]
 					dirCtx := map[string]any{
 						"signal_type": "file_pattern",
@@ -488,13 +483,13 @@ func (h *FindingsHandler) ResolveDomain(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"finding_id": findingID,
-		"ip":         dstIP,
-		"domains":    domains,
-		"source":     source,
-		"asn_name":   info.ASNName,
-		"asn":        info.ASN,
-		"bgp_prefix": info.BGPPrefix,
+		"finding_id":  findingID,
+		"ip":          dstIP,
+		"domains":     domains,
+		"source":      source,
+		"asn_name":    info.ASNName,
+		"asn":         info.ASN,
+		"bgp_prefix":  info.BGPPrefix,
 		"reverse_dns": info.Domain,
 	})
 }
@@ -516,7 +511,7 @@ func (h *FindingsHandler) ReconcileFindings(w http.ResponseWriter, r *http.Reque
 	if h.safeDomainStore != nil {
 		domains := h.safeDomainStore.GetCachedDomains()
 		for _, d := range domains {
-			count, orgIDs, err := h.store.AutoResolveBySafeDomain(d)
+			count, orgIDs, err := h.store.AutoResolveBySafeDomainForOrg(orgID, d)
 			if err != nil {
 				log.Printf("WARN: reconcile safe domain %s: %v", d, err)
 				continue
@@ -636,19 +631,19 @@ func isGenericPTR(domain string) bool {
 func inferDomainFromASN(asnName string) string {
 	lower := strings.ToLower(asnName)
 	asnDomainMap := map[string]string{
-		"cloudflare":         "cloudflare.com",
-		"amazon":             "amazonaws.com",
-		"google":             "google.com",
-		"microsoft":          "microsoft.com",
-		"akamai":             "akamai.com",
-		"fastly":             "fastly.com",
-		"digitalocean":       "digitalocean.com",
-		"linode":             "linode.com",
-		"vultr":              "vultr.com",
-		"hetzner":            "hetzner.com",
-		"ovh":                "ovh.com",
-		"anthropic":          "anthropic.com",
-		"openai":             "openai.com",
+		"cloudflare":   "cloudflare.com",
+		"amazon":       "amazonaws.com",
+		"google":       "google.com",
+		"microsoft":    "microsoft.com",
+		"akamai":       "akamai.com",
+		"fastly":       "fastly.com",
+		"digitalocean": "digitalocean.com",
+		"linode":       "linode.com",
+		"vultr":        "vultr.com",
+		"hetzner":      "hetzner.com",
+		"ovh":          "ovh.com",
+		"anthropic":    "anthropic.com",
+		"openai":       "openai.com",
 	}
 	for keyword, domain := range asnDomainMap {
 		if strings.Contains(lower, keyword) {

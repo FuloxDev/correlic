@@ -20,8 +20,8 @@ import (
 type ContextAssembler struct {
 	incidentStore *IncidentStore
 	findingStore  *storage.FindingStore
-	graphStore    *neo4j.GraphStore       // nil = Neo4j unavailable, gracefully degrade
-	eventStore    eventstore.EventStore   // nil = PostgreSQL fallback unavailable
+	graphStore    *neo4j.GraphStore     // nil = Neo4j unavailable, gracefully degrade
+	eventStore    eventstore.EventStore // nil = PostgreSQL fallback unavailable
 }
 
 // NewContextAssembler creates a new context assembler.
@@ -438,35 +438,6 @@ func deduplicatePIDs(pids []int64) []int64 {
 		}
 	}
 	return out
-}
-
-// mergeGraphProcessTrees merges multiple Neo4j GraphQueryResult trees into one.
-// Deduplicates events by ID and relationships by (from, to, type).
-func mergeGraphProcessTrees(results []*neo4j.GraphQueryResult) *neo4j.GraphQueryResult {
-	if len(results) == 1 {
-		return results[0]
-	}
-	merged := &neo4j.GraphQueryResult{}
-	seenEvents := make(map[string]bool)
-	type edgeKey struct{ from, to, typ string }
-	seenEdges := make(map[edgeKey]bool)
-
-	for _, r := range results {
-		for _, evt := range r.Events {
-			if !seenEvents[evt.ID] {
-				seenEvents[evt.ID] = true
-				merged.Events = append(merged.Events, evt)
-			}
-		}
-		for _, rel := range r.Relationships {
-			k := edgeKey{rel.FromID, rel.ToID, rel.Type}
-			if !seenEdges[k] {
-				seenEdges[k] = true
-				merged.Relationships = append(merged.Relationships, rel)
-			}
-		}
-	}
-	return merged
 }
 
 // buildProcessDetailsFromEventNodes groups attack chain EventNodes by PID and

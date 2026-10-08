@@ -10,16 +10,29 @@ import (
 
 // HealthResponse is the GET /health response body.
 type HealthResponse struct {
-	Status          string `json:"status"`
-	DetectionGraph  string `json:"detection_graph"` // "enabled" | "disabled"
+	Status string `json:"status"`
+	// Detection reports whether the rule engine evaluates ingested events. It no longer
+	// depends on Neo4j: AI attribution comes from event tags + the attribution cache.
+	Detection string `json:"detection"` // "enabled" | "disabled"
+	// DetectionGraph reports whether Neo4j look-back context is available to the rules.
+	DetectionGraph string `json:"detection_graph"` // "enabled" | "disabled"
+}
+
+func enabledString(on bool) string {
+	if on {
+		return "enabled"
+	}
+	return "disabled"
 }
 
 // HealthHandler returns a handler with system component status.
-// graphEnabled should be true if the Neo4j graph querier is available.
-func HealthHandler(graphEnabled bool) http.HandlerFunc {
-	graphStatus := "enabled"
-	if !graphEnabled {
-		graphStatus = "disabled"
+// detectionEnabled is true when a detection engine is wired into ingest;
+// graphEnabled is true when the Neo4j graph querier is available.
+func HealthHandler(detectionEnabled, graphEnabled bool) http.HandlerFunc {
+	resp := HealthResponse{
+		Status:         "ok",
+		Detection:      enabledString(detectionEnabled),
+		DetectionGraph: enabledString(graphEnabled),
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -28,10 +41,7 @@ func HealthHandler(graphEnabled bool) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(HealthResponse{
-			Status:         "ok",
-			DetectionGraph: graphStatus,
-		})
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 

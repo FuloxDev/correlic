@@ -32,7 +32,7 @@ func TimelineNeo4jHandler(timelineService *query.TimelineService) http.Handler {
 
 		timeline, err := timelineService.GetTimeline(r.Context(), eventID, windowMinutes)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "neo4j query", err)
 			return
 		}
 
@@ -76,7 +76,7 @@ func ProcessTreeHandler(timelineService *query.TimelineService) http.Handler {
 
 		tree, err := timelineService.GetProcessTree(r.Context(), pid, hostID, maxDepth)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "neo4j query", err)
 			return
 		}
 
@@ -101,7 +101,7 @@ func AttackPathHandler(timelineService *query.TimelineService) http.Handler {
 
 		path, err := timelineService.GetAttackPath(r.Context(), eventID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "neo4j query", err)
 			return
 		}
 
@@ -132,7 +132,7 @@ func InvestigationHandler(invService *query.InvestigationService) http.Handler {
 		since := time.Now().Add(-time.Duration(hours) * time.Hour)
 		containers, err := invService.FindDockerContainers(r.Context(), since)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "neo4j query", err)
 			return
 		}
 
@@ -155,7 +155,7 @@ func InvestigationHandler(invService *query.InvestigationService) http.Handler {
 
 		chain, err := invService.TraceFileExecution(r.Context(), filePath)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "neo4j query", err)
 			return
 		}
 
@@ -184,7 +184,7 @@ func InvestigationHandler(invService *query.InvestigationService) http.Handler {
 
 		processes, err := invService.FindPortListeners(r.Context(), port)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "neo4j query", err)
 			return
 		}
 

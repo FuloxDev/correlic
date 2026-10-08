@@ -67,7 +67,7 @@ func (h *APIKeysHandler) listAPIKeys(w http.ResponseWriter, r *http.Request, org
 		ORDER BY ak.created_at DESC
 	`, orgID)
 	if err != nil {
-		http.Error(w, "internal server error: "+err.Error(), http.StatusInternalServerError)
+		InternalErr(w, "list api keys", err)
 		return
 	}
 	defer rows.Close()
@@ -126,7 +126,7 @@ func (h *APIKeysHandler) listAPIKeys(w http.ResponseWriter, r *http.Request, org
 	}
 
 	if err := rows.Err(); err != nil {
-		http.Error(w, "internal server error: "+err.Error(), http.StatusInternalServerError)
+		InternalErr(w, "list api keys", err)
 		return
 	}
 

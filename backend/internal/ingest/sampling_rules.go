@@ -209,8 +209,8 @@ func (r *SamplingRules) IsSuspicious(evt *event.Event) bool {
 			"C:/Windows/System32/config/SYSTEM",
 			"C:/Windows/System32/config/SECURITY",
 			"/AppData/Roaming/Microsoft/Protect/",   // DPAPI master keys
-			"/AppData/Local/Microsoft/Credentials/",  // Windows Credential Manager
-			"ntds.dit",                               // Active Directory database
+			"/AppData/Local/Microsoft/Credentials/", // Windows Credential Manager
+			"ntds.dit",                              // Active Directory database
 
 			// Windows persistence paths
 			"C:/Windows/System32/Tasks/",
@@ -235,54 +235,60 @@ func (r *SamplingRules) GetSampleRate(eventType string) float64 {
 	return 1.0 // Default: keep all if not specified
 }
 
-// isExternalIP returns true if the IP is not localhost or private.
-func isExternalIP(ip string) bool {
-	// Localhost
-	if strings.HasPrefix(ip, "127.") || ip == "::1" {
-		return false
-	}
-
-	// Private networks (RFC 1918)
-	if strings.HasPrefix(ip, "10.") ||
-		strings.HasPrefix(ip, "192.168.") ||
-		strings.HasPrefix(ip, "172.16.") ||
-		strings.HasPrefix(ip, "172.17.") ||
-		strings.HasPrefix(ip, "172.18.") ||
-		strings.HasPrefix(ip, "172.19.") ||
-		strings.HasPrefix(ip, "172.20.") ||
-		strings.HasPrefix(ip, "172.21.") ||
-		strings.HasPrefix(ip, "172.22.") ||
-		strings.HasPrefix(ip, "172.23.") ||
-		strings.HasPrefix(ip, "172.24.") ||
-		strings.HasPrefix(ip, "172.25.") ||
-		strings.HasPrefix(ip, "172.26.") ||
-		strings.HasPrefix(ip, "172.27.") ||
-		strings.HasPrefix(ip, "172.28.") ||
-		strings.HasPrefix(ip, "172.29.") ||
-		strings.HasPrefix(ip, "172.30.") ||
-		strings.HasPrefix(ip, "172.31.") {
-		return false
-	}
-
-	// Link-local
-	if strings.HasPrefix(ip, "169.254.") {
-		return false
-	}
-
-	return true
-}
-
-// matchesPattern performs simple glob-style pattern matching.
+// matchesPattern matches a file path against a suspicious-path pattern:
+//
+//   - patterns containing "*" are simple globs: a single "*" splits the pattern into a
+//     required prefix and suffix ("*.key", "/home/*/.ssh/"); multiple "*" are matched
+//     as ordered segments ("/home/*/.aws/*");
+//   - patterns starting with "/" are absolute path prefixes ("/etc/shadow" matches
+//     "/etc/shadow" and "/etc/shadow-");
+//   - every other pattern is a substring (".ssh/", "id_rsa", "credentials"), so
+//     "/home/alice/.ssh/id_rsa" matches ".ssh/" even though it is not a prefix.
 func matchesPattern(path, pattern string) bool {
-	// Simple wildcard matching
+	if pattern == "" {
+		return false
+	}
+
 	if strings.Contains(pattern, "*") {
 		parts := strings.Split(pattern, "*")
 		if len(parts) == 2 {
-			// Pattern like "*.key" or "/home/*/.ssh/"
 			return strings.HasPrefix(path, parts[0]) && strings.HasSuffix(path, parts[1])
 		}
+		return matchGlobSegments(path, parts)
 	}
 
-	// Exact match or prefix match
-	return strings.HasPrefix(path, pattern)
+	if strings.HasPrefix(pattern, "/") {
+		return strings.HasPrefix(path, pattern)
+	}
+
+	return strings.Contains(path, pattern)
+}
+
+// matchGlobSegments matches path against the literal segments of a multi-"*" pattern:
+// the first segment must be a prefix, the last a suffix, and the middle ones must
+// appear in order in between.
+func matchGlobSegments(path string, parts []string) bool {
+	if len(parts) == 0 {
+		return true
+	}
+	if !strings.HasPrefix(path, parts[0]) {
+		return false
+	}
+	rest := path[len(parts[0]):]
+	last := parts[len(parts)-1]
+	if !strings.HasSuffix(rest, last) {
+		return false
+	}
+	rest = rest[:len(rest)-len(last)]
+	for _, seg := range parts[1 : len(parts)-1] {
+		if seg == "" {
+			continue
+		}
+		idx := strings.Index(rest, seg)
+		if idx < 0 {
+			return false
+		}
+		rest = rest[idx+len(seg):]
+	}
+	return true
 }

@@ -67,12 +67,12 @@ func QueryContainersHandler(svc *query.Service) http.Handler {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		rows, _, err := svc.ListContainerStarts(r.Context(), hostID, since, until)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -96,12 +96,12 @@ func QueryPortsHandler(svc *query.Service) http.Handler {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		rows, _, err := svc.ListOpenPorts(r.Context(), hostID, since, until)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -125,12 +125,12 @@ func QueryConnectionsHandler(svc *query.Service) http.Handler {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		rows, _, err := svc.ListExternalConnections(r.Context(), hostID, since, until)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -154,12 +154,12 @@ func QueryInboundHandler(svc *query.Service) http.Handler {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		rows, _, err := svc.ListInboundConnections(r.Context(), hostID, since, until)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -183,13 +183,13 @@ func QueryProcessesHandler(svc *query.Service) http.Handler {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		pattern := r.URL.Query().Get("pattern")
 		rows, _, err := svc.ListProcessesByExecutable(r.Context(), hostID, since, until, pattern)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			InternalErr(w, "query", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -282,7 +282,7 @@ func DiffHandler(svc *query.Service) http.Handler {
 		case "processes":
 			res, err := svc.DiffProcessesByExecutable(ctx, hostID, baseSince, baseUntil, compareSince, compareUntil)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				InternalErr(w, "query", err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -294,7 +294,7 @@ func DiffHandler(svc *query.Service) http.Handler {
 		case "connections":
 			res, err := svc.DiffExternalConnections(ctx, hostID, baseSince, baseUntil, compareSince, compareUntil)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				InternalErr(w, "query", err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -306,7 +306,7 @@ func DiffHandler(svc *query.Service) http.Handler {
 		case "ports":
 			res, err := svc.DiffOpenPorts(ctx, hostID, baseSince, baseUntil, compareSince, compareUntil)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				InternalErr(w, "query", err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")

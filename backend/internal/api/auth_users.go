@@ -129,7 +129,12 @@ func (h *UsersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if err := h.store.AddOrgUser(orgID, user.ID, strings.TrimSpace(req.Role)); err != nil {
+		role, ok := normalizeUserRole(req.Role, middleware.RoleMember)
+		if !ok {
+			BadRequest(w, "role must be 'admin' or 'member'")
+			return
+		}
+		if err := h.store.AddOrgUser(orgID, user.ID, role); err != nil {
 			Internal(w)
 			return
 		}
@@ -144,7 +149,7 @@ func (h *UsersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					TargetID:   user.ID,
 					Meta: map[string]any{
 						"email":              user.Email,
-						"role":               strings.TrimSpace(req.Role),
+						"role":               role,
 						"is_service_account": user.IsServiceAccount,
 					},
 				})
@@ -276,9 +281,14 @@ func (h *UsersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// For now, we'll just update the role
 		}
 
-		// Update role if provided
-		if req.Role != "" {
-			if err := h.store.AddOrgUser(orgID, userID, strings.TrimSpace(req.Role)); err != nil {
+		// Update role if provided (only admin or member are valid roles)
+		if strings.TrimSpace(req.Role) != "" {
+			role, ok := normalizeUserRole(req.Role, "")
+			if !ok {
+				BadRequest(w, "role must be 'admin' or 'member'")
+				return
+			}
+			if err := h.store.AddOrgUser(orgID, userID, role); err != nil {
 				Internal(w)
 				return
 			}
@@ -330,36 +340,75 @@ func (h *UsersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type SessionsHandler struct {
-	store storage.UserStore
-	audit storage.AuditStore
+// normalizeUserRole validates a requested org role. Only "admin" and "member"
+// exist for users; the "agent" role is reserved for agent credentials and
+// cannot be assigned. An empty role falls back to def (which may itself be
+// empty to make the role mandatory).
+func normalizeUserRole(role, def string) (string, bool) {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" {
+		role = def
+	}
+	switch role {
+	case middleware.RoleAdmin, middleware.RoleMember:
+		return role, true
+	default:
+		return "", false
+	}
 }
 
-func NewSessionsHandler(store storage.UserStore, auditStore storage.AuditStore) *SessionsHandler {
-	return &SessionsHandler{store: store, audit: auditStore}
+// Session TTL bounds for POST /auth/sessions (hours).
+const (
+	sessionTTLDefaultHours = 24
+	sessionTTLMaxHours     = 168 // 7 days
+)
+
+type SessionsHandler struct {
+	store    storage.UserStore
+	sessions storage.SessionRevoker
+	audit    storage.AuditStore
+	backoff  *loginBackoff
+}
+
+// NewSessionsHandler creates the login/logout handler. sessions may be nil,
+// in which case DELETE (logout) is reported as not implemented.
+func NewSessionsHandler(store storage.UserStore, sessions storage.SessionRevoker, auditStore storage.AuditStore) *SessionsHandler {
+	return &SessionsHandler{
+		store:    store,
+		sessions: sessions,
+		audit:    auditStore,
+		backoff:  newLoginBackoff(),
+	}
 }
 
 func (h *SessionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Login endpoint: org context is optional (user may not be authenticated yet)
-	// We'll get org from user after validating credentials
-	orgID, _ := middleware.OrgFromContext(r.Context())
-
 	if h.store == nil {
 		NotImplemented(w, "user store not enabled")
 		return
 	}
 
-	if r.Method != http.MethodPost {
-		MethodNotAllowed(w, http.MethodPost)
-		return
+	switch r.Method {
+	case http.MethodPost:
+		h.login(w, r)
+	case http.MethodDelete:
+		h.logout(w, r)
+	default:
+		MethodNotAllowed(w, http.MethodPost+", "+http.MethodDelete)
 	}
+}
+
+// login handles POST /auth/sessions (email + password).
+func (h *SessionsHandler) login(w http.ResponseWriter, r *http.Request) {
+	// Login endpoint: org context is optional (user may not be authenticated yet)
+	// We'll get org from user after validating credentials
+	orgID, _ := middleware.OrgFromContext(r.Context())
 
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 		TTLHours int    `json:"ttl_hours"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		BadRequest(w, "invalid payload")
 		return
 	}
@@ -368,6 +417,15 @@ func (h *SessionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, "email required")
 		return
 	}
+
+	// Per-account backoff: too many recent failures for this e-mail → 429,
+	// before any credential work so the lockout cannot be probed.
+	if blocked, retryIn := h.backoff.Blocked(email); blocked {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryIn.Seconds())+1))
+		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed login attempts; try again later")
+		return
+	}
+
 	user, err := h.store.GetUserByEmail(email)
 	if err != nil {
 		Internal(w)
@@ -375,7 +433,8 @@ func (h *SessionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if user == nil {
 		// Same response as a wrong password so the endpoint cannot be used to
-		// enumerate accounts.
+		// enumerate accounts; count it so unknown e-mails back off identically.
+		h.backoff.RecordFailure(email)
 		Unauthorized(w, "invalid credentials")
 		return
 	}
@@ -406,17 +465,23 @@ func (h *SessionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user.PasswordHash == "" {
+		h.backoff.RecordFailure(email)
 		Unauthorized(w, "invalid credentials")
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		h.backoff.RecordFailure(email)
 		Unauthorized(w, "invalid credentials")
 		return
 	}
+	h.backoff.Reset(email)
 
 	ttl := req.TTLHours
-	if ttl <= 0 || ttl > 720 {
-		ttl = 24
+	if ttl <= 0 {
+		ttl = sessionTTLDefaultHours
+	}
+	if ttl > sessionTTLMaxHours {
+		ttl = sessionTTLMaxHours
 	}
 	token := randomToken()
 	hash := sha256.Sum256([]byte(token))
@@ -427,20 +492,18 @@ func (h *SessionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.audit != nil {
-		if actorType, actorID, ok := middleware.ActorFromContext(r.Context()); ok {
-			_ = h.audit.InsertEvent(&storage.AuditEvent{
-				OrgID:      orgID,
-				ActorType:  actorType,
-				ActorID:    actorID,
-				Action:     "session.create",
-				TargetType: "user",
-				TargetID:   user.ID,
-				Meta: map[string]any{
-					"email": user.Email,
-					"ttl":   ttl,
-				},
-			})
-		}
+		_ = h.audit.InsertEvent(&storage.AuditEvent{
+			OrgID:      orgID,
+			ActorType:  middleware.ActorTypeUserSession,
+			ActorID:    user.ID,
+			Action:     "session.create",
+			TargetType: "user",
+			TargetID:   user.ID,
+			Meta: map[string]any{
+				"email": user.Email,
+				"ttl":   ttl,
+			},
+		})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -448,6 +511,63 @@ func (h *SessionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"session": session,
 		"user":    user,
 	})
+}
+
+// logout handles DELETE /auth/sessions: it revokes the session whose bearer
+// token is presented in the Authorization header. Possession of the token is
+// the only requirement, so this route does not go through the auth middleware.
+func (h *SessionsHandler) logout(w http.ResponseWriter, r *http.Request) {
+	if h.sessions == nil {
+		NotImplemented(w, "session revocation not enabled")
+		return
+	}
+	token, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		Unauthorized(w, "missing session token")
+		return
+	}
+	hash := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	// Look the session up first so the audit log can name the user; a token
+	// that is not a session (e.g. an API key) is still answered with 204 so
+	// the route cannot be used to probe which tokens exist.
+	var userID string
+	if session, err := h.store.GetSessionByHash(tokenHash); err == nil && session != nil {
+		userID = session.UserID
+	}
+	if err := h.sessions.DeleteSessionByTokenHash(tokenHash); err != nil {
+		Internal(w)
+		return
+	}
+	if h.audit != nil && userID != "" {
+		orgID, _ := h.store.GetUserOrgID(userID)
+		_ = h.audit.InsertEvent(&storage.AuditEvent{
+			OrgID:      orgID,
+			ActorType:  middleware.ActorTypeUserSession,
+			ActorID:    userID,
+			Action:     "session.revoke",
+			TargetType: "user",
+			TargetID:   userID,
+		})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// bearerToken extracts a token from "Bearer <token>", "ApiKey <token>" or a
+// bare token, mirroring the auth middleware's header parsing.
+func bearerToken(raw string) (string, bool) {
+	parts := strings.Fields(strings.TrimSpace(raw))
+	switch len(parts) {
+	case 1:
+		return parts[0], parts[0] != ""
+	case 2:
+		switch strings.ToLower(parts[0]) {
+		case "bearer", "apikey":
+			return parts[1], parts[1] != ""
+		}
+	}
+	return "", false
 }
 
 func randomToken() string {
@@ -510,11 +630,13 @@ func (h *PasswordResetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		Unauthorized(w, "invalid credentials")
 		return
 	}
-	// A logged-in user can only rotate their own password. API-key callers
-	// (admins by construction) may reset any account.
-	if actorType, actorID, ok := middleware.ActorFromContext(r.Context()); ok && actorType == "user_session" && actorID != user.ID {
-		Forbidden(w, "you can only change your own password")
-		return
+	// A caller may only rotate their own password unless they hold the admin
+	// role (sessions and service keys alike carry the user's org role).
+	if actorType, actorID, ok := middleware.ActorFromContext(r.Context()); ok && actorID != user.ID {
+		if actorType == middleware.ActorTypeUserSession || !middleware.IsAdminRequest(r, nil) {
+			Forbidden(w, "you can only change your own password")
+			return
+		}
 	}
 
 	if strings.TrimSpace(req.OldPassword) == "" {

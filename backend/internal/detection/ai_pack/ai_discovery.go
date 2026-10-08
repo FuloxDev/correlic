@@ -94,21 +94,6 @@ var discoveryHighValueBinaries = map[string]bool{
 	"pspy":       true, // Process spy without root
 }
 
-// discoveryTargetFiles are files commonly read during reconnaissance.
-// Only fire within a burst of other discovery activity (not standalone).
-var discoveryTargetFiles = map[string]bool{
-	"/etc/hosts":       true,
-	"/etc/resolv.conf": true,
-	"/etc/os-release":  true,
-	"/etc/issue":       true,
-	"/etc/hostname":    true,
-	"/etc/fstab":       true,
-	"/etc/mtab":        true,
-	"/etc/group":       true,
-	// Windows hosts file (path normalized to forward slashes)
-	"C:/Windows/System32/drivers/etc/hosts": true,
-}
-
 // AIDiscovery detects AI agent reconnaissance — system enumeration and
 // pre-attack information gathering.
 type AIDiscovery struct{}

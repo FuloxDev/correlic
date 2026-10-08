@@ -93,7 +93,7 @@ func TestHealthHandler_MethodNotAllowed(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
-	HealthHandler(false)(rr, req)
+	HealthHandler(true, false)(rr, req)
 
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status=%d want %d", rr.Code, http.StatusMethodNotAllowed)

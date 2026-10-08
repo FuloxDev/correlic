@@ -136,3 +136,13 @@ func TestProcessLifecyclesHandler_EmptyLifecycles(t *testing.T) {
 		t.Errorf("expected 0 lifecycles, got %d", len(resp.Lifecycles))
 	}
 }
+
+func (s *processLifecycleTestStore) AppendIdempotentForOrg(ctx context.Context, _ string, evt event.Event) error {
+	return s.AppendIdempotent(ctx, evt)
+}
+func (s *processLifecycleTestStore) GetByIDForOrg(ctx context.Context, _ string, id string) (*event.Event, error) {
+	return s.GetByID(ctx, id)
+}
+func (s *processLifecycleTestStore) GetRangeForOrg(ctx context.Context, _ string, hostID string, from, to time.Time) ([]event.Event, error) {
+	return s.GetRange(ctx, hostID, from, to)
+}

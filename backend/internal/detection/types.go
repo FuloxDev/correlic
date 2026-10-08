@@ -63,7 +63,7 @@ type EvalContext struct {
 	Ctx               context.Context
 	Event             *event.Event
 	HostID            string
-	OrgID             string            // needed for per-org rule settings lookup
+	OrgID             string // needed for per-org rule settings lookup
 	GraphQuery        GraphQuerier
 	SafeDomainChecker SafeDomainChecker
 	RuleSettings      RuleSettingsReader // nil = use rule defaults
@@ -74,8 +74,12 @@ type EvalContext struct {
 // Finding represents a detection match — a raw signal that something suspicious happened.
 // Findings have a lifecycle: pending → allowed/dismissed/investigating.
 type Finding struct {
-	ID            string         `json:"id"`
-	DetectionID   string         `json:"detection_id"`
+	ID          string `json:"id"`
+	DetectionID string `json:"detection_id"`
+	// OrgID is the tenant that owns the finding. The engine stamps it from
+	// EvalContext.OrgID; finding IDs and cooldown keys are qualified by it so two
+	// orgs observing the same behavior on identically named hosts never collide.
+	OrgID         string         `json:"org_id,omitempty"`
 	HostID        string         `json:"host_id"`
 	Severity      string         `json:"severity"`
 	Confidence    float64        `json:"confidence"`

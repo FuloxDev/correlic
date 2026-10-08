@@ -2,7 +2,6 @@ package correlation
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/correlic/correlic-backend/internal/event"
@@ -14,7 +13,6 @@ type EventBuffer struct {
 	done    chan struct{}
 	closed  atomic.Bool
 	dropped atomic.Int64
-	mu      sync.RWMutex
 }
 
 // NewEventBuffer creates a new event buffer with the specified capacity.

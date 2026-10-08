@@ -78,7 +78,7 @@ func (s *FindingStore) ListByHost(orgID, hostID string, status string, since tim
 		       resolution, resolved_by, resolved_at,
 		       suppressed, baseline_match, incident_id, created_at
 		FROM findings
-		WHERE host_id = $1 AND created_at >= $2 AND (org_id = $3 OR org_id IS NULL OR org_id = '')
+		WHERE host_id = $1 AND created_at >= $2 AND org_id = $3
 	`
 	args := []any{hostID, since, orgID}
 	argN := 3
@@ -118,7 +118,7 @@ func (s *FindingStore) ListAll(orgID string, status string, since time.Time, lim
 		       resolution, resolved_by, resolved_at,
 		       suppressed, baseline_match, incident_id, created_at
 		FROM findings
-		WHERE created_at >= $1 AND (org_id = $2 OR org_id IS NULL OR org_id = '')
+		WHERE created_at >= $1 AND org_id = $2
 	`
 	args := []any{since, orgID}
 	argN := 2
@@ -151,13 +151,13 @@ func (s *FindingStore) ListAll(orgID string, status string, since time.Time, lim
 
 // FindingCounts holds aggregated finding counts for the dashboard.
 type FindingCounts struct {
-	Total        int `json:"total"`
-	Pending      int `json:"pending"`
-	Allowed      int `json:"allowed"`
-	Dismissed    int `json:"dismissed"`
-	AutoResolved int `json:"auto_resolved"`
+	Total         int `json:"total"`
+	Pending       int `json:"pending"`
+	Allowed       int `json:"allowed"`
+	Dismissed     int `json:"dismissed"`
+	AutoResolved  int `json:"auto_resolved"`
 	Investigating int `json:"investigating"`
-	Suppressed   int `json:"suppressed"`
+	Suppressed    int `json:"suppressed"`
 }
 
 // CountByStatus returns aggregated finding counts since a given time.
@@ -165,7 +165,7 @@ func (s *FindingStore) CountByStatus(orgID string, since time.Time) (FindingCoun
 	var c FindingCounts
 	rows, err := s.db.Query(`
 		SELECT status, COUNT(*) FROM findings
-		WHERE created_at >= $1 AND (org_id = $2 OR org_id IS NULL OR org_id = '')
+		WHERE created_at >= $1 AND org_id = $2
 		GROUP BY status
 	`, since, orgID)
 	if err != nil {
@@ -196,7 +196,7 @@ func (s *FindingStore) CountByStatus(orgID string, since time.Time) (FindingCoun
 
 	// Count suppressed separately — suppressed findings still have status='pending'
 	// so subtract them from Pending to get the actionable pending count.
-	s.db.QueryRow(`SELECT COUNT(*) FROM findings WHERE created_at >= $1 AND (org_id = $2 OR org_id IS NULL OR org_id = '') AND suppressed = true AND status = 'pending'`, since, orgID).Scan(&c.Suppressed)
+	s.db.QueryRow(`SELECT COUNT(*) FROM findings WHERE created_at >= $1 AND org_id = $2 AND suppressed = true AND status = 'pending'`, since, orgID).Scan(&c.Suppressed)
 	c.Pending -= c.Suppressed
 	if c.Pending < 0 {
 		c.Pending = 0
@@ -238,7 +238,7 @@ func (s *FindingStore) UpdateStatus(orgID, id, status, resolution, resolvedBy st
 	result, err := s.db.Exec(`
 		UPDATE findings
 		SET status = $2, resolution = $3, resolved_by = $4, resolved_at = $5
-		WHERE id = $1 AND (org_id = $6 OR org_id IS NULL OR org_id = '')
+		WHERE id = $1 AND org_id = $6
 	`, id, status, resolution, resolvedBy, now, orgID)
 	if err != nil {
 		return err
@@ -258,7 +258,7 @@ func (s *FindingStore) GetByID(orgID, id string) (*FindingRow, error) {
 		       resolution, resolved_by, resolved_at,
 		       suppressed, baseline_match, incident_id, created_at
 		FROM findings
-		WHERE id = $1 AND (org_id = $2 OR org_id IS NULL OR org_id = '')
+		WHERE id = $1 AND org_id = $2
 	`, id, orgID)
 
 	f := &FindingRow{}
@@ -316,7 +316,7 @@ func scanFindings(rows *sql.Rows) ([]FindingRow, error) {
 func (s *FindingStore) SetIncidentID(orgID, findingID, incidentID string) error {
 	_, err := s.db.Exec(`
 		UPDATE findings SET incident_id = $1
-		WHERE id = $2 AND (org_id = $3 OR org_id IS NULL OR org_id = '')
+		WHERE id = $2 AND org_id = $3
 	`, incidentID, findingID, orgID)
 	return err
 }
@@ -327,7 +327,7 @@ func (s *FindingStore) CountPendingByIncident(orgID, incidentID string) (int, er
 	var count int
 	err := s.db.QueryRow(`
 		SELECT COUNT(*) FROM findings
-		WHERE incident_id = $1 AND (org_id = $2 OR org_id IS NULL OR org_id = '')
+		WHERE incident_id = $1 AND org_id = $2
 		  AND status NOT IN ('allowed', 'dismissed', 'resolved', 'auto_resolved')
 	`, incidentID, orgID).Scan(&count)
 	return count, err
@@ -341,16 +341,34 @@ func (s *FindingStore) UpdateContext(orgID, findingID string, ctx map[string]any
 	}
 	_, err = s.db.Exec(`
 		UPDATE findings SET context = $1
-		WHERE id = $2 AND (org_id = $3 OR org_id IS NULL OR org_id = '')
+		WHERE id = $2 AND org_id = $3
 	`, contextJSON, findingID, orgID)
 	return err
 }
 
-// AutoResolveBySafeDomain retroactively resolves all pending network-related findings
-// whose domain context matches the given safe domain (exact or suffix match, mirroring
-// SafeDomainStore.IsSafe() logic). Returns the count of resolved findings and distinct
-// org IDs for incident reconciliation.
+// ErrOrgRequired is returned by tenant-scoped writes that were called without an org.
+var ErrOrgRequired = errors.New("org id is required")
+
+// AutoResolveBySafeDomainForOrg retroactively resolves orgID's pending network-related
+// findings whose domain context matches the given safe domain (exact or suffix match,
+// mirroring SafeDomainStore.IsSafe() logic). Returns the count of resolved findings and
+// the distinct org IDs touched (always just orgID) for incident reconciliation.
+func (s *FindingStore) AutoResolveBySafeDomainForOrg(orgID, domain string) (int64, []string, error) {
+	if strings.TrimSpace(orgID) == "" {
+		return 0, nil, ErrOrgRequired
+	}
+	return s.autoResolveBySafeDomain(orgID, domain)
+}
+
+// AutoResolveBySafeDomain resolves matching pending findings in EVERY org.
+//
+// Deprecated: use AutoResolveBySafeDomainForOrg. Kept only for callers that predate
+// org scoping; safe-domain rows are per-org now, so cross-org resolution is wrong.
 func (s *FindingStore) AutoResolveBySafeDomain(domain string) (int64, []string, error) {
+	return s.autoResolveBySafeDomain("", domain)
+}
+
+func (s *FindingStore) autoResolveBySafeDomain(orgID, domain string) (int64, []string, error) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	if domain == "" {
 		return 0, nil, nil
@@ -366,6 +384,7 @@ func (s *FindingStore) AutoResolveBySafeDomain(domain string) (int64, []string, 
 				resolved_by = 'system',
 				resolved_at = NOW()
 			WHERE status = 'pending'
+			  AND ($3 = '' OR org_id = $3)
 			  AND detection_id IN ('ai.unexpected_network', 'ai.data_exfiltration', 'ai.suspicious_dns')
 			  AND (
 				LOWER(context->>'domain') = $1
@@ -378,7 +397,7 @@ func (s *FindingStore) AutoResolveBySafeDomain(domain string) (int64, []string, 
 			RETURNING COALESCE(org_id, '') AS org_id
 		)
 		SELECT DISTINCT org_id FROM resolved
-	`, domain, suffixPattern)
+	`, domain, suffixPattern, strings.TrimSpace(orgID))
 	if err != nil {
 		return 0, nil, fmt.Errorf("auto-resolve by safe domain: %w", err)
 	}
@@ -408,6 +427,9 @@ func (s *FindingStore) AutoResolveBySafeDomain(domain string) (int64, []string, 
 //
 // Returns the count of resolved findings and distinct org IDs.
 func (s *FindingStore) AutoResolveByBaseline(orgID, hostID, signalType, pattern string) (int64, []string, error) {
+	if strings.TrimSpace(orgID) == "" {
+		return 0, nil, ErrOrgRequired
+	}
 	if signalType == "" || pattern == "" {
 		return 0, nil, nil
 	}
@@ -435,7 +457,7 @@ func (s *FindingStore) AutoResolveByBaseline(orgID, hostID, signalType, pattern 
 					resolved_by = 'system',
 					resolved_at = NOW()
 				WHERE status = 'pending'
-				  AND (COALESCE(org_id, '') = $1 OR $1 = '')
+				  AND org_id = $1
 				  AND ($2 = '*' OR host_id = $2)
 				  AND context->>'signal_type' IN ('file_pattern', 'credential_file', 'persistence_path', 'code_tamper', 'file_write_burst', 'file_activity')
 				  AND (
@@ -458,7 +480,7 @@ func (s *FindingStore) AutoResolveByBaseline(orgID, hostID, signalType, pattern 
 					resolved_by = 'system',
 					resolved_at = NOW()
 				WHERE status = 'pending'
-				  AND (COALESCE(org_id, '') = $1 OR $1 = '')
+				  AND org_id = $1
 				  AND ($2 = '*' OR host_id = $2)
 				  AND context->>'binary' = $3
 				RETURNING COALESCE(org_id, '') AS org_id
@@ -475,7 +497,7 @@ func (s *FindingStore) AutoResolveByBaseline(orgID, hostID, signalType, pattern 
 					resolved_by = 'system',
 					resolved_at = NOW()
 				WHERE status = 'pending'
-				  AND (COALESCE(org_id, '') = $1 OR $1 = '')
+				  AND org_id = $1
 				  AND ($2 = '*' OR host_id = $2)
 				  AND context->>'signal_type' = $3
 				  AND context->>'pattern' = $4

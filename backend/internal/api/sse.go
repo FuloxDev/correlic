@@ -63,12 +63,3 @@ func (s *SSEWriter) WriteError(msg string) {
 	fmt.Fprintf(s.w, "data: %s\n\n", string(data))
 	s.flusher.Flush()
 }
-
-// jsonEscape escapes a string for safe inclusion in SSE data field.
-func jsonEscape(s string) string {
-	data, err := json.Marshal(s)
-	if err != nil {
-		return `""`
-	}
-	return string(data)
-}

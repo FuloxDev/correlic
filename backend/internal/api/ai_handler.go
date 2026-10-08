@@ -35,18 +35,24 @@ func NewAIHandler(settingsStore *provider.SettingsStore, telemetryStore storage.
 }
 
 // RegisterRoutes registers AI routes with the mux.
-func (h *AIHandler) RegisterRoutes(mux *http.ServeMux, wrapAuthed func(http.Handler) http.Handler) {
-	mux.Handle("GET /api/v1/ai/patterns", wrapAuthed(http.HandlerFunc(h.ListPatterns)))
-	mux.Handle("GET /api/v1/ai/settings", wrapAuthed(http.HandlerFunc(h.ListSettings)))
-	mux.Handle("POST /api/v1/ai/settings", wrapAuthed(http.HandlerFunc(h.SaveSettings)))
-	mux.Handle("DELETE /api/v1/ai/settings", wrapAuthed(http.HandlerFunc(h.DeleteSettings)))
-	mux.Handle("PUT /api/v1/ai/settings/switch", wrapAuthed(http.HandlerFunc(h.SwitchProvider)))
+//
+//   - wrapAuthed: any non-agent actor (admin, member).
+//   - wrapAgent: additionally allows the agent role; used for the pattern list
+//     that agents poll.
+//   - wrapAdminWrites: GET for admin and member, every other method admin only;
+//     used for provider settings and pattern management.
+func (h *AIHandler) RegisterRoutes(mux *http.ServeMux, wrapAuthed, wrapAgent, wrapAdminWrites func(http.Handler) http.Handler) {
+	mux.Handle("GET /api/v1/ai/patterns", wrapAgent(http.HandlerFunc(h.ListPatterns)))
+	mux.Handle("GET /api/v1/ai/settings", wrapAdminWrites(http.HandlerFunc(h.ListSettings)))
+	mux.Handle("POST /api/v1/ai/settings", wrapAdminWrites(http.HandlerFunc(h.SaveSettings)))
+	mux.Handle("DELETE /api/v1/ai/settings", wrapAdminWrites(http.HandlerFunc(h.DeleteSettings)))
+	mux.Handle("PUT /api/v1/ai/settings/switch", wrapAdminWrites(http.HandlerFunc(h.SwitchProvider)))
 	mux.Handle("POST /api/v1/ai/analyze", wrapAuthed(http.HandlerFunc(h.AnalyzeEvents)))
 	mux.Handle("POST /api/v1/ai/explain", wrapAuthed(http.HandlerFunc(h.ExplainEvent)))
-	mux.Handle("GET /api/v1/ai/agent-patterns", wrapAuthed(http.HandlerFunc(h.ListAgentPatterns)))
-	mux.Handle("POST /api/v1/ai/agent-patterns", wrapAuthed(http.HandlerFunc(h.CreateAgentPattern)))
-	mux.Handle("DELETE /api/v1/ai/agent-patterns/", wrapAuthed(http.HandlerFunc(h.DeleteAgentPattern)))
-	mux.Handle("POST /api/v1/ai/suggest-patterns", wrapAuthed(http.HandlerFunc(h.SuggestPatterns)))
+	mux.Handle("GET /api/v1/ai/agent-patterns", wrapAdminWrites(http.HandlerFunc(h.ListAgentPatterns)))
+	mux.Handle("POST /api/v1/ai/agent-patterns", wrapAdminWrites(http.HandlerFunc(h.CreateAgentPattern)))
+	mux.Handle("DELETE /api/v1/ai/agent-patterns/", wrapAdminWrites(http.HandlerFunc(h.DeleteAgentPattern)))
+	mux.Handle("POST /api/v1/ai/suggest-patterns", wrapAdminWrites(http.HandlerFunc(h.SuggestPatterns)))
 }
 
 // ListSettings returns configured LLM providers.
@@ -59,7 +65,7 @@ func (h *AIHandler) ListSettings(w http.ResponseWriter, r *http.Request) {
 
 	settings, err := h.settingsStore.ListSettings(r.Context(), orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		InternalErr(w, "list llm settings", err)
 		return
 	}
 
@@ -148,7 +154,7 @@ func (h *AIHandler) SaveSettings(w http.ResponseWriter, r *http.Request) {
 
 	settings, err := h.settingsStore.SaveSettings(r.Context(), orgID, req.Provider, req.Model, req.APIKey)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		InternalErr(w, "save llm settings", err)
 		return
 	}
 
@@ -173,7 +179,7 @@ func (h *AIHandler) DeleteSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.settingsStore.DeleteSettings(r.Context(), orgID, providerName); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		InternalErr(w, "delete llm settings", err)
 		return
 	}
 
@@ -206,7 +212,7 @@ func (h *AIHandler) SwitchProvider(w http.ResponseWriter, r *http.Request) {
 	// Verify provider is configured
 	settings, _, err := h.settingsStore.GetSettings(r.Context(), orgID, req.Provider)
 	if err != nil {
-		http.Error(w, "error checking provider: "+err.Error(), http.StatusInternalServerError)
+		InternalErr(w, "check llm provider", err)
 		return
 	}
 	if settings == nil {
@@ -231,7 +237,7 @@ func (h *AIHandler) SwitchProvider(w http.ResponseWriter, r *http.Request) {
 	// Re-save to enable and update
 	settings, err = h.settingsStore.EnableProvider(r.Context(), orgID, req.Provider, model)
 	if err != nil {
-		http.Error(w, "failed to switch provider: "+err.Error(), http.StatusInternalServerError)
+		InternalErr(w, "switch llm provider", err)
 		return
 	}
 
@@ -410,7 +416,12 @@ func (h *AIHandler) ListPatterns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	patterns := h.attributionService.GetPatternNeedles()
+	// Built-ins plus this org's own patterns (never another tenant's).
+	orgID, _ := middleware.OrgFromContext(r.Context())
+	patterns := h.attributionService.GetPatternNeedlesForOrg(orgID)
+	if patterns == nil {
+		patterns = []string{}
+	}
 	writeJSON(w, map[string]any{
 		"patterns": patterns,
 	})
@@ -423,7 +434,8 @@ func (h *AIHandler) ListAgentPatterns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	patterns, err := h.attributionService.GetAllPatterns()
+	orgID, _ := middleware.OrgFromContext(r.Context())
+	patterns, err := h.attributionService.GetAllPatterns(orgID)
 	if err != nil {
 		http.Error(w, "failed to list patterns", http.StatusInternalServerError)
 		return
@@ -457,7 +469,14 @@ func (h *AIHandler) CreateAgentPattern(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.attributionService.CreatePattern(attribution.AIAgentPattern{
+	orgID, ok := middleware.OrgFromContext(r.Context())
+	if !ok || orgID == "" {
+		http.Error(w, "org_id required", http.StatusUnauthorized)
+		return
+	}
+
+	// The pattern is owned by the creating org; built-ins (org_id NULL) come only from migrations.
+	created, err := h.attributionService.CreatePattern(orgID, attribution.AIAgentPattern{
 		Pattern:     req.Pattern,
 		AgentType:   req.AgentType,
 		Description: req.Description,
@@ -505,7 +524,14 @@ func (h *AIHandler) DeleteAgentPattern(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.attributionService.DeletePattern(id); err != nil {
+	orgID, ok := middleware.OrgFromContext(r.Context())
+	if !ok || orgID == "" {
+		http.Error(w, "org_id required", http.StatusUnauthorized)
+		return
+	}
+
+	// Only the org's own patterns are deletable; built-ins and other orgs' read as not found.
+	if err := h.attributionService.DeletePattern(orgID, id); err != nil {
 		if errors.Is(err, attribution.ErrPatternNotFound) {
 			http.Error(w, "pattern not found", http.StatusNotFound)
 			return

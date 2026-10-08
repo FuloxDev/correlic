@@ -274,11 +274,15 @@ func (s *PostgresUserStore) GetUserOrgID(userID string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// A user may belong to several orgs; always return the one they joined first so
+	// login and API-key resolution are deterministic across requests.
 	var orgID string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT org_id::text
-		FROM org_users
-		WHERE user_id = $1::uuid
+		SELECT ou.org_id::text
+		FROM org_users ou
+		JOIN organizations o ON o.id = ou.org_id
+		WHERE ou.user_id = $1::uuid
+		ORDER BY ou.created_at ASC, ou.org_id ASC
 		LIMIT 1
 	`, userID).Scan(&orgID)
 	if err == sql.ErrNoRows {

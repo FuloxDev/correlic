@@ -236,7 +236,6 @@ func (s *IncidentStore) FindMergeCandidate(ctx context.Context, orgID, hostID, s
 	if sessionID != "" {
 		query += fmt.Sprintf(` AND context_summary->'session_ids' @> to_jsonb($%d::text)`, argIdx)
 		args = append(args, sessionID)
-		argIdx++
 	}
 
 	query += ` ORDER BY ended_at DESC LIMIT 1`
@@ -308,7 +307,6 @@ func (s *IncidentStore) FindMergeCandidateAnyCategory(ctx context.Context, orgID
 	if sessionID != "" {
 		query += fmt.Sprintf(` AND context_summary->'session_ids' @> to_jsonb($%d::text)`, argIdx)
 		args = append(args, sessionID)
-		argIdx++
 	}
 
 	// Prefer higher-severity incidents (more likely the "real" incident to attach to).

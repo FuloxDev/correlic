@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,13 +22,23 @@ import (
 // The frontend sends the Google ID token (from Google Sign-In JS SDK),
 // the backend verifies it with Google's tokeninfo endpoint, then creates
 // or links the user account.
+//
+// The handler must only be registered when GOOGLE_CLIENT_ID is configured:
+// without a client ID the audience of the token cannot be verified and any
+// Google-issued token for any application would be accepted.
 type GoogleAuthHandler struct {
 	store    storage.UserStore
 	clientID string // Google OAuth client ID for audience verification
+	// verify validates an ID token; overridable in tests.
+	verify func(idToken string) (*googleTokenInfo, error)
 }
 
 func NewGoogleAuthHandler(store storage.UserStore, googleClientID string) *GoogleAuthHandler {
-	return &GoogleAuthHandler{store: store, clientID: googleClientID}
+	return &GoogleAuthHandler{
+		store:    store,
+		clientID: strings.TrimSpace(googleClientID),
+		verify:   verifyGoogleToken,
+	}
 }
 
 type googleTokenInfo struct {
@@ -36,18 +48,31 @@ type googleTokenInfo struct {
 	Name          string `json:"name"`
 	Picture       string `json:"picture"`
 	Aud           string `json:"aud"` // Must match our client ID
+	Iss           string `json:"iss"` // Must be a Google issuer
 }
+
+// googleIssuers are the issuer values Google uses for ID tokens.
+var googleIssuers = map[string]struct{}{
+	"accounts.google.com":         {},
+	"https://accounts.google.com": {},
+}
+
+var errGoogleTokenRejected = errors.New("google token rejected")
 
 func (h *GoogleAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		MethodNotAllowed(w, http.MethodPost)
 		return
 	}
+	if h.clientID == "" {
+		NotImplemented(w, "google sign-in is not configured")
+		return
+	}
 
 	var req struct {
 		IDToken string `json:"id_token"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		BadRequest(w, "invalid payload")
 		return
 	}
@@ -56,21 +81,28 @@ func (h *GoogleAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the token with Google
-	info, err := verifyGoogleToken(req.IDToken)
+	// Verify the token with Google. Details are logged, never echoed.
+	info, err := h.verify(req.IDToken)
 	if err != nil {
-		Unauthorized(w, fmt.Sprintf("invalid google token: %v", err))
+		log.Printf("[google-auth] token verification failed: %v", err)
+		Unauthorized(w, "invalid google token")
 		return
 	}
 
-	// Verify audience matches our client ID
-	if h.clientID != "" && info.Aud != h.clientID {
-		Unauthorized(w, "token audience mismatch")
+	// The audience must always equal our client ID and the issuer must be Google.
+	if info.Aud != h.clientID {
+		log.Printf("[google-auth] token audience mismatch")
+		Unauthorized(w, "invalid google token")
+		return
+	}
+	if _, ok := googleIssuers[info.Iss]; !ok {
+		log.Printf("[google-auth] token issuer not trusted")
+		Unauthorized(w, "invalid google token")
 		return
 	}
 
 	if info.Email == "" || info.Sub == "" {
-		Unauthorized(w, "missing email or sub in token")
+		Unauthorized(w, "invalid google token")
 		return
 	}
 	if info.EmailVerified != "true" {
@@ -138,13 +170,6 @@ func (h *GoogleAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get user's org
-	orgID, err := h.store.GetUserOrgID(user.ID)
-	if err != nil || orgID == "" {
-		// User has no org — they can still sign in, but won't have org context
-		// The frontend will handle this case
-	}
-
 	// Create session
 	token := strings.ReplaceAll(uuid.New().String(), "-", "")
 	hashBytes := sha256.Sum256([]byte(token))
@@ -163,27 +188,28 @@ func (h *GoogleAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifyGoogleToken validates a Google ID token using Google's tokeninfo endpoint.
+// verifyGoogleToken validates a Google ID token using Google's tokeninfo
+// endpoint. Google's response body is never included in the returned error.
 func verifyGoogleToken(idToken string) (*googleTokenInfo, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.PostForm("https://oauth2.googleapis.com/tokeninfo", url.Values{"id_token": {idToken}})
 	if err != nil {
-		return nil, fmt.Errorf("failed to verify token: %w", err)
+		return nil, fmt.Errorf("tokeninfo request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, fmt.Errorf("tokeninfo read failed: %w", err)
 	}
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("token verification failed: %s", string(body))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: tokeninfo status %d", errGoogleTokenRejected, resp.StatusCode)
 	}
 
 	var info googleTokenInfo
 	if err := json.Unmarshal(body, &info); err != nil {
-		return nil, fmt.Errorf("failed to parse token info: %w", err)
+		return nil, fmt.Errorf("tokeninfo parse failed: %w", err)
 	}
 
 	return &info, nil
