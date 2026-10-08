@@ -12,11 +12,11 @@ import (
 // before falling back to PEB reading.
 //
 // Flow:
-//   1. AuditSubscriber receives Event 4688 → CmdlineCache.Put(pid, cmdline)
-//   2. ETW ProcessStart fires → exec_runner calls CmdlineCache.Get(pid)
-//   3. If hit → use cached cmdline (100% reliable, written by kernel)
-//   4. If miss → fallback to PEB read (process started before subscriber)
-//   5. Entries expire after TTL (default 10s) to prevent memory leak
+//  1. AuditSubscriber receives Event 4688 → CmdlineCache.Put(pid, cmdline)
+//  2. ETW ProcessStart fires → exec_runner calls CmdlineCache.Get(pid)
+//  3. If hit → use cached cmdline (100% reliable, written by kernel)
+//  4. If miss → fallback to PEB read (process started before subscriber)
+//  5. Entries expire after TTL (default 10s) to prevent memory leak
 type CmdlineCache struct {
 	mu    sync.RWMutex
 	cache map[uint32]cmdlineEntry

@@ -12,10 +12,10 @@ import (
 )
 
 type fakeTransport struct {
-	mu     sync.Mutex
+	mu      sync.Mutex
 	batches []model.TelemetryBatch
-	ch     chan model.TelemetryBatch
-	errs   []error
+	ch      chan model.TelemetryBatch
+	errs    []error
 }
 
 func (t *fakeTransport) SendHeartbeat(ctx context.Context, hb model.Heartbeat) error {

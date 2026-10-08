@@ -30,9 +30,9 @@ type ProcEvent struct {
 	Type      ProcEventType
 	PID       uint32
 	Cmdline   []string // captured in callback for short-lived processes
-	PPID      uint32 // populated via snapshot for start events
-	ImagePath string  // normalised forward-slash path
-	ExitCode  uint32  // only valid for ProcStop
+	PPID      uint32   // populated via snapshot for start events
+	ImagePath string   // normalised forward-slash path
+	ExitCode  uint32   // only valid for ProcStop
 }
 
 // ProcCollector subscribes to Microsoft-Windows-Kernel-Process ETW events.
@@ -325,7 +325,9 @@ func ntPathToDOS(path string) string {
 
 // stripMSYSDriveMirror fixes MSYS/Git-for-Windows path artifacts.
 // Git Bash maps C:\ as /c/, so ETW sometimes reports paths like:
-//   \Device\HarddiskVolume3\c\Users\alice\... → C:/c/Users/alice/...
+//
+//	\Device\HarddiskVolume3\c\Users\alice\... → C:/c/Users/alice/...
+//
 // The "c" after the drive letter is a MSYS mount point, not a real directory.
 // This strips it when the inner letter matches the drive: C:/c/... → C:/...
 func stripMSYSDriveMirror(path string) string {
@@ -435,10 +437,10 @@ func readProcCmdlineInCallback(pid uint32) []string {
 
 	// Read CommandLine UNICODE_STRING from ProcessParameters (offset 0x70)
 	type uniStr struct {
-		Length    uint16
-		MaxLen   uint16
-		_        [4]byte
-		Buffer   uintptr
+		Length uint16
+		MaxLen uint16
+		_      [4]byte
+		Buffer uintptr
 	}
 	var cmdUS uniStr
 	if err := windows.ReadProcessMemory(h, paramsPtr+0x70,
@@ -448,7 +450,6 @@ func readProcCmdlineInCallback(pid uint32) []string {
 	if cmdUS.Length == 0 || cmdUS.Buffer == 0 {
 		return nil
 	}
-
 
 	// Read the actual string
 	buf := make([]uint16, cmdUS.Length/2)

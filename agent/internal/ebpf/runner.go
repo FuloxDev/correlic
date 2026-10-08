@@ -11,13 +11,14 @@ import (
 
 	"github.com/correlic/correlic-agent/internal/collect"
 	"github.com/correlic/correlic-agent/internal/dispatch"
+	"github.com/correlic/correlic-agent/internal/enforcer"
 )
 
 // Runner wraps the eBPF Collector to implement the collect.Collector interface.
 // It reads raw exec events and dispatches canonical event.Event through ExecHandler.
 //
-// Invariant: All eBPF runners (exec, accept, msg, etc.) must share the same HostID
-// and Dispatcher instance. Mixed dispatchers break correlation and ingest.
+// Invariant: All eBPF runners must share the same HostID and Dispatcher
+// instance. Mixed dispatchers break correlation and ingest.
 type Runner struct {
 	collector      *Collector
 	emit           collect.EventSink
@@ -25,6 +26,7 @@ type Runner struct {
 	HostID         string
 	Dispatcher     dispatch.Dispatcher
 	dockerResolver *DockerResolver // nil-safe — nil on non-Docker hosts
+	enforcer       *enforcer.Enforcer
 }
 
 // NewRunner creates a new eBPF Runner that reads exec events and dispatches canonical events via Enqueue.
@@ -55,6 +57,30 @@ func NewRunner(emit collect.EventSink, logger *slog.Logger, hostID string, disp 
 	}, nil
 }
 
+// SetEnforcer attaches the soft-block enforcer to the exec runner.
+func (r *Runner) SetEnforcer(e *enforcer.Enforcer) {
+	r.enforcer = e
+}
+
+// splitArgs turns the raw argv blob captured by eBPF into tokens. eBPF might
+// provide spaces instead of null bytes depending on how userland formatted argv.
+func splitArgs(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	separator := "\x00"
+	if !strings.Contains(raw[:len(raw)-1], "\x00") { // no inner nulls
+		separator = " "
+	}
+	var out []string
+	for _, p := range strings.Split(raw, separator) {
+		if cleanP := strings.Trim(p, "\x00 "); cleanP != "" {
+			out = append(out, cleanP)
+		}
+	}
+	return out
+}
+
 // Start implements the collect.Collector interface.
 // It starts the eBPF collector; each raw exec event is passed to ExecHandler.Handle (canonical event + dispatch).
 func (r *Runner) Start(ctx context.Context) {
@@ -66,6 +92,8 @@ func (r *Runner) Start(ctx context.Context) {
 		HostID:     r.HostID,
 		Dispatcher: r.Dispatcher,
 	}
+	tracker := GetLineageTracker()
+	debug := r.logger.Enabled(ctx, slog.LevelDebug)
 
 	for {
 		select {
@@ -78,23 +106,7 @@ func (r *Runner) Start(ctx context.Context) {
 			// AI tools like Claude Code, aider, LangChain run under generic runtimes
 			// (node, python) where ev.Comm is just "node"/"python" — the cmdline
 			// contains the actual tool name (e.g. "node /path/to/claude", "python -m aider").
-			var cmdlineArgs []string
-			if ev.Args != "" {
-				// eBPF might provide spaces instead of null bytes depending on how userland formatted argv
-				separator := "\x00"
-				if !strings.Contains(ev.Args[:len(ev.Args)-1], "\x00") { // Check if there are any inner nulls
-					separator = " "
-				}
-
-				parts := strings.Split(ev.Args, separator)
-				for _, p := range parts {
-					// Clean up trailing nulls if it was space separated
-					cleanP := strings.Trim(p, "\x00 ")
-					if cleanP != "" {
-						cmdlineArgs = append(cmdlineArgs, cleanP)
-					}
-				}
-			}
+			cmdlineArgs := splitArgs(ev.Args)
 
 			// Sometimes eBPF only captures the binary name due to argument races during failed PATH executions
 			if len(cmdlineArgs) == 0 || (len(cmdlineArgs) == 1 && cmdlineArgs[0] == ev.Comm) {
@@ -104,39 +116,27 @@ func (r *Runner) Start(ctx context.Context) {
 				}
 			}
 
-			// FILTER: Only proceed if this is an AI process or descendant
-			// Note: fork_runner registers PIDs before execsnoop sees them (usually),
-			// but for the root AI process, we might need a direct check here too if fork missed it.
-			tracker := GetLineageTracker()
-			// We check if it's already tracked (descendant) OR if the comm itself is an AI pattern
-			// This double check ensures we catch the "root" AI process (e.g. user typing 'cursor')
-			isAI := tracker.IsAI(ev.PID)
-			if !isAI {
-				// Race condition or root process: try to register (checks pattern AND parent)
-				isAI = tracker.RegisterProcess(ev.PID, ev.PPID, ev.Comm)
-			}
+			// FILTER: Only proceed if this is an AI process or descendant.
+			// fork_runner usually registers PIDs before execsnoop sees them;
+			// RegisterProcessWithCommand covers the root AI process (inherit
+			// first, then comm/exe/argv token matching).
+			isAI := tracker.IsAI(ev.PID) ||
+				tracker.RegisterProcessWithCommand(ev.PID, ev.PPID, ev.Comm, ev.Filename, cmdlineArgs)
 
-			// If comm didn't match, check the full cmdline — catches AI tools running
-			// under generic runtimes like "node /usr/lib/claude/cli.js" or "python -m aider"
-			if !isAI {
-				cmdlineStr := strings.Join(cmdlineArgs, " ")
-				if cmdlineStr != "" && tracker.CheckPattern(cmdlineStr) {
-					// Cmdline matched an AI pattern — register this PID
-					tracker.MarkAI(ev.PID)
-					isAI = true
-					r.logger.Info("AI process detected via cmdline",
-						"pid", ev.PID, "comm", ev.Comm, "cmdline", cmdlineStr)
-				}
-			}
-
-			// If comm and cmdline didn't match, check Docker container name/image.
+			// If comm/cmdline didn't match, check Docker container name/image.
 			// This catches AI tools like OpenClaw running inside containers where
 			// the kernel comm is "python" but the container name is "liberty-claws".
-			if !isAI {
-				containerID := DetectContainerID(ev.PID)
-				if containerID != "" && r.dockerResolver.CheckContainerPatterns(containerID, tracker) {
-					tracker.MarkAI(ev.PID)
-					isAI = true
+			// The cgroup lookup is done at most once per exec.
+			var containerID string
+			containerResolved := false
+			if !isAI && r.dockerResolver != nil {
+				containerID = DetectContainerID(ev.PID)
+				containerResolved = true
+				if containerID != "" {
+					if aiType, ok := r.dockerResolver.MatchContainerPatterns(containerID, tracker); ok {
+						tracker.MarkAIWithType(ev.PID, ev.PPID, aiType)
+						isAI = true
+					}
 				}
 			}
 
@@ -145,20 +145,33 @@ func (r *Runner) Start(ctx context.Context) {
 			}
 
 			// Resolve full executable path from /proc/[pid]/exe
-			exePath := fmt.Sprintf("/proc/%d/exe", ev.PID)
-			fullPath, err := os.Readlink(exePath)
+			fullPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", ev.PID))
 			if err != nil {
-				fullPath = ev.Comm // fallback if process already exited
+				fullPath = ev.Filename // fallback if process already exited
+				if fullPath == "" {
+					fullPath = ev.Comm
+				}
 			}
 
 			// Detect container ID and session ID
-			containerID := DetectContainerID(ev.PID)
+			if !containerResolved {
+				containerID = DetectContainerID(ev.PID)
+			}
 			sessionID := detectSessionID(ev.PID)
+			aiSessionID, aiType, _ := tracker.AIContext(ev.PID)
 
-			r.logger.Info("exec captured",
-				"pid", ev.PID, "comm", ev.Comm, "exe", fullPath,
-				"args_from_ebpf", ev.Args != "", "cmdline", cmdlineArgs)
+			// Soft-block check — kill process if it matches a block rule.
+			blocked := applyBlockRule(r.enforcer, r.emit, r.logger, "process_exec", ev.PID, fullPath,
+				map[string]any{"exe_path": fullPath, "cmdline": strings.Join(cmdlineArgs, " ")})
 
+			if debug {
+				r.logger.Debug("exec captured",
+					"pid", ev.PID, "comm", ev.Comm, "exe", fullPath,
+					"args_from_ebpf", ev.Args != "", "cmdline", cmdlineArgs,
+					"ai_type", aiType, "blocked", blocked)
+			}
+
+			role := CheckRole(ev.Comm)
 			raw := RawExecEvent{
 				TsNano:      int64(ev.TimestampNs),
 				PID:         ev.PID,
@@ -170,8 +183,10 @@ func (r *Runner) Start(ctx context.Context) {
 				Cwd:         "",
 				SessionID:   sessionID,
 				ContainerID: containerID,
-				Role:        CheckRole(ev.Comm),
-				AISessionID: tracker.GetSessionID(ev.PID),
+				Role:        role,
+				AISessionID: aiSessionID,
+				AIType:      aiType,
+				Blocked:     blocked,
 			}
 			handler.Handle(raw)
 
@@ -190,8 +205,11 @@ func (r *Runner) Start(ctx context.Context) {
 				"container_id": containerID,
 				"session_id":   sessionID,
 				"timestamp_ns": ev.TimestampNs,
-				"is_ai":        true,
-				"role":         CheckRole(ev.Comm),
+				"role":         role,
+			}
+			tracker.Annotate(payload, ev.PID)
+			if blocked {
+				payload["action"] = "blocked"
 			}
 			_ = r.emit("process_exec", payload)
 		}

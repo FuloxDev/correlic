@@ -8,6 +8,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// StateDir returns the platform state directory the agent persists host-level
+// state in (host id, cached AI patterns, Windows audit policy backup).
+func StateDir() string {
+	return hostIDDir
+}
+
 func GetOrCreate() (string, error) {
 	hostIDFile := filepath.Join(hostIDDir, "host_id")
 	if b, err := os.ReadFile(hostIDFile); err == nil {

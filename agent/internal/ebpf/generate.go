@@ -16,8 +16,6 @@ package ebpf
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64 execsnoop bpf/execsnoop.bpf.c -- -I/usr/include -I.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64 fileopen bpf/fileopen.bpf.c -- -I/usr/include -I.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64 connect bpf/connect.bpf.c -- -I/usr/include -I.
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64 accept bpf/accept.bpf.c -- -I/usr/include -I.
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64 msg bpf/msg.bpf.c -- -I/usr/include -I.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64 dns bpf/dns.bpf.c -- -I/usr/include -I.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64 bind bpf/bind.bpf.c -- -I/usr/include -I.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64 unlink bpf/unlink.bpf.c -- -I/usr/include -I.

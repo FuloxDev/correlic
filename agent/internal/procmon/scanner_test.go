@@ -80,4 +80,3 @@ func TestScanner_SnapshotAndReadProcess_FakeProcfs(t *testing.T) {
 		t.Fatalf("start=%d want %d", info.StartTimeTicks, 777)
 	}
 }
-

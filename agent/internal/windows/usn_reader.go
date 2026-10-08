@@ -244,20 +244,20 @@ func (r *USNReader) readRecords(buf []byte) []USNEvent {
 // parseV2Record parses a USN_RECORD_V2 from raw bytes.
 // Layout (V2, 64-bit):
 //
-//	  0: RecordLength     uint32
-//	  4: MajorVersion     uint16
-//	  6: MinorVersion     uint16
-//	  8: FileReferenceNumber uint64
-//	 16: ParentFileReferenceNumber uint64
-//	 24: Usn              int64
-//	 32: TimeStamp        int64  (FILETIME)
-//	 40: Reason           uint32
-//	 44: SourceInfo       uint32
-//	 48: SecurityId       uint32
-//	 52: FileAttributes   uint32
-//	 56: FileNameLength   uint16
-//	 58: FileNameOffset   uint16
-//	 60: FileName         [...]uint16
+//	 0: RecordLength     uint32
+//	 4: MajorVersion     uint16
+//	 6: MinorVersion     uint16
+//	 8: FileReferenceNumber uint64
+//	16: ParentFileReferenceNumber uint64
+//	24: Usn              int64
+//	32: TimeStamp        int64  (FILETIME)
+//	40: Reason           uint32
+//	44: SourceInfo       uint32
+//	48: SecurityId       uint32
+//	52: FileAttributes   uint32
+//	56: FileNameLength   uint16
+//	58: FileNameOffset   uint16
+//	60: FileName         [...]uint16
 func (r *USNReader) parseV2Record(data []byte) *USNEvent {
 	if len(data) < 60 {
 		return nil

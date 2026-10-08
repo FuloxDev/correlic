@@ -196,4 +196,3 @@ func (d *BufferedDispatcher) Enqueue(evt event.Event) {
 		}
 	}
 }
-

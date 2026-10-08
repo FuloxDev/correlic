@@ -13,10 +13,10 @@ type Collector struct {
 	client *Client
 	logger *slog.Logger
 
-	exec    chan Event
-	exit    chan Event
-	open    chan Event
-	lookup  chan Event
+	exec   chan Event
+	exit   chan Event
+	open   chan Event
+	lookup chan Event
 }
 
 // NewCollector creates a new ESF collector using the provided client.
@@ -25,12 +25,12 @@ func NewCollector(client *Client, logger *slog.Logger) *Collector {
 		logger = slog.Default()
 	}
 	return &Collector{
-		client:  client,
-		logger:  logger,
-		exec:    make(chan Event, 2048),
-		exit:    make(chan Event, 2048),
-		open:    make(chan Event, 4096),
-		lookup:  make(chan Event, 2048),
+		client: client,
+		logger: logger,
+		exec:   make(chan Event, 2048),
+		exit:   make(chan Event, 2048),
+		open:   make(chan Event, 4096),
+		lookup: make(chan Event, 2048),
 	}
 }
 

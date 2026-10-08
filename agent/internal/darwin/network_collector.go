@@ -15,10 +15,10 @@ import (
 
 // ConnectEvent represents a network connection detected via lsof.
 type ConnectEvent struct {
-	PID    uint32
-	Comm   string
-	DstIP  string
-	DstPort uint16
+	PID      uint32
+	Comm     string
+	DstIP    string
+	DstPort  uint16
 	Protocol string // "ipv4" or "ipv6"
 }
 

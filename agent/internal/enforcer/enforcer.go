@@ -134,6 +134,9 @@ func (e *Enforcer) ShouldBlock(signalType, candidate string) (bool, *BlockRule) 
 }
 
 // Kill terminates a process by PID. Uses platform-specific implementation.
+// Only the matched PID is killed unless the rule explicitly asks for the
+// tree (kill_tree); in that case descendants are killed too, each one
+// checked against the protected set like the root.
 func (e *Enforcer) Kill(pid uint32, killTree bool) (bool, error) {
 	if e.IsProtected(pid) {
 		return false, fmt.Errorf("PID %d is protected", pid)
@@ -142,7 +145,7 @@ func (e *Enforcer) Kill(pid uint32, killTree bool) (bool, error) {
 	var success bool
 	var err error
 	if killTree {
-		success, err = KillProcessTree(pid)
+		success, err = KillProcessTree(pid, e.IsProtected)
 	} else {
 		success, err = KillProcess(pid)
 	}

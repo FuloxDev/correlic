@@ -3,13 +3,15 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"time"
 
+	"github.com/correlic/correlic-agent/internal/health"
 	"github.com/correlic/correlic-agent/internal/model"
 	"github.com/correlic/correlic-agent/internal/transport"
 )
+
+const telemetryComponent = "telemetry"
 
 // Batcher is the batcher for the telemetry events.
 type Batcher struct {
@@ -22,6 +24,7 @@ type Batcher struct {
 	maxBackoff    time.Duration
 	ch            chan model.TelemetryEvent
 	sendCh        chan []model.TelemetryEvent
+	done          chan struct{}
 }
 
 // NewBatcher creates a new Batcher with the given agent ID and transport.
@@ -40,13 +43,27 @@ func NewBatcher(agentID string, t transport.Transport) *Batcher {
 		ch: make(chan model.TelemetryEvent, 20000),
 		// Small batch handoff channel to the sender loop.
 		sendCh: make(chan []model.TelemetryEvent, 100), // Increased from 16 to 100
+		done:   make(chan struct{}),
 	}
 }
 
-// Start starts the batcher.
+// Done is closed once Start has returned and the sender loop has finished its
+// shutdown flush.
+func (b *Batcher) Done() <-chan struct{} {
+	return b.done
+}
+
+// Start starts the batcher. It returns after ctx is done and the final flush
+// has completed.
 func (b *Batcher) Start(ctx context.Context) {
+	defer close(b.done)
+
 	// Dedicated sender loop so ingestion never blocks on network I/O.
-	go b.sendLoop(ctx)
+	senderDone := make(chan struct{})
+	go func() {
+		defer close(senderDone)
+		b.sendLoop(ctx)
+	}()
 
 	// create a new ticker for the flush interval.
 	ticker := time.NewTicker(b.flushInterval)
@@ -83,14 +100,14 @@ func (b *Batcher) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			// create a new context with a timeout for the shutdown.
-			shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-			// Best-effort final flush (direct) on shutdown.
+			// Best-effort final flush (direct) on shutdown of what never
+			// reached the sender; the sender flushes its own queue.
 			if len(buf) > 0 {
+				shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 				_ = b.transport.SendTelemetryBatch(shutdownCtx, model.TelemetryBatch{Events: buf})
+				cancel()
 			}
-			// cancel the context.
-			cancel()
+			<-senderDone
 			return
 
 		// if an event is received, add it to the buffer.
@@ -120,6 +137,17 @@ func (b *Batcher) sendLoop(ctx context.Context) {
 	var nextAttempt time.Time
 	var backoff time.Duration
 
+	chunkSize := func() int {
+		n := b.maxBatch
+		if n <= 0 {
+			n = 200
+		}
+		if n > len(queue) {
+			n = len(queue)
+		}
+		return n
+	}
+
 	trySend := func(sendCtx context.Context) {
 		if len(queue) == 0 {
 			return
@@ -130,13 +158,7 @@ func (b *Batcher) sendLoop(ctx context.Context) {
 		}
 
 		// Send in chunks to avoid huge payloads during bursts.
-		n := b.maxBatch
-		if n <= 0 {
-			n = 200
-		}
-		if n > len(queue) {
-			n = len(queue)
-		}
+		n := chunkSize()
 		chunk := queue[:n]
 
 		flushCtx, cancel := context.WithTimeout(sendCtx, 10*time.Second)
@@ -144,24 +166,32 @@ func (b *Batcher) sendLoop(ctx context.Context) {
 		cancel()
 
 		if err != nil {
-			if isPermanent(err) {
+			switch {
+			case transport.IsAuthError(err):
+				// Rejected key: permanent until the operator fixes agent.yaml.
+				// Surface it at WARN once per minute, not once per chunk.
+				health.ReportAuthRejected(telemetryComponent, transport.StatusOf(err), err)
+				queue = queue[n:]
+				nextAttempt = time.Time{}
+				backoff = 0
+			case transport.IsPermanent(err):
 				slog.Warn("telemetry flush failed (permanent), dropping chunk", "error", err, "count", len(chunk))
 				queue = queue[n:]
 				nextAttempt = time.Time{}
 				backoff = 0
-				return
-			}
-
-			if backoff == 0 {
-				backoff = b.minBackoff
-			} else {
-				backoff *= 2
-				if backoff > b.maxBackoff {
-					backoff = b.maxBackoff
+			default:
+				if backoff == 0 {
+					backoff = b.minBackoff
+				} else {
+					backoff *= 2
+					if backoff > b.maxBackoff {
+						backoff = b.maxBackoff
+					}
 				}
+				nextAttempt = now.Add(backoff)
+				health.ReportFailure(telemetryComponent, transport.StatusOf(err), err, 0)
+				slog.Debug("telemetry flush failed (transient), will retry", "error", err, "count", len(chunk), "backoff", backoff.String())
 			}
-			nextAttempt = now.Add(backoff)
-			slog.Warn("telemetry flush failed (transient), will retry", "error", err, "count", len(chunk), "backoff", backoff.String())
 			return
 		}
 
@@ -169,50 +199,59 @@ func (b *Batcher) sendLoop(ctx context.Context) {
 		queue = queue[n:]
 		nextAttempt = time.Time{}
 		backoff = 0
+		health.ReportOK(telemetryComponent)
 		slog.Debug("telemetry batch delivered", "count", n, "remaining_queue", len(queue))
+	}
+
+	enqueue := func(batch []model.TelemetryEvent) {
+		if len(batch) == 0 {
+			return
+		}
+		queue = append(queue, batch...)
+		if b.maxBuffered > 0 && len(queue) > b.maxBuffered {
+			dropped := len(queue) - b.maxBuffered
+			queue = queue[dropped:]
+			slog.Warn("telemetry send queue full, dropping oldest events", "dropped", dropped, "max_buffered", b.maxBuffered)
+		}
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
+			// Drain hand-offs that raced with cancellation, then flush the
+			// retry queue best-effort within a short deadline. Backoff is
+			// ignored here: this is the last chance to deliver.
+			for {
+				select {
+				case batch := <-b.sendCh:
+					enqueue(batch)
+					continue
+				default:
+				}
+				break
+			}
+			if len(queue) == 0 {
+				return
+			}
+			shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			defer cancel()
+			for len(queue) > 0 && shutdownCtx.Err() == nil {
+				n := chunkSize()
+				if err := b.transport.SendTelemetryBatch(shutdownCtx, model.TelemetryBatch{Events: queue[:n]}); err != nil {
+					slog.Warn("telemetry shutdown flush failed; dropping queued events", "remaining", len(queue), "error", err)
+					return
+				}
+				queue = queue[n:]
+			}
 			return
 		case batch := <-b.sendCh:
-			if len(batch) == 0 {
-				continue
-			}
-			queue = append(queue, batch...)
-			if b.maxBuffered > 0 && len(queue) > b.maxBuffered {
-				dropped := len(queue) - b.maxBuffered
-				queue = queue[dropped:]
-				slog.Warn("telemetry send queue full, dropping oldest events", "dropped", dropped, "max_buffered", b.maxBuffered)
-			}
+			enqueue(batch)
 			// Try sending immediately after enqueue.
 			trySend(ctx)
 		case <-ticker.C:
 			trySend(ctx)
 		}
 	}
-}
-
-// isPermanent checks if the error is permanent.
-func isPermanent(err error) bool {
-	// BackendError is used when the backend responds with a non-2xx status.
-	var be *transport.BackendError
-	if errors.As(err, &be) {
-		// Retry on typical transient statuses.
-		if be.Status >= 500 {
-			return false
-		}
-		if be.Status == 408 || be.Status == 429 {
-			return false
-		}
-		// Any other 4xx is treated as permanent (bad payload, unauthorized, too large, etc).
-		if be.Status >= 400 && be.Status < 500 {
-			return true
-		}
-	}
-	// Unknown/network errors are treated as transient.
-	return false
 }
 
 // Enqueue adds a telemetry event to the batcher. It never blocks.

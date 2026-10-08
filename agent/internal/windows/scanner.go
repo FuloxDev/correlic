@@ -100,6 +100,7 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 				"trace_role": "existing_process",
 				"role":       role,
 			}
+			s.tracker.Annotate(payload, p.pid)
 			emit("process_exec", payload)
 
 			// Also dispatch as canonical event so it reaches the backend.
@@ -123,9 +124,7 @@ func (s *ProcScanner) Scan(emit func(eventType string, payload any) bool) error 
 						"trace_role": "existing_process",
 					},
 				}
-				if aiSess := s.tracker.GetSessionID(p.pid); aiSess != "" {
-					evt.Context["ai_session_id"] = aiSess
-				}
+				s.tracker.Annotate(evt.Context, p.pid)
 				evt.ID = event.GenerateID(s.hostID, ts.UnixNano(), evt.Source, evt.Type, int(p.pid), p.exePath)
 				s.dispatcher.Enqueue(evt)
 			}

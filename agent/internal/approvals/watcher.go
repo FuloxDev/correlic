@@ -89,4 +89,3 @@ func approvalSummary(a model.Approval) string {
 	}
 	return a.Kind
 }
-

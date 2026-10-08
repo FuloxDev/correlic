@@ -18,4 +18,3 @@ func Local(title, body string) {
 	}
 	slog.Info("notification", "title", title, "body", body)
 }
-

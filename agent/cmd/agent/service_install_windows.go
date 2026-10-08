@@ -10,6 +10,8 @@ import (
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
+
+	winaudit "github.com/correlic/correlic-agent/internal/windows"
 )
 
 const (
@@ -20,12 +22,12 @@ const (
 
 // handleServiceCommand processes "service install|uninstall|start|stop" subcommands.
 // Returns true if a service command was handled and the process should exit.
-func handleServiceCommand(logger *slog.Logger) bool {
-	if len(os.Args) < 3 || os.Args[1] != "service" {
+func handleServiceCommand(logger *slog.Logger, args []string) bool {
+	if len(args) < 2 || args[0] != "service" {
 		return false
 	}
 
-	cmd := os.Args[2]
+	cmd := args[1]
 
 	switch cmd {
 	case "install":
@@ -132,6 +134,14 @@ func uninstallService(logger *slog.Logger) error {
 		return fmt.Errorf("service %q not found: %w", defaultServiceName, err)
 	}
 	defer s.Close()
+
+	// Put the Windows audit policy / registry settings back the way they
+	// were before the agent first changed them (best effort).
+	if err := winaudit.RestoreAuditPolicies(logger); err != nil {
+		logger.Warn("audit policy restore failed; restore manually with auditpol", "error", err)
+	} else {
+		fmt.Println("Audit policies restored to their pre-install state.")
+	}
 
 	err = s.Delete()
 	if err != nil {

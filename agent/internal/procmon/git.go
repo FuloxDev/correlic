@@ -10,7 +10,8 @@ import (
 // gitEventPayloadFromProc attempts to derive a higher-level git_event payload from a process_exec event.
 //
 // Output schema matches backend git_event detector expectations:
-//   op, repo_path, remote_url, branch, result
+//
+//	op, repo_path, remote_url, branch, result
 //
 // This is best-effort and intentionally conservative.
 func gitEventPayloadFromProc(info ProcInfo) (map[string]any, bool) {

@@ -165,7 +165,9 @@ func (c *DNSCollector) Close() error {
 //
 // IMPORTANT: The C struct is naturally aligned, so there is padding after the
 // third u32 to align the following u64:
-//   pid(4) + ppid(4) + uid(4) + pad(4) + timestamp(8) + qtype(2) + qclass(2) + dst_ip(4) + comm(16) + domain(128)
+//
+//	pid(4) + ppid(4) + uid(4) + pad(4) + timestamp(8) + qtype(2) + qclass(2) + dst_ip(4) + comm(16) + domain(128)
+//
 // = 176 bytes
 func parseDNSEvent(data []byte) (DNSEvent, error) {
 	if len(data) < 176 {
@@ -181,9 +183,9 @@ func parseDNSEvent(data []byte) (DNSEvent, error) {
 		QClass:      binary.LittleEndian.Uint16(data[26:28]),
 		// IPv4 addresses are stored in network byte order; decode accordingly so
 		// DNSServerIP() renders correct dotted-quad output.
-		DstIP:       binary.BigEndian.Uint32(data[28:32]),
-		Comm:        nullTerminatedString(data[32:48]),   // 16 bytes
-		Domain:      nullTerminatedString(data[48:176]),  // 128 bytes (raw question bytes)
+		DstIP:  binary.BigEndian.Uint32(data[28:32]),
+		Comm:   nullTerminatedString(data[32:48]),  // 16 bytes
+		Domain: nullTerminatedString(data[48:176]), // 128 bytes (raw question bytes)
 	}
 
 	if domain, qtype, qclass, ok := parseDNSQuestion(data[48:176]); ok {

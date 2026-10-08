@@ -132,4 +132,3 @@ func htmlEscape(s string) string {
 	)
 	return replacer.Replace(s)
 }
-

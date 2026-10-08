@@ -123,6 +123,7 @@ func (r *FileRunner) Start(ctx context.Context) {
 						"open_flags": ev.OpenFlags,
 					},
 				}
+				lineage.GetLineageTracker().Annotate(canonEvt.Context, ev.PID)
 				canonEvt.ID = event.GenerateID(r.hostID, ts.UnixNano(), "esf", "file_open", int(ev.PID), ev.FilePath)
 				r.disp.Enqueue(canonEvt)
 			}

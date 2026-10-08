@@ -40,9 +40,8 @@ func (h *ExitHandler) Handle(raw ExitEvent) {
 		},
 	}
 
-	if aiSess := GetLineageTracker().GetSessionID(uint32(raw.PID)); aiSess != "" {
-		evt.Context["ai_session_id"] = aiSess
-	}
+	// Called before UnregisterProcess, so the PID is still an active AI PID.
+	GetLineageTracker().Annotate(evt.Context, uint32(raw.PID))
 	targetStr := fmt.Sprintf("%d|%d", raw.PID, raw.ExitCode)
 	evt.ID = event.GenerateID(h.HostID, raw.Timestamp.UnixNano(), evt.Source, evt.Type, evt.Actor.PID, targetStr)
 	h.Dispatcher.Enqueue(evt)

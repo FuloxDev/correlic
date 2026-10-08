@@ -17,4 +17,3 @@ type TelemetryEvent struct {
 type TelemetryBatch struct {
 	Events []TelemetryEvent `json:"events"`
 }
-

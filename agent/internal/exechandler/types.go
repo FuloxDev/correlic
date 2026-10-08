@@ -16,5 +16,6 @@ type RawExecEvent struct {
 	ContainerID string
 	Role        string
 	AISessionID string // Correlic AI session UUID (set by lineage tracker)
+	AIType      string // matched tool name (e.g. "claude", "cursor"), empty when unknown
 	Blocked     bool   // true if the process was killed by the enforcer
 }

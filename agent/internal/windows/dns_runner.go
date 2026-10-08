@@ -90,9 +90,7 @@ func (r *DNSRunner) Start(ctx context.Context) {
 						"query_name": ev.QueryName,
 					},
 				}
-				if aiSess := tracker.GetSessionID(ev.PID); aiSess != "" {
-					canonEvt.Context["ai_session_id"] = aiSess
-				}
+				tracker.Annotate(canonEvt.Context, ev.PID)
 				canonEvt.ID = event.GenerateID(
 					r.hostID, ts.UnixNano(),
 					canonEvt.Source, canonEvt.Type,

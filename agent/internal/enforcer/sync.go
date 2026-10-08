@@ -11,7 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/correlic/correlic-agent/internal/health"
+	"github.com/correlic/correlic-agent/internal/transport"
 )
+
+const syncComponent = "block_rule_sync"
 
 type RuleSync struct {
 	enforcer    *Enforcer
@@ -79,9 +84,16 @@ func (s *RuleSync) Start(ctx context.Context) {
 func (s *RuleSync) fetchAndUpdate(ctx context.Context) {
 	rules, version, err := s.fetchRules(ctx)
 	if err != nil {
-		s.logger.Warn("block rule sync failed, using cached rules", "error", err)
+		// Keep the cached rules; surface the failure at WARN once per minute.
+		if transport.IsAuthError(err) {
+			health.ReportAuthRejected(syncComponent, transport.StatusOf(err), err)
+		} else {
+			health.ReportFailure(syncComponent, transport.StatusOf(err), err, 0)
+		}
+		s.logger.Debug("block rule sync failed, using cached rules", "error", err)
 		return
 	}
+	health.ReportOK(syncComponent)
 	if version != "" && version == s.lastVersion {
 		return // no changes
 	}
@@ -113,7 +125,7 @@ func (s *RuleSync) fetchRules(ctx context.Context) ([]BlockRule, string, error) 
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, "", fmt.Errorf("block rules API returned %d: %s", resp.StatusCode, string(body))
+		return nil, "", &transport.BackendError{Status: resp.StatusCode, Msg: string(body)}
 	}
 
 	var sr syncResponse

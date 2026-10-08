@@ -87,4 +87,3 @@ func TestTLSConfigFromFiles_LoadsClientCertPair(t *testing.T) {
 		t.Fatalf("expected 1 client certificate, got %d", len(cfg.Certificates))
 	}
 }
-

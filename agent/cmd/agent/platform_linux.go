@@ -4,109 +4,110 @@ package main
 
 import (
 	"context"
-	"log/slog"
 
-	"github.com/correlic/correlic-agent/internal/collect"
-	"github.com/correlic/correlic-agent/internal/config"
-	"github.com/correlic/correlic-agent/internal/dispatch"
 	"github.com/correlic/correlic-agent/internal/ebpf"
 	"github.com/correlic/correlic-agent/internal/scanner"
 )
 
 // startPlatformCollectors starts eBPF-based collectors on Linux.
-func startPlatformCollectors(
-	ctx context.Context,
-	cfg config.Config,
-	logger *slog.Logger,
-	hostID string,
-	emit collect.EventSink,
-	disp dispatch.Dispatcher,
-) {
+func startPlatformCollectors(ctx context.Context, d platformDeps) {
+	cfg, logger := d.cfg, d.logger
 	dockerResolver := ebpf.NewDockerResolver(logger)
 
-	// Scan already-running AI processes.
+	// Scan already-running AI processes once the pattern list is known.
 	if cfg.ProcessExecEnabled {
 		procScanner := scanner.NewProcScanner(logger.With("component", "proc_scanner"), dockerResolver)
-		go func() {
-			if err := procScanner.Scan(emit); err != nil {
+		d.rt.spawn("proc_scanner", func() {
+			d.waitPatterns(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+			if err := procScanner.Scan(d.emit); err != nil {
 				logger.Warn("initial /proc scan failed", "error", err)
 			}
-		}()
+		})
 	}
 
 	if !cfg.EBPFEnabled {
 		logger.Info("eBPF disabled — using /proc polling only")
 		return
 	}
+	if d.disp == nil {
+		logger.Warn("process_exec_enabled is false — eBPF runners need the dispatcher; no collectors started")
+		return
+	}
 
-	runner, err := ebpf.NewRunner(emit, logger.With("component", "ebpf_exec"), hostID, disp, dockerResolver)
+	runner, err := ebpf.NewRunner(d.emit, logger.With("component", "ebpf_exec"), d.hostID, d.disp, dockerResolver)
 	if err != nil {
 		logger.Error("eBPF exec runner init failed", "error", err)
 		return
 	}
-	go runner.Start(ctx)
+	runner.SetEnforcer(d.enf)
+	d.rt.spawn("ebpf_exec", func() { runner.Start(ctx) })
 
 	// Process exit is what releases PIDs from the lineage tracker; without it
 	// the tracker only grows and recycled PIDs keep their old AI label.
-	if exitRunner, err := ebpf.NewExitRunner(logger.With("component", "ebpf_exit"), hostID, disp); err != nil {
+	if exitRunner, err := ebpf.NewExitRunner(logger.With("component", "ebpf_exit"), d.hostID, d.disp); err != nil {
 		logger.Warn("eBPF exit runner init failed", "error", err)
 	} else {
-		go exitRunner.Start(ctx)
+		d.rt.spawn("ebpf_exit", func() { exitRunner.Start(ctx) })
 	}
 
 	if cfg.ForkMonitorEnabled {
-		if forkRunner, err := ebpf.NewForkRunner(emit, logger.With("component", "ebpf_fork"), hostID, disp); err != nil {
+		if forkRunner, err := ebpf.NewForkRunner(d.emit, logger.With("component", "ebpf_fork"), d.hostID, d.disp); err != nil {
 			logger.Warn("eBPF fork runner init failed", "error", err)
 		} else {
-			go forkRunner.Start(ctx)
+			d.rt.spawn("ebpf_fork", func() { forkRunner.Start(ctx) })
 		}
 	}
 
 	if cfg.BindMonitorEnabled {
-		if bindRunner, err := ebpf.NewBindRunner(emit, logger.With("component", "ebpf_bind"), hostID, disp); err != nil {
+		if bindRunner, err := ebpf.NewBindRunner(d.emit, logger.With("component", "ebpf_bind"), d.hostID, d.disp); err != nil {
 			logger.Warn("eBPF bind runner init failed", "error", err)
 		} else {
-			go bindRunner.Start(ctx)
+			d.rt.spawn("ebpf_bind", func() { bindRunner.Start(ctx) })
 		}
 	}
 
 	if cfg.UnlinkMonitorEnabled {
-		if unlinkRunner, err := ebpf.NewUnlinkRunner(emit, logger.With("component", "ebpf_unlink")); err != nil {
+		if unlinkRunner, err := ebpf.NewUnlinkRunner(d.emit, logger.With("component", "ebpf_unlink")); err != nil {
 			logger.Warn("eBPF unlink runner init failed", "error", err)
 		} else {
-			go unlinkRunner.Start(ctx)
+			d.rt.spawn("ebpf_unlink", func() { unlinkRunner.Start(ctx) })
 		}
 	}
 
 	if cfg.SetuidMonitorEnabled {
-		if setuidRunner, err := ebpf.NewSetuidRunner(emit, logger.With("component", "ebpf_setuid")); err != nil {
+		if setuidRunner, err := ebpf.NewSetuidRunner(d.emit, logger.With("component", "ebpf_setuid")); err != nil {
 			logger.Warn("eBPF setuid runner init failed", "error", err)
 		} else {
-			go setuidRunner.Start(ctx)
+			d.rt.spawn("ebpf_setuid", func() { setuidRunner.Start(ctx) })
 		}
 	}
 
 	if cfg.FileMonitorEnabled {
-		if fileRunner, err := ebpf.NewFileRunner(emit, logger.With("component", "ebpf_file"), hostID, disp); err != nil {
+		if fileRunner, err := ebpf.NewFileRunner(d.emit, logger.With("component", "ebpf_file"), d.hostID, d.disp); err != nil {
 			logger.Warn("eBPF file runner init failed", "error", err)
 		} else {
-			go fileRunner.Start(ctx)
+			fileRunner.SetEnforcer(d.enf)
+			d.rt.spawn("ebpf_file", func() { fileRunner.Start(ctx) })
 		}
 	}
 
 	if cfg.NetworkMonitorEnabled {
-		if netRunner, err := ebpf.NewNetworkRunner(emit, logger.With("component", "ebpf_network"), hostID, disp); err != nil {
+		if netRunner, err := ebpf.NewNetworkRunner(d.emit, logger.With("component", "ebpf_network"), d.hostID, d.disp); err != nil {
 			logger.Warn("eBPF network runner init failed", "error", err)
 		} else {
-			go netRunner.Start(ctx)
+			netRunner.SetEnforcer(d.enf)
+			d.rt.spawn("ebpf_network", func() { netRunner.Start(ctx) })
 		}
 	}
 
 	if cfg.DNSMonitorEnabled {
-		if dnsRunner, err := ebpf.NewDNSRunner(emit, logger.With("component", "ebpf_dns"), hostID, disp); err != nil {
+		if dnsRunner, err := ebpf.NewDNSRunner(d.emit, logger.With("component", "ebpf_dns"), d.hostID, d.disp); err != nil {
 			logger.Warn("eBPF DNS runner init failed", "error", err)
 		} else {
-			go dnsRunner.Start(ctx)
+			d.rt.spawn("ebpf_dns", func() { dnsRunner.Start(ctx) })
 		}
 	}
 }

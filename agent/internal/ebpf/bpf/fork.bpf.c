@@ -2,9 +2,13 @@
 // fork.bpf.c - eBPF program to trace process creation for tree visualization
 //
 // This program monitors fork/clone/vfork to build process trees:
-// - Track parent-child relationships
+// - Track parent-child relationships (keyed by thread group id in userspace)
 // - Capture process creation time
 // - Enable correlation with other events
+//
+// Both the task id (pid) and the thread group id (tgid) are emitted for the
+// parent and the child. A new thread has child_pid != child_tgid; userspace
+// ignores those so only real processes enter the tree.
 
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
@@ -13,20 +17,15 @@
 
 #define TASK_COMM_LEN 16
 
-// Clone flags of interest
-#define CLONE_THREAD    0x00010000  // Same thread group
-#define CLONE_PARENT    0x00008000  // Same parent as caller
-#define CLONE_VFORK     0x00004000  // vfork
-
-// Event structure for process creation
+// Event structure for process creation / exit
 struct fork_event {
-    __u32 parent_pid;       // Parent process ID
-    __u32 parent_tgid;      // Parent thread group ID
-    __u32 child_pid;        // Child process ID
-    __u32 child_tgid;       // Child thread group ID
+    __u32 parent_pid;       // Parent task id (the forking thread)
+    __u32 parent_tgid;      // Parent thread group id (the process)
+    __u32 child_pid;        // Child task id
+    __u32 child_tgid;       // Child thread group id
     __u32 uid;              // User ID
     __u64 timestamp_ns;     // Nanoseconds since boot
-    __u64 clone_flags;      // Clone flags (tells us fork vs thread vs vfork)
+    __u64 clone_flags;      // 0 for fork events, ~0 for exit events
     char parent_comm[TASK_COMM_LEN];  // Parent command name
     char child_comm[TASK_COMM_LEN];   // Child command name (initially same as parent)
 };
@@ -61,13 +60,13 @@ int trace_fork(struct bpf_raw_tracepoint_args *ctx)
     e->uid = uid_gid & 0xFFFFFFFF;
 
     e->timestamp_ns = bpf_ktime_get_ns();
-    e->clone_flags = 0;  // Set by sys_enter_clone if that program loads
+    e->clone_flags = 0;
 
     // Read parent comm from parent task struct (not current process!)
     // bpf_get_current_comm() would read the CHILD process in fork tracepoint
     // Use bpf_probe_read_kernel_str to safely read from parent task_struct
     bpf_probe_read_kernel_str(&e->parent_comm, sizeof(e->parent_comm), &parent->comm);
-    
+
     // Read child comm from child task struct
     bpf_probe_read_kernel_str(&e->child_comm, sizeof(e->child_comm), &child->comm);
 
@@ -76,43 +75,9 @@ int trace_fork(struct bpf_raw_tracepoint_args *ctx)
     return 0;
 }
 
-// Also trace clone syscall for clone_flags
-SEC("tracepoint/syscalls/sys_enter_clone")
-int trace_clone_enter(struct trace_event_raw_sys_enter *ctx)
-{
-    struct fork_event *e;
-
-    e = bpf_ringbuf_reserve(&fork_events, sizeof(*e), 0);
-    if (!e) {
-        return 0;
-    }
-
-    // Get current process info (parent)
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    e->parent_pid = pid_tgid >> 32;
-    e->parent_tgid = pid_tgid >> 32;
-
-    // Child info not available yet (syscall hasn't completed)
-    e->child_pid = 0;  // Will be filled by exit tracepoint or userspace correlation
-    e->child_tgid = 0;
-
-    __u64 uid_gid = bpf_get_current_uid_gid();
-    e->uid = uid_gid & 0xFFFFFFFF;
-
-    e->timestamp_ns = bpf_ktime_get_ns();
-    
-    // Get clone flags from first argument
-    e->clone_flags = ctx->args[0];
-
-    bpf_get_current_comm(&e->parent_comm, sizeof(e->parent_comm));
-    __builtin_memset(e->child_comm, 0, sizeof(e->child_comm));
-
-    bpf_ringbuf_submit(e, 0);
-
-    return 0;
-}
-
-// Track process exit for complete lifecycle
+// Track task exit so the userspace tree can forget finished processes.
+// child_pid is the exiting task id and child_tgid its process; userspace only
+// removes a tree entry when the thread group leader exits (child_pid == child_tgid).
 SEC("tracepoint/sched/sched_process_exit")
 int trace_exit(struct trace_event_raw_sched_process_template *ctx)
 {
@@ -127,9 +92,9 @@ int trace_exit(struct trace_event_raw_sched_process_template *ctx)
     e->parent_pid = 0;
     e->parent_tgid = 0;
 
-    // The exiting process
+    // The exiting task
     __u64 pid_tgid = bpf_get_current_pid_tgid();
-    e->child_pid = pid_tgid >> 32;
+    e->child_pid = (__u32)pid_tgid;
     e->child_tgid = pid_tgid >> 32;
 
     __u64 uid_gid = bpf_get_current_uid_gid();

@@ -313,7 +313,9 @@ func (t *HTTPTransport) sendJSON(ctx context.Context, baseURL string, path strin
 	// send the request to the backend.
 	resp, err := t.client.Do(req)
 	if err != nil {
-		slog.Warn(kind+" request failed", "url", baseURL+path, "error", err)
+		// Callers surface persistent failures through internal/health at
+		// WARN once per minute; per-request detail stays at DEBUG.
+		slog.Debug(kind+" request failed", "url", baseURL+path, "error", err)
 		return err
 	}
 	// close the response body.
@@ -399,7 +401,7 @@ func parseBackendError(resp *http.Response, kind string) error {
 	var berr backendErrorResponse
 	if err := json.Unmarshal(body, &berr); err == nil && (berr.Error != "" || berr.Code != "") {
 		// Do not log secrets; backend should not include them in errors.
-		slog.Warn(kind+" rejected by backend",
+		slog.Debug(kind+" rejected by backend",
 			"status", resp.StatusCode,
 			"code", berr.Code,
 			"error", berr.Error,
@@ -408,6 +410,6 @@ func parseBackendError(resp *http.Response, kind string) error {
 	}
 
 	// Fallback: keep message generic, but include status for debugging.
-	slog.Warn(kind+" rejected by backend", "status", resp.StatusCode)
+	slog.Debug(kind+" rejected by backend", "status", resp.StatusCode)
 	return &BackendError{Status: resp.StatusCode, Msg: string(bytes.TrimSpace(body))}
 }
