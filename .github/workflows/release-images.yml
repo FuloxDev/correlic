@@ -47,7 +47,7 @@ jobs:
             context: ./ui-proxy
             dockerfile: ./ui-proxy/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve version and registry namespace
         id: v
