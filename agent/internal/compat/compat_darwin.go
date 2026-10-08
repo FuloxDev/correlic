@@ -12,11 +12,11 @@ import (
 )
 
 // MinMacOSMajor and MinMacOSMinor define the minimum supported macOS version.
-// macOS 10.15 (Catalina) is the minimum for Endpoint Security Framework.
-// kqueue and FSEvents are available on all supported macOS versions.
+// Go 1.26 binaries require macOS 11 (Big Sur) or later; Endpoint Security,
+// kqueue and FSEvents are all available there.
 const (
-	MinMacOSMajor = 10
-	MinMacOSMinor = 15
+	MinMacOSMajor = 11
+	MinMacOSMinor = 0
 )
 
 // RunChecks performs macOS compatibility checks and returns a structured result.
@@ -48,7 +48,7 @@ func RunChecks() *Result {
 	// 7. Endpoint Security Framework (Phase 2 — warn if unavailable)
 	r.addCheck(checkESF())
 
-	r.Remediation = fmt.Sprintf("Minimum supported version: macOS %d.%d+ (Catalina)\n"+
+	r.Remediation = fmt.Sprintf("Minimum supported version: macOS %d.%d+ (Big Sur)\n"+
 		"Run as root: sudo ./correlic-agent\n"+
 		"ESF support (Phase 2) requires Apple developer entitlement.\n",
 		MinMacOSMajor, MinMacOSMinor)
@@ -98,7 +98,7 @@ func checkMacOSVersion(version string) Check {
 			Name:      "macos_version",
 			Severity:  SeverityRequired,
 			Supported: false,
-			Description: fmt.Sprintf("macOS %d.%d is below minimum %d.%d (Catalina required for ESF)",
+			Description: fmt.Sprintf("macOS %d.%d is below minimum %d.%d (Big Sur)",
 				major, minor, MinMacOSMajor, MinMacOSMinor),
 		}
 	}

@@ -5,7 +5,7 @@
 // replacing the polling-based FSEvents and lsof collectors from Phase 1.
 //
 // Requirements:
-//   - macOS 10.15+ (Catalina)
+//   - macOS 11+ (Big Sur); DNS lookups need a macOS 12+ SDK
 //   - com.apple.developer.endpoint-security.client entitlement
 //   - Running as root
 //   - Binary must be code-signed: codesign -s "Developer ID Application: ..."
@@ -15,8 +15,9 @@ package esf
 /*
 #cgo CFLAGS: -x objective-c
 // Endpoint Security is a header-only framework in the SDK; its symbols are
-// exported by /usr/lib/libEndpointSecurity.dylib, so link the library.
-#cgo LDFLAGS: -lEndpointSecurity -framework Foundation
+// exported by /usr/lib/libEndpointSecurity.dylib, so link the library. The
+// audit_token_to_* helpers come from libbsm.
+#cgo LDFLAGS: -lEndpointSecurity -lbsm -framework Foundation
 #include "esf.h"
 #include <stdlib.h>
 */

@@ -1,10 +1,20 @@
 #ifndef CORRELIC_ESF_H
 #define CORRELIC_ESF_H
 
+#include <Availability.h>
 #include <EndpointSecurity/EndpointSecurity.h>
 #include <bsm/libbsm.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+// ES_EVENT_TYPE_NOTIFY_LOOKUP is an enumerator, not a macro, so it cannot be
+// probed with #if defined(). It was added in the macOS 12.0 SDK, so key off
+// the SDK's availability macros instead.
+#if defined(__MAC_12_0) && defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_12_0)
+#define CORRELIC_ES_HAS_LOOKUP 1
+#else
+#define CORRELIC_ES_HAS_LOOKUP 0
+#endif
 
 // correlic_es_event_t is a flattened, cgo-friendly representation of an ESF event.
 // We extract all fields from es_message_t in C to avoid passing complex structs to Go.
@@ -69,10 +79,10 @@ extern void correlic_send_event(void *go_chan, correlic_es_event_t *ev);
 static inline uint32_t correlic_event_exec(void)   { return (uint32_t)ES_EVENT_TYPE_NOTIFY_EXEC; }
 static inline uint32_t correlic_event_exit(void)   { return (uint32_t)ES_EVENT_TYPE_NOTIFY_EXIT; }
 static inline uint32_t correlic_event_open(void)   { return (uint32_t)ES_EVENT_TYPE_NOTIFY_OPEN; }
-// ES_EVENT_TYPE_NOTIFY_LOOKUP is available on macOS 12.0+ (Monterey).
-// Wrap in availability check so the code compiles on macOS 10.15+ (Catalina).
+// ES_EVENT_TYPE_NOTIFY_LOOKUP is available on macOS 12.0+ (Monterey); older
+// SDKs get a sentinel so the Go side can skip the DNS runner.
 static inline uint32_t correlic_event_lookup(void) {
-#if defined(ES_EVENT_TYPE_NOTIFY_LOOKUP)
+#if CORRELIC_ES_HAS_LOOKUP
     return (uint32_t)ES_EVENT_TYPE_NOTIFY_LOOKUP;
 #else
     return UINT32_MAX; // sentinel: DNS not available on this SDK
