@@ -1,8 +1,17 @@
 name: Build Linux bundle
 
-# Produces the self-contained Linux install bundle (tar.gz), a .deb and an
-# .rpm, and an apt/yum repository tree. Everything is built from this
-# repository; artifacts are attached to the GitHub Release for the version.
+# Produces the self-contained Linux install bundles (tar.gz), .deb and .rpm
+# packages and an apt/yum repository tree for linux/amd64 and linux/arm64.
+# Everything is built from this repository on one x86_64 runner: Go
+# cross-compiles, one `go generate` emits the eBPF objects for both
+# architectures, the dashboard and proxy are architecture-independent
+# JavaScript, and the portable Node.js runtime is downloaded per
+# architecture. Artifacts are attached to the GitHub Release for the version.
+#
+# Asset names: the amd64 assets keep their historical names
+# (correlic-linux-<v>.tar.gz, correlic_<v>_amd64.deb, correlic-<v>-1.x86_64.rpm);
+# the arm64 ones are correlic-linux-<v>-arm64.tar.gz, correlic_<v>_arm64.deb
+# and correlic-<v>-1.aarch64.rpm. SHA256SUMS-linux.txt covers all of them.
 
 on:
   push:
@@ -15,6 +24,9 @@ on:
 
 env:
   NODE_VERSION: "24.21.0"
+  # Go architecture names to build for. nfpm maps them to the deb
+  # (amd64/arm64) and rpm (x86_64/aarch64) architecture names itself.
+  ARCHES: "amd64 arm64"
 
 permissions:
   contents: write
@@ -32,7 +44,7 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "bare=${V#v}" >> "$GITHUB_OUTPUT"
 
-      # ── Go binaries ────────────────────────────────────────────
+      # ── Go binaries (one set per architecture, under build/<arch>/) ──
       - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
@@ -47,20 +59,27 @@ jobs:
 
       - name: Build backend binaries
         working-directory: backend
-        env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: '0' }
+        env: { GOOS: linux, CGO_ENABLED: '0' }
         run: |
           LD="-s -w -X main.version=${{ steps.v.outputs.version }}"
-          go build -ldflags="$LD" -o ../build/correlic-api ./cmd/api
-          go build -ldflags="$LD" -o ../build/correlic-telemetry ./cmd/telemetry
-          go build -ldflags="$LD" -o ../build/correlic-admin ./cmd/admin
+          for ARCH in $ARCHES; do
+            mkdir -p ../build/$ARCH
+            GOARCH=$ARCH go build -ldflags="$LD" -o ../build/$ARCH/correlic-api ./cmd/api
+            GOARCH=$ARCH go build -ldflags="$LD" -o ../build/$ARCH/correlic-telemetry ./cmd/telemetry
+            GOARCH=$ARCH go build -ldflags="$LD" -o ../build/$ARCH/correlic-admin ./cmd/admin
+          done
 
       - name: Build agent
         working-directory: agent
         run: |
+          # One go generate emits the eBPF objects for amd64 and arm64;
+          # GOARCH selects the matching set for each binary.
           go generate ./internal/ebpf/...
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.v.outputs.version }}" -o ../build/correlic-agent ./cmd/agent
+          for ARCH in $ARCHES; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH go build -ldflags="-s -w -X main.version=${{ steps.v.outputs.version }}" -o ../build/$ARCH/correlic-agent ./cmd/agent
+          done
 
-      # ── UI + proxy (built here, not downloaded) ────────────────
+      # ── UI + proxy (built here, not downloaded; pure JavaScript, shared by both architectures) ──
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -87,27 +106,23 @@ jobs:
           mkdir -p ../build/ui-proxy
           cp -r index.js package.json package-lock.json node_modules ../build/ui-proxy/
 
-      - name: Download portable Node.js runtime
+      - name: Download portable Node.js runtime (linux-x64 + linux-arm64)
         run: |
-          mkdir -p build/node
-          curl -sSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o node.tar.xz
-          tar -xJf node.tar.xz
-          mv node-v${NODE_VERSION}-linux-x64/* build/node/
-          rm -rf node.tar.xz node-v${NODE_VERSION}-linux-x64 build/node/include build/node/share build/node/CHANGELOG.md build/node/README.md build/node/LICENSE build/node/lib build/node/bin/npm build/node/bin/npx build/node/bin/corepack
+          for ARCH in $ARCHES; do
+            case "$ARCH" in
+              amd64) NODE_ARCH=x64 ;;
+              arm64) NODE_ARCH=arm64 ;;
+              *) echo "no portable Node.js mapping for $ARCH" >&2; exit 1 ;;
+            esac
+            DIR="node-v${NODE_VERSION}-linux-${NODE_ARCH}"
+            curl -sSL --retry 3 "https://nodejs.org/dist/v${NODE_VERSION}/${DIR}.tar.xz" -o node.tar.xz
+            tar -xJf node.tar.xz
+            mkdir -p build/$ARCH/node
+            mv "$DIR"/* build/$ARCH/node/
+            rm -rf node.tar.xz "$DIR" build/$ARCH/node/include build/$ARCH/node/share build/$ARCH/node/CHANGELOG.md build/$ARCH/node/README.md build/$ARCH/node/LICENSE build/$ARCH/node/lib build/$ARCH/node/bin/npm build/$ARCH/node/bin/npx build/$ARCH/node/bin/corepack
+          done
 
-      # ── Package layout ─────────────────────────────────────────
-      - name: Prepare package filesystem
-        run: |
-          mkdir -p pkg/usr/bin pkg/etc/correlic pkg/usr/share/correlic pkg/var/lib/correlic/certs pkg/var/log/correlic pkg/lib/systemd/system
-          cp build/correlic-api build/correlic-telemetry build/correlic-admin build/correlic-agent pkg/usr/bin/
-          chmod 755 pkg/usr/bin/*
-          cp install/gen-certs.sh pkg/etc/correlic/gen-certs.sh && chmod 755 pkg/etc/correlic/gen-certs.sh
-          cp -r backend/migrations pkg/usr/share/correlic/migrations
-          cp -r build/node pkg/usr/share/correlic/node
-          cp -r build/ui pkg/usr/share/correlic/ui
-          cp -r build/ui-proxy pkg/usr/share/correlic/ui-proxy
-          cp install/linux/systemd/*.service pkg/lib/systemd/system/
-
+      # ── Packages (one .deb + .rpm per architecture) ────────────
       - name: Install nfpm
         run: |
           curl -fsSL --retry 3 -o /tmp/nfpm.tar.gz https://github.com/goreleaser/nfpm/releases/download/v2.46.0/nfpm_2.46.0_Linux_x86_64.tar.gz
@@ -115,21 +130,43 @@ jobs:
 
       - name: Build .deb and .rpm
         run: |
-          sed "s/\${VERSION}/${{ steps.v.outputs.bare }}/" install/linux/nfpm.yml > nfpm.yml
-          nfpm package -p deb -f nfpm.yml -t .
-          nfpm package -p rpm -f nfpm.yml -t .
+          # nfpm resolves `src:` paths against the working directory, so the
+          # package filesystem is assembled in pkg/ once per architecture and
+          # the config gets ${VERSION} and ${ARCH} substituted each round.
+          for ARCH in $ARCHES; do
+            rm -rf pkg
+            mkdir -p pkg/usr/bin pkg/etc/correlic pkg/usr/share/correlic pkg/var/lib/correlic/certs pkg/var/log/correlic pkg/lib/systemd/system
+            cp build/$ARCH/correlic-api build/$ARCH/correlic-telemetry build/$ARCH/correlic-admin build/$ARCH/correlic-agent pkg/usr/bin/
+            chmod 755 pkg/usr/bin/*
+            cp install/gen-certs.sh pkg/etc/correlic/gen-certs.sh && chmod 755 pkg/etc/correlic/gen-certs.sh
+            cp -r backend/migrations pkg/usr/share/correlic/migrations
+            cp -r build/$ARCH/node pkg/usr/share/correlic/node
+            cp -r build/ui pkg/usr/share/correlic/ui
+            cp -r build/ui-proxy pkg/usr/share/correlic/ui-proxy
+            cp install/linux/systemd/*.service pkg/lib/systemd/system/
+            sed -e "s/\${VERSION}/${{ steps.v.outputs.bare }}/" -e "s/\${ARCH}/$ARCH/" install/linux/nfpm.yml > nfpm.yml
+            nfpm package -p deb -f nfpm.yml -t .
+            nfpm package -p rpm -f nfpm.yml -t .
+          done
+          ls -l correlic_*.deb correlic-*.rpm
 
-      - name: Build tar.gz bundle
+      - name: Build tar.gz bundles
         run: |
-          mkdir -p bundle/bin bundle/certs bundle/logs
-          cp build/correlic-api build/correlic-telemetry build/correlic-admin build/correlic-agent bundle/bin/
-          cp -r build/node bundle/node
-          cp -r build/ui bundle/ui
-          cp -r build/ui-proxy bundle/ui-proxy
-          cp -r backend/migrations bundle/migrations
-          cp install/install.sh install/uninstall.sh install/gen-certs.sh bundle/
-          chmod +x bundle/*.sh
-          tar -czf correlic-linux-${{ steps.v.outputs.version }}.tar.gz -C bundle .
+          for ARCH in $ARCHES; do
+            rm -rf bundle
+            mkdir -p bundle/bin bundle/certs bundle/logs
+            cp build/$ARCH/correlic-api build/$ARCH/correlic-telemetry build/$ARCH/correlic-admin build/$ARCH/correlic-agent bundle/bin/
+            cp -r build/$ARCH/node bundle/node
+            cp -r build/ui bundle/ui
+            cp -r build/ui-proxy bundle/ui-proxy
+            cp -r backend/migrations bundle/migrations
+            cp install/install.sh install/uninstall.sh install/gen-certs.sh bundle/
+            chmod +x bundle/*.sh
+            # amd64 keeps the historical asset name; other architectures carry a suffix
+            SUFFIX=""; [ "$ARCH" = amd64 ] || SUFFIX="-$ARCH"
+            tar -czf "correlic-linux-${{ steps.v.outputs.version }}${SUFFIX}.tar.gz" -C bundle .
+          done
+          ls -l correlic-linux-*.tar.gz
 
       # ── Optional package signing (only if a key is configured) ─
       - name: Sign packages
@@ -144,25 +181,31 @@ jobs:
           rpm --addsign correlic-*.rpm 2>/dev/null || true
           gpg --export --armor > correlic.gpg.key
 
-      - name: Build apt and yum repository trees
+      - name: Build apt and yum repository trees (amd64 + arm64)
         run: |
           sudo apt-get install -y -qq dpkg-dev apt-utils createrepo-c 2>/dev/null || true
-          mkdir -p repo/apt/pool/main repo/apt/dists/stable/main/binary-amd64 repo/yum/el/9/x86_64
+          mkdir -p repo/apt/pool/main repo/apt/dists/stable/main/binary-amd64 repo/apt/dists/stable/main/binary-arm64 repo/yum/el/9/x86_64 repo/yum/el/9/aarch64
           cp correlic_*.deb repo/apt/pool/main/
-          (cd repo/apt && dpkg-scanpackages pool/ /dev/null > dists/stable/main/binary-amd64/Packages && gzip -k dists/stable/main/binary-amd64/Packages && apt-ftparchive release dists/stable > dists/stable/Release 2>/dev/null || true)
-          cp correlic-*.rpm repo/yum/el/9/x86_64/
+          (cd repo/apt \
+            && dpkg-scanpackages --arch amd64 pool/ /dev/null > dists/stable/main/binary-amd64/Packages && gzip -k dists/stable/main/binary-amd64/Packages \
+            && dpkg-scanpackages --arch arm64 pool/ /dev/null > dists/stable/main/binary-arm64/Packages && gzip -k dists/stable/main/binary-arm64/Packages \
+            && apt-ftparchive -o APT::FTPArchive::Release::Architectures="amd64 arm64" release dists/stable > dists/stable/Release 2>/dev/null || true)
+          cp correlic-*.x86_64.rpm repo/yum/el/9/x86_64/
+          cp correlic-*.aarch64.rpm repo/yum/el/9/aarch64/
           createrepo_c repo/yum/el/9/x86_64/ 2>/dev/null || true
+          createrepo_c repo/yum/el/9/aarch64/ 2>/dev/null || true
           [ -f correlic.gpg.key ] && cp correlic.gpg.key repo/ || true
           tar -czf correlic-linux-repo-${{ steps.v.outputs.version }}.tar.gz repo
 
       - name: Checksums
-        run: sha256sum correlic-linux-${{ steps.v.outputs.version }}.tar.gz correlic_*.deb correlic-*.rpm > SHA256SUMS-linux.txt
+        run: sha256sum correlic-linux-${{ steps.v.outputs.version }}.tar.gz correlic-linux-${{ steps.v.outputs.version }}-arm64.tar.gz correlic_*.deb correlic-*.rpm > SHA256SUMS-linux.txt
 
       - uses: actions/upload-artifact@v6
         with:
           name: correlic-linux-${{ steps.v.outputs.version }}
           path: |
             correlic-linux-${{ steps.v.outputs.version }}.tar.gz
+            correlic-linux-${{ steps.v.outputs.version }}-arm64.tar.gz
             correlic-linux-repo-${{ steps.v.outputs.version }}.tar.gz
             correlic_*.deb
             correlic-*.rpm
@@ -179,6 +222,7 @@ jobs:
           draft: true
           files: |
             correlic-linux-${{ steps.v.outputs.version }}.tar.gz
+            correlic-linux-${{ steps.v.outputs.version }}-arm64.tar.gz
             correlic-linux-repo-${{ steps.v.outputs.version }}.tar.gz
             correlic_*.deb
             correlic-*.rpm
