@@ -1,6 +1,4 @@
-//go:build darwin && esf
-
-package esf
+package esevents
 
 import (
 	"context"
@@ -16,49 +14,52 @@ import (
 	"github.com/correlic/correlic-agent/internal/procinfo"
 )
 
-// DNSRunner converts ESF NOTIFY_LOOKUP events into canonical net_dns events.
-// This is a new capability compared to Phase 1 — DNS monitoring was not available
-// via kqueue or lsof polling.
-//
-// ES_EVENT_TYPE_NOTIFY_LOOKUP is available on macOS 12.0+ (Monterey).
-// On older macOS, LookupAvailable() returns false and this runner should not be started.
+// DNSRunner converts lookup events into canonical net_dns events. Only the
+// native ESF client delivers them (ES_EVENT_TYPE_NOTIFY_LOOKUP, macOS 12+
+// SDK); eslogger's "lookup" is a path lookup and is never mapped here.
 type DNSRunner struct {
-	collector *Collector
-	emit      collect.EventSink
-	logger    *slog.Logger
-	hostID    string
-	disp      dispatch.Dispatcher
+	src    EventSource
+	source string
+	emit   collect.EventSink
+	logger *slog.Logger
+	hostID string
+	disp   dispatch.Dispatcher
 }
 
-// NewDNSRunner creates an ESF-based DNS lookup runner.
-func NewDNSRunner(collector *Collector, emit collect.EventSink, logger *slog.Logger, hostID string, disp dispatch.Dispatcher) *DNSRunner {
+// NewDNSRunner creates a DNS lookup runner over src. source names the
+// collector in the emitted events.
+func NewDNSRunner(src EventSource, source string, emit collect.EventSink, logger *slog.Logger, hostID string, disp dispatch.Dispatcher) *DNSRunner {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if hostID == "" {
 		hostID = "localhost"
 	}
+	if source == "" {
+		source = "esf"
+	}
 	return &DNSRunner{
-		collector: collector,
-		emit:      emit,
-		logger:    logger,
-		hostID:    hostID,
-		disp:      disp,
+		src:    src,
+		source: source,
+		emit:   emit,
+		logger: logger,
+		hostID: hostID,
+		disp:   disp,
 	}
 }
 
-// Start processes DNS lookup events from the ESF collector.
+// Start processes DNS lookup events until ctx is cancelled or the source closes.
 func (r *DNSRunner) Start(ctx context.Context) {
-	r.logger.Info("esf dns runner started")
+	r.logger.Info("dns runner started", "source", r.source)
 	tracker := lineage.GetLineageTracker()
 
 	for {
 		select {
 		case <-ctx.Done():
-			r.logger.Info("esf dns runner stopping")
+			r.logger.Info("dns runner stopping", "source", r.source)
 			return
 
-		case ev, ok := <-r.collector.LookupEvents():
+		case ev, ok := <-r.src.Events():
 			if !ok {
 				return
 			}
@@ -70,7 +71,10 @@ func (r *DNSRunner) Start(ctx context.Context) {
 
 			// Lineage filter.
 			if !tracker.IsAI(ev.PID) {
-				ppid := procinfo.LookupPPID(ev.PID)
+				ppid := ev.PPID
+				if ppid == 0 {
+					ppid = lookupPPID(ev.PID)
+				}
 				if !tracker.RegisterProcess(ev.PID, ppid, ev.Comm) {
 					continue
 				}
@@ -88,7 +92,7 @@ func (r *DNSRunner) Start(ctx context.Context) {
 					"domain":     domain,
 					"category":   category,
 					"suspicious": suspicious,
-					"source":     "esf",
+					"source":     r.source,
 					"is_ai":      true,
 				})
 			}
@@ -103,7 +107,7 @@ func (r *DNSRunner) Start(ctx context.Context) {
 					Type:          "net_dns",
 					Timestamp:     ts,
 					HostID:        r.hostID,
-					Source:        "esf",
+					Source:        r.source,
 					Actor: &event.Actor{
 						PID:       int(ev.PID),
 						PPID:      int(ev.PPID),
@@ -119,8 +123,8 @@ func (r *DNSRunner) Start(ctx context.Context) {
 						"suspicious": suspicious,
 					},
 				}
-				lineage.GetLineageTracker().Annotate(canonEvt.Context, ev.PID)
-				canonEvt.ID = event.GenerateID(r.hostID, ts.UnixNano(), "esf", "net_dns", int(ev.PID), domain)
+				tracker.Annotate(canonEvt.Context, ev.PID)
+				canonEvt.ID = event.GenerateID(r.hostID, ts.UnixNano(), r.source, "net_dns", int(ev.PID), domain)
 				r.disp.Enqueue(canonEvt)
 			}
 		}
