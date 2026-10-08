@@ -1,8 +1,11 @@
-//go:build ignore
-// This file is compiled by cgo as part of the esf package.
-// The //go:build ignore tag prevents the Go compiler from treating this as a Go file.
+//go:build darwin && esf
+
+// This file is compiled by cgo as part of the esf package. The build
+// constraint above keeps it out of non-ESF builds, where the package has no
+// cgo files and `go build` would otherwise reject a stray C source file.
 
 #include "esf.h"
+#include <mach/mach.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -86,6 +89,7 @@ static void esf_message_handler(es_client_t *client, const es_message_t *msg, vo
             break;
         }
 
+#if CORRELIC_ES_HAS_LOOKUP
         case ES_EVENT_TYPE_NOTIFY_LOOKUP: {
             const es_string_token_t *name = &msg->event.lookup.relative_target;
             if (name->data) {
@@ -96,6 +100,7 @@ static void esf_message_handler(es_client_t *client, const es_message_t *msg, vo
             }
             break;
         }
+#endif
 
         case ES_EVENT_TYPE_NOTIFY_EXIT:
             ev.exit_code = msg->event.exit.stat;
@@ -106,7 +111,7 @@ static void esf_message_handler(es_client_t *client, const es_message_t *msg, vo
     }
 
     // Forward to Go via CGO export
-    correlic_send_event(wrapper->go_chan, &ev);
+    correlic_send_event(wrapper->go_handle, &ev);
 
     // Auto-respond to AUTH events (we only subscribe to NOTIFY, but be safe)
     if (msg->action_type == ES_ACTION_TYPE_AUTH) {
@@ -118,13 +123,13 @@ static void esf_message_handler(es_client_t *client, const es_message_t *msg, vo
 // Public API
 // ---------------------------------------------------------------------------
 
-correlic_es_client_t *correlic_es_new_client(void *go_chan, char **out_err) {
+correlic_es_client_t *correlic_es_new_client(uintptr_t go_handle, char **out_err) {
     correlic_es_client_t *wrapper = calloc(1, sizeof(correlic_es_client_t));
     if (!wrapper) {
         if (out_err) *out_err = strdup("out of memory");
         return NULL;
     }
-    wrapper->go_chan = go_chan;
+    wrapper->go_handle = go_handle;
 
     es_new_client_result_t result = es_new_client(&wrapper->es_client, ^(es_client_t *c, const es_message_t *msg) {
         esf_message_handler(c, msg, wrapper);
@@ -141,10 +146,10 @@ correlic_es_client_t *correlic_es_new_client(void *go_chan, char **out_err) {
                     *out_err = strdup("not running as root");
                     break;
                 case ES_NEW_CLIENT_RESULT_ERR_NOT_PERMITTED:
-                    *out_err = strdup("not permitted (TCC/SIP restriction)");
+                    *out_err = strdup("not permitted (grant the agent Full Disk Access in System Settings)");
                     break;
-                case ES_NEW_CLIENT_RESULT_ERR_ALREADY_ENABLED:
-                    *out_err = strdup("another ESF client already running");
+                case ES_NEW_CLIENT_RESULT_ERR_TOO_MANY_CLIENTS:
+                    *out_err = strdup("too many Endpoint Security clients on this host");
                     break;
                 default:
                     *out_err = strdup("es_new_client failed");
@@ -164,13 +169,13 @@ int correlic_es_subscribe(correlic_es_client_t *client,
 }
 
 void correlic_es_mute_self(correlic_es_client_t *client) {
-    es_mute_process_events(client->es_client,
-                           &(es_process_t){ .ppid = 0 }, // unused — mute by audit token below
-                           NULL, 0);
-    // Properly mute the agent itself to prevent feedback loops
+    // Mute the agent's own process so its file and exec activity does not
+    // feed back into the collectors.
     audit_token_t token;
     mach_msg_type_number_t info_count = TASK_AUDIT_TOKEN_COUNT;
-    task_info(mach_task_self(), TASK_AUDIT_TOKEN, (task_info_t)&token, &info_count);
+    if (task_info(mach_task_self(), TASK_AUDIT_TOKEN, (task_info_t)&token, &info_count) != KERN_SUCCESS) {
+        return;
+    }
     es_mute_process(client->es_client, &token);
 }
 

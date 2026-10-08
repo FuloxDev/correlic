@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+macOS
+- The Endpoint Security collectors (exec/exit, file open, DNS lookup with
+  real PIDs) are wired into the agent behind the `esf` build tag, with
+  automatic fallback to the kqueue/FSEvents/lsof collectors when the
+  entitlement, root or Full Disk Access is missing, and CI now builds and
+  tests the agent on a macOS runner. The project does not ship signed,
+  notarized or Endpoint Security-enabled macOS builds: they need a paid
+  Apple Developer Program membership. macOS stays a best-effort,
+  build-from-source preview; see `backend/docs/MACOS_AGENT.md`.
+- The minimum macOS version is 11 (Big Sur), which Go 1.26 requires.
+
 Build
 - The backend and the agent require Go 1.26 (golang.org/x/crypto 0.57 and
   golang.org/x/sys 0.48 need it); the Docker build stages use golang:1.26.

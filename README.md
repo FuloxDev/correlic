@@ -146,8 +146,12 @@ user's role (`admin` or `member`), and configuration changes require `admin`.
 - Linux agent: eBPF collectors for exec, exit, fork, file open, connect, bind,
   unlink, setuid and DNS; tested on kernels 5.8 to 6.18.
 - Windows agent: ETW and Security audit log; block rules enforced.
-- macOS agent: kqueue process events plus polling for files and network; no
-  Endpoint Security framework yet. Treat it as a preview.
+- macOS agent: best-effort preview. kqueue process events plus polling for
+  files and network, built from source; there are no signed or notarized
+  macOS builds and no Endpoint Security support, because both require a paid
+  Apple Developer Program membership that the project does not maintain. For
+  full coverage on a Mac, run the coding agent inside a Linux VM or container
+  with the Linux agent, and run the backend and dashboard with Docker.
 - Detection: 13 AI-gated rules and 11 chain patterns; see
   `backend/docs/DETECTION_ENGINE.md`.
 
