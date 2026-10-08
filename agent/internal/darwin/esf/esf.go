@@ -2,7 +2,11 @@
 
 // Package esf provides Go bindings for Apple's Endpoint Security Framework.
 // ESF gives real-time, kernel-enforced events with full PID attribution,
-// replacing the polling-based FSEvents and lsof collectors from Phase 1.
+// replacing the polling-based FSEvents and lsof collectors.
+//
+// The Client is an esevents.EventSource: it emits the shared esevents.Event
+// shape, and the runners in internal/darwin/esevents consume it (through an
+// esevents.Fanout) exactly as they consume the eslogger collector.
 //
 // Requirements:
 //   - macOS 11+ (Big Sur); DNS lookups need a macOS 12+ SDK
@@ -28,6 +32,8 @@ import (
 	"strings"
 	"time"
 	"unsafe"
+
+	"github.com/correlic/correlic-agent/internal/darwin/esevents"
 )
 
 // EventType mirrors es_event_type_t values we subscribe to.
@@ -48,30 +54,35 @@ func LookupAvailable() bool {
 	return EventLookup != EventType(^uint32(0))
 }
 
-// Event is a flattened, Go-native ESF event.
-type Event struct {
-	Type      EventType
-	Timestamp time.Time
+// SubscribedEvents returns the event types Correlic subscribes to: exec,
+// exit, open and, when the SDK knows it, lookup.
+func SubscribedEvents() []EventType {
+	types := []EventType{EventExec, EventExit, EventOpen}
+	if LookupAvailable() {
+		types = append(types, EventLookup)
+	}
+	return types
+}
 
-	// Process (always populated)
-	PID     uint32
-	PPID    uint32
-	UID     uint32
-	Comm    string
-	ExePath string
+// Event is the flattened, Go-native Endpoint Security event shared with the
+// eslogger collector and consumed by the esevents runners.
+type Event = esevents.Event
 
-	// Exec-specific
-	Args []string
-
-	// File-open-specific
-	FilePath  string
-	OpenFlags int32
-
-	// DNS lookup-specific
-	Domain string
-
-	// Exit-specific
-	ExitCode int32
+// canonicalType maps an SDK event type to the shared EventType.
+func canonicalType(t EventType) esevents.EventType {
+	switch t {
+	case EventExec:
+		return esevents.EventExec
+	case EventExit:
+		return esevents.EventExit
+	case EventOpen:
+		return esevents.EventOpen
+	case EventLookup:
+		if LookupAvailable() {
+			return esevents.EventLookup
+		}
+	}
+	return esevents.EventUnknown
 }
 
 // Client wraps the ESF client and exposes a Go channel of events.
@@ -129,7 +140,7 @@ func (c *Client) Subscribe(types []EventType) error {
 	return nil
 }
 
-// Events returns the read-only channel of ESF events.
+// Events returns the read-only channel of ESF events (esevents.EventSource).
 func (c *Client) Events() <-chan Event {
 	return c.events
 }
@@ -156,8 +167,13 @@ func correlic_send_event(goHandle C.uintptr_t, cEv *C.correlic_es_event_t) {
 		return
 	}
 
+	typ := canonicalType(EventType(cEv.event_type))
+	if typ == esevents.EventUnknown {
+		return
+	}
+
 	ev := Event{
-		Type:      EventType(cEv.event_type),
+		Type:      typ,
 		Timestamp: time.Now(),
 		PID:       uint32(cEv.pid),
 		PPID:      uint32(cEv.ppid),

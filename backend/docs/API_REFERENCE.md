@@ -99,6 +99,14 @@ All endpoints are served on `:8080` over TLS (or plain HTTP in dev mode).
 | POST | `/telemetry` | authed | Legacy telemetry ingestion endpoint. Supports batch event upload. |
 | POST | `/ingest/events` | authed | Primary canonical event ingestion. Runs sampling, detection, baseline collection, chain correlation, and incident correlation in real time. |
 
+Canonical event types accepted on `/ingest/events`: `process_exec`,
+`process_exit`, `file_open`, `file_write`, `net_connect`, `net_accept`,
+`net_listen`, `net_dns` (agents) and `ai_tool_call` (source `hook`: one
+Claude Code / Cursor tool call reported by `correlic-hook`, with
+`context.tool_name`, `command` / `file_path` / `url`, `phase` and
+`decision`; see `HOOKS.md`). The hook also uses `GET /agent/block-rules` and
+`POST /agent/block-events` on the telemetry plane, like the agent.
+
 ---
 
 ## 6. Findings

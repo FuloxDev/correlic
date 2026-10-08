@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, Shield, Link2, Filter, ChevronDown, Cpu, FileText, Globe, Wifi } from 'lucide-react';
+import { Clock, Shield, Link2, Filter, ChevronDown, Cpu, FileText, Globe, Wifi, Bot } from 'lucide-react';
 import type { TimelineEntry } from '@/lib/api-client';
 import ExpandableText from './ExpandableText';
 
@@ -25,6 +25,7 @@ const EVENT_TYPE_ICONS: Record<string, React.ElementType> = {
     file_open: FileText,
     net_connect: Globe,
     net_dns: Wifi,
+    ai_tool_call: Bot,
 };
 
 interface IncidentTimelineProps {

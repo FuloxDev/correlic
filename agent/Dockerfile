@@ -1,8 +1,13 @@
 # Correlic Agent Dockerfile
-# Two-stage: generate eBPF objects, then build the Go binary
+# Two-stage: generate eBPF objects, then build the Go binary.
+# Built for linux/amd64 and linux/arm64 (see .github/workflows/release-images.yml).
 
-# Build stage — needs clang for bpf2go
-FROM golang:1.26-bookworm AS builder
+# Build stage — needs clang for bpf2go. Pinned to the build host's platform so
+# Go cross-compiles for the target instead of running under emulation: one
+# `go generate` emits the eBPF objects for amd64 and arm64, and GOARCH picks the
+# matching set at build time.
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
+ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
@@ -21,10 +26,10 @@ COPY . .
 # Generate eBPF objects (bpf2go compiles .bpf.c → Go)
 RUN go generate ./internal/ebpf/...
 
-# Build the agent binary (explicitly target linux/amd64)
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -o /correlic-agent ./cmd/agent
+# Build the agent binary for the image's target architecture (amd64 or arm64)
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -v -o /correlic-agent ./cmd/agent
 
-# Runtime stage — minimal
+# Runtime stage — minimal, per target platform
 FROM alpine:3.20 AS runtime
 
 RUN apk add --no-cache ca-certificates

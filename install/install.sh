@@ -9,7 +9,16 @@ set -euo pipefail
 
 VERSION="1.0.1"
 INSTALL_DIR="/opt/correlic"
-BUNDLE_URL="${CORRELIC_BUNDLE_URL:-https://github.com/FuloxDev/correlic/releases/download/v${VERSION}/correlic-linux-v${VERSION}.tar.gz}"
+# Target architecture. The amd64 bundle keeps its historical name
+# (correlic-linux-v<version>.tar.gz); other architectures carry a suffix
+# (correlic-linux-v<version>-arm64.tar.gz). Unsupported machines fail in step 1.
+MACHINE=$(uname -m)
+case "$MACHINE" in
+  x86_64)        ARCH="amd64"; BUNDLE_SUFFIX="" ;;
+  aarch64|arm64) ARCH="arm64"; BUNDLE_SUFFIX="-arm64" ;;
+  *)             ARCH="";      BUNDLE_SUFFIX="" ;;
+esac
+BUNDLE_URL="${CORRELIC_BUNDLE_URL:-https://github.com/FuloxDev/correlic/releases/download/v${VERSION}/correlic-linux-v${VERSION}${BUNDLE_SUFFIX}.tar.gz}"
 TOTAL_STEPS=10
 CURRENT_STEP=0
 TEMP_FILE=""
@@ -159,12 +168,12 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 ok "Running as root"
 
-# x86_64 only
-ARCH=$(uname -m)
-if [ "$ARCH" != "x86_64" ]; then
-  fail "Unsupported architecture: $ARCH. Correlic requires x86_64 (amd64)."
+# x86_64 (amd64) or aarch64 (arm64): Apple Silicon Linux VMs, AWS Graviton,
+# Raspberry Pi 5 and similar, with the same kernel 5.8+ and BTF requirements.
+if [ -z "$ARCH" ]; then
+  fail "Unsupported architecture: $MACHINE. Correlic requires x86_64 (amd64) or aarch64 (arm64)."
 fi
-ok "Architecture: x86_64"
+ok "Architecture: $MACHINE ($ARCH)"
 
 # Kernel 5.8+ for eBPF BTF support
 KERNEL_VERSION=$(uname -r | cut -d'-' -f1)
@@ -386,6 +395,8 @@ fi
 
 # Make binaries executable
 chmod +x "$INSTALL_DIR/bin/"* 2>/dev/null || true
+# correlic-hook (Claude Code / Cursor hook) ships in bin/ next to the agent.
+chmod +x "$INSTALL_DIR/bin/correlic-hook" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/node/bin/node" 2>/dev/null || true
 mkdir -p "$INSTALL_DIR/logs"
 
@@ -432,7 +443,7 @@ if [ "$PG_INSTALLED" = false ]; then
   else
     # RHEL/Fedora
     RHEL_VER=$(rpm -E %{rhel} 2>/dev/null || echo "9")
-    $PKG_MGR install -y "https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-x86_64/pgdg-redhat-repo-latest.noarch.rpm" 2>/dev/null || true
+    $PKG_MGR install -y "https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-${MACHINE}/pgdg-redhat-repo-latest.noarch.rpm" 2>/dev/null || true
     if ! $PKG_MGR install -y postgresql16-server postgresql16 2>&1 | tail -5; then
       fail "Failed to install PostgreSQL 16.
        Check the output above for errors."
@@ -1525,6 +1536,7 @@ echo -e "    Logs:       ${CYAN}journalctl -u correlic-api -f${NC}"
 echo -e "    Stop all:   ${CYAN}systemctl stop correlic-{api,telemetry,agent,ui,ui-proxy}${NC}"
 echo -e "    Start all:  ${CYAN}systemctl start correlic-{api,telemetry,agent,ui,ui-proxy}${NC}"
 echo -e "    Uninstall:  ${CYAN}${INSTALL_DIR}/uninstall.sh${NC}"
+echo -e "    AI hooks:   ${CYAN}${INSTALL_DIR}/bin/correlic-hook setup${NC}  (Claude Code / Cursor; see backend/docs/HOOKS.md)"
 echo ""
 if [ "$API_PORT" -ne 8080 ] || [ "$TELEMETRY_PORT" -ne 8081 ] || [ "$UI_PORT" -ne 3001 ] || [ "$PROXY_PORT" -ne 8788 ]; then
   echo -e "  ${YELLOW}Note: Non-default ports are in use due to port conflict resolution.${NC}"

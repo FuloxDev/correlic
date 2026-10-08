@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+AI tool hooks
+- New `correlic-hook` binary (`agent/cmd/correlic-hook`, pure Go, Linux /
+  macOS / Windows) that Claude Code and Cursor run on every tool call. It
+  records the command, file or URL and the session as an `ai_tool_call`
+  event (source `hook`, same host id and credentials as the agent), denies
+  calls that match the org's `process_exec` / `file_open` block rules before
+  they run and reports the block, fails open on any error within a ~2 s
+  budget, and spools undelivered events (bounded) for the next invocation.
+  `correlic-hook setup` merges the hook entries into `~/.claude/settings.json`
+  and `~/.cursor/hooks.json` (or a project's) idempotently; `test` sends a
+  synthetic event. Config: `~/.correlic/hook.yaml` or `CORRELIC_*` env vars.
+  Only commands, paths, names and ids are sent, never contents or prompts.
+- Backend: `ai_tool_call` is always kept by the sampler, shown in the agent
+  activity stream (hook-only sessions are named `claude-code (hooks)` /
+  `cursor (hooks)`, denied calls are high significance) and evaluated by the
+  new `ai.tool_call_sensitive_path` rule, which fires when a hook command or
+  file path matches the sampler's suspicious-path patterns.
+- UI: `ai_tool_call` renders as "AI tool call" with its command/path in the
+  live activity feed, incident timeline and event graph.
+- Packaging: `correlic-hook` / `correlic-hook.exe` ships next to the agent
+  in the Linux and Windows bundles, the .deb/.rpm and the installers.
+  Documented in `backend/docs/HOOKS.md`.
+
 macOS
 - The Endpoint Security collectors (exec/exit, file open, DNS lookup with
   real PIDs) are wired into the agent behind the `esf` build tag, with
@@ -12,6 +35,24 @@ macOS
   Apple Developer Program membership. macOS stays a best-effort,
   build-from-source preview; see `backend/docs/MACOS_AGENT.md`.
 - The minimum macOS version is 11 (Big Sur), which Go 1.26 requires.
+
+macOS eslogger
+- Endpoint Security events without an Apple Developer account: on macOS 13
+  or newer the agent runs Apple's `/usr/bin/eslogger` (root plus Full Disk
+  Access for the agent or its terminal) and gets process exec/exit/fork and
+  file open events with real PIDs in real time. Network connections stay on
+  lsof polling and there is no DNS. The kqueue/FSEvents/lsof pollers remain
+  the fallback; `eslogger_enabled: false` turns the new path off.
+- eslogger is supervised: a startup failure falls back to polling with one
+  WARN naming the fix, a later crash is restarted with backoff (up to five
+  times a minute), shutdown sends SIGTERM then SIGKILL, and the agent's own
+  activity is excluded. Lines eslogger prints that the agent cannot parse
+  are counted and logged, never fatal, since Apple reserves the right to
+  change the format.
+- The Endpoint Security runners are shared between the native ESF client
+  and eslogger (`agent/internal/darwin/esevents`, no build tag, tested on
+  Linux), and `check-compat` reports which path a Mac will use.
+  See `backend/docs/MACOS_AGENT.md`.
 
 Build
 - The backend and the agent require Go 1.26 (golang.org/x/crypto 0.57 and
@@ -25,6 +66,28 @@ Build
   the portable Node in the Linux and Windows bundles move from Node 20
   (end of life since April 2026) to 24.21.0. Building from source needs
   Node 22 or newer.
+
+Linux arm64
+- The Linux agent, backend and dashboard now build and ship for arm64
+  (aarch64) alongside amd64: Apple Silicon Linux VMs, AWS Graviton,
+  Raspberry Pi 5 and other arm64 hosts with a BTF-enabled Linux 5.8+
+  kernel. One `go generate` emits the eBPF objects for both architectures
+  (`bpf2go -target amd64,arm64`); the kprobe programs (`dns`, `bind`)
+  include `bpf/arch_arm64.h`, which declares the arm64 register file that
+  libbpf's `PT_REGS_*` / `BPF_KPROBE` macros read. The unlink collector no
+  longer fails on kernels without the `unlink(2)` syscall (arm64's generic
+  syscall table) and monitors `unlinkat` there.
+- Release artifacts: the container images are linux/amd64 + linux/arm64
+  manifests (the Go stages cross-compile, QEMU covers the rest); the Linux
+  release adds `correlic-linux-<v>-arm64.tar.gz`, `correlic_<v>_arm64.deb`
+  and `correlic-<v>-1.aarch64.rpm` next to the unchanged amd64 assets, with
+  apt (`binary-arm64`) and yum (`aarch64`) repository trees, all listed in
+  `SHA256SUMS-linux.txt`. `install/install.sh` accepts aarch64 and downloads
+  the matching bundle.
+- CI: a new `agent-linux-arm64` job on GitHub's `ubuntu-24.04-arm` runner
+  generates, builds, vets and tests the agent and loads the arm64 eBPF
+  objects into the runner's kernel; `CORRELIC_BPF_LOAD_REQUIRED=1` makes the
+  load test fail instead of skipping when BTF or privileges are missing.
 
 ## v1.0.1 (2026-10-08)
 

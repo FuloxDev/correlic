@@ -1,6 +1,4 @@
-//go:build darwin && esf
-
-package esf
+package esevents
 
 import (
 	"context"
@@ -17,48 +15,54 @@ import (
 	"github.com/correlic/correlic-agent/internal/procinfo"
 )
 
-// FileRunner converts ESF NOTIFY_OPEN events into canonical file_open events.
-// Unlike the FSEvents polling collector (Phase 1), ESF provides:
-//   - Real PID for every file access (fixes the PID=0 limitation)
-//   - Real-time notification (<1ms latency vs 2s polling)
-//   - All file opens, not just mtime changes
+// FileRunner converts Endpoint Security open events into canonical file_open
+// events. Unlike the FSEvents polling collector, Endpoint Security provides:
+//   - The real PID for every file access (the polling path reports PID 0)
+//   - Real-time notification instead of a 2 s poll
+//   - All file opens, not only mtime changes
 type FileRunner struct {
-	collector *Collector
-	emit      collect.EventSink
-	logger    *slog.Logger
-	hostID    string
-	disp      dispatch.Dispatcher
+	src    EventSource
+	source string
+	emit   collect.EventSink
+	logger *slog.Logger
+	hostID string
+	disp   dispatch.Dispatcher
 }
 
-// NewFileRunner creates an ESF-based file access runner.
-func NewFileRunner(collector *Collector, emit collect.EventSink, logger *slog.Logger, hostID string, disp dispatch.Dispatcher) *FileRunner {
+// NewFileRunner creates a file access runner over src. source names the
+// collector ("esf" or "eslogger") in the emitted events.
+func NewFileRunner(src EventSource, source string, emit collect.EventSink, logger *slog.Logger, hostID string, disp dispatch.Dispatcher) *FileRunner {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if hostID == "" {
 		hostID = "localhost"
 	}
+	if source == "" {
+		source = "esf"
+	}
 	return &FileRunner{
-		collector: collector,
-		emit:      emit,
-		logger:    logger,
-		hostID:    hostID,
-		disp:      disp,
+		src:    src,
+		source: source,
+		emit:   emit,
+		logger: logger,
+		hostID: hostID,
+		disp:   disp,
 	}
 }
 
-// Start processes file open events from the ESF collector.
+// Start processes file open events until ctx is cancelled or the source closes.
 func (r *FileRunner) Start(ctx context.Context) {
-	r.logger.Info("esf file runner started")
+	r.logger.Info("file runner started", "source", r.source)
 	tracker := lineage.GetLineageTracker()
 
 	for {
 		select {
 		case <-ctx.Done():
-			r.logger.Info("esf file runner stopping")
+			r.logger.Info("file runner stopping", "source", r.source)
 			return
 
-		case ev, ok := <-r.collector.OpenEvents():
+		case ev, ok := <-r.src.Events():
 			if !ok {
 				return
 			}
@@ -68,9 +72,14 @@ func (r *FileRunner) Start(ctx context.Context) {
 				continue
 			}
 
-			// Lineage filter — only track AI process file access.
+			// Lineage filter: only track AI process file access. The event
+			// carries the parent PID; ps(1) is only consulted when it does
+			// not, so the (high-volume) open stream never forks per event.
 			if !tracker.IsAI(ev.PID) {
-				ppid := procinfo.LookupPPID(ev.PID)
+				ppid := ev.PPID
+				if ppid == 0 {
+					ppid = lookupPPID(ev.PID)
+				}
 				if !tracker.RegisterProcess(ev.PID, ppid, ev.Comm) {
 					continue
 				}
@@ -87,12 +96,12 @@ func (r *FileRunner) Start(ctx context.Context) {
 					"path":       ev.FilePath,
 					"open_flags": ev.OpenFlags,
 					"category":   category,
-					"source":     "esf",
+					"source":     r.source,
 					"is_ai":      true,
 				})
 			}
 
-			// Canonical event — PID is now populated (fixes Phase 1 PID=0 issue).
+			// Canonical event with the real PID.
 			if r.disp != nil {
 				ts := time.Now()
 				sessionID := procinfo.DetectSessionID(ev.PID)
@@ -107,7 +116,7 @@ func (r *FileRunner) Start(ctx context.Context) {
 					Type:          "file_open",
 					Timestamp:     ts,
 					HostID:        r.hostID,
-					Source:        "esf",
+					Source:        r.source,
 					Actor: &event.Actor{
 						PID:       int(ev.PID),
 						PPID:      int(ev.PPID),
@@ -123,8 +132,8 @@ func (r *FileRunner) Start(ctx context.Context) {
 						"open_flags": ev.OpenFlags,
 					},
 				}
-				lineage.GetLineageTracker().Annotate(canonEvt.Context, ev.PID)
-				canonEvt.ID = event.GenerateID(r.hostID, ts.UnixNano(), "esf", "file_open", int(ev.PID), ev.FilePath)
+				tracker.Annotate(canonEvt.Context, ev.PID)
+				canonEvt.ID = event.GenerateID(r.hostID, ts.UnixNano(), r.source, "file_open", int(ev.PID), ev.FilePath)
 				r.disp.Enqueue(canonEvt)
 			}
 		}

@@ -46,6 +46,7 @@ type Config struct {
 	// macOS-specific (ignored on Linux/Windows)
 	PollInterval       time.Duration `yaml:"poll_interval"`        // macOS polling interval for lsof/fsevents (default 2s)
 	FSEventsWatchPaths []string      `yaml:"fsevents_watch_paths"` // Additional FSEvents watch paths
+	EsloggerEnabled    bool          `yaml:"eslogger_enabled"`     // Endpoint Security events via /usr/bin/eslogger (macOS 13+, root, Full Disk Access; default: true)
 
 	// Windows-specific (ignored on Linux/macOS)
 	ETWEnabled bool `yaml:"etw_enabled"` // Use ETW for telemetry collection (default: true on Windows)
@@ -94,6 +95,7 @@ func Default() Config {
 		ForkMonitorEnabled:    false, // Process creation monitoring (enable explicitly)
 		Profile:               "developer",
 		LogLevel:              "info",
+		EsloggerEnabled:       true,  // Endpoint Security via eslogger on macOS 13+ (falls back to polling)
 		ETWEnabled:            true,  // Prefer ETW when available (Windows)
 		BlockEnabled:          false, // Soft-block disabled by default
 		BlockSyncInterval:     30 * time.Second,

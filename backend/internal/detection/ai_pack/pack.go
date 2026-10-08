@@ -18,5 +18,6 @@ func NewAIPack() []detection.Detection {
 		&AIDiscovery{},
 		&AICommandActivity{},
 		&AIFileActivity{},
+		&AIToolCallSensitivePath{},
 	}
 }

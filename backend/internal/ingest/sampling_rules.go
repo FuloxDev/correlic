@@ -34,6 +34,7 @@ func DefaultSamplingRules() *SamplingRules {
 			"process_exec": true, // But filtered by process name
 			"process_exit": false,
 			"net_dns":      true, // Required for ai.suspicious_dns detection
+			"ai_tool_call": true, // Every AI tool-hook call is an audit record (correlic-hook)
 		},
 
 		// Tier 2 & 3: Sample rates (must match agent event type names)
@@ -112,119 +113,136 @@ func (r *SamplingRules) IsSuspicious(evt *event.Event) bool {
 		}
 
 		// Then check built-in suspicious patterns
-		suspiciousPatterns := []string{
-			// SSH & Crypto Keys
-			".ssh/",
-			"id_rsa",
-			"id_ed25519",
-			"id_ecdsa",
-			"id_dsa",
-			".pem",
-			".key",
-			"authorized_keys",
-			"known_hosts",
-
-			// Cloud Provider Credentials
-			".aws/",
-			".azure/",
-			".gcloud/",
-			".kube/",
-			"credentials",
-			"config", // AWS/kubectl config
-
-			// System Authentication & Passwords
-			"/etc/shadow",
-			"/etc/passwd",
-			"/etc/group",
-			"/etc/gshadow",
-			"/etc/sudoers",
-			"/etc/security/",
-			"password",
-			"secret",
-			"token",
-			"api_key",
-			"apikey",
-
-			// Container & Orchestration Secrets
-			"/run/secrets/",     // Docker secrets
-			"/var/run/secrets/", // Kubernetes secrets
-			"docker.sock",
-			".dockercfg",
-			".docker/config.json",
-
-			// Database Credentials & Configs
-			".pgpass",
-			".my.cnf",
-			"database.yml",
-			"db.conf",
-			".env", // Environment files often contain secrets
-
-			// Application Secrets
-			".npmrc",
-			".pypirc",
-			".netrc",
-			"settings.py", // Django settings
-			"application.properties",
-			"application.yml",
-
-			// Certificate & TLS
-			".crt",
-			".cert",
-			".p12",
-			".pfx",
-			"ca-bundle",
-
-			// Kernel & System Internals (potential privilege escalation)
-			"/proc/",
-			"/sys/kernel/",
-			"/dev/mem",
-			"/dev/kmem",
-			"/boot/",
-
-			// Sensitive System Configs
-			"/etc/crontab",
-			"/etc/cron.",
-			"/etc/ssh/sshd_config",
-			"/etc/pam.d/",
-			"/etc/ld.so.conf",
-
-			// Logs (may contain sensitive data)
-			"/var/log/auth.log",
-			"/var/log/secure",
-			"/var/log/audit/",
-
-			// Browser & Email Data
-			".mozilla/",
-			".thunderbird/",
-			"cookies.sqlite",
-			"logins.json",
-
-			// Version Control (may contain secrets)
-			".git/config",
-			".gitconfig",
-			".svn/",
-
-			// Windows credential stores (paths normalized to forward slashes)
-			"C:/Windows/System32/config/SAM",
-			"C:/Windows/System32/config/SYSTEM",
-			"C:/Windows/System32/config/SECURITY",
-			"/AppData/Roaming/Microsoft/Protect/",   // DPAPI master keys
-			"/AppData/Local/Microsoft/Credentials/", // Windows Credential Manager
-			"ntds.dit",                              // Active Directory database
-
-			// Windows persistence paths
-			"C:/Windows/System32/Tasks/",
-			"/Start Menu/Programs/Startup/",
-		}
-
-		for _, pattern := range suspiciousPatterns {
-			if matchesPattern(evt.Target.FilePath, pattern) {
-				return true
-			}
+		if _, ok := MatchSuspiciousPath(evt.Target.FilePath); ok {
+			return true
 		}
 	}
 
 	return false
+}
+
+// builtinSuspiciousPaths are the file-path patterns that mark an event as
+// suspicious regardless of the process (see matchesPattern for the syntax).
+// They are shared with the AI tool-hook detection rule
+// (detection/ai_pack: ai.tool_call_sensitive_path).
+var builtinSuspiciousPaths = []string{
+	// SSH & Crypto Keys
+	".ssh/",
+	"id_rsa",
+	"id_ed25519",
+	"id_ecdsa",
+	"id_dsa",
+	".pem",
+	".key",
+	"authorized_keys",
+	"known_hosts",
+
+	// Cloud Provider Credentials
+	".aws/",
+	".azure/",
+	".gcloud/",
+	".kube/",
+	"credentials",
+	"config", // AWS/kubectl config
+
+	// System Authentication & Passwords
+	"/etc/shadow",
+	"/etc/passwd",
+	"/etc/group",
+	"/etc/gshadow",
+	"/etc/sudoers",
+	"/etc/security/",
+	"password",
+	"secret",
+	"token",
+	"api_key",
+	"apikey",
+
+	// Container & Orchestration Secrets
+	"/run/secrets/",     // Docker secrets
+	"/var/run/secrets/", // Kubernetes secrets
+	"docker.sock",
+	".dockercfg",
+	".docker/config.json",
+
+	// Database Credentials & Configs
+	".pgpass",
+	".my.cnf",
+	"database.yml",
+	"db.conf",
+	".env", // Environment files often contain secrets
+
+	// Application Secrets
+	".npmrc",
+	".pypirc",
+	".netrc",
+	"settings.py", // Django settings
+	"application.properties",
+	"application.yml",
+
+	// Certificate & TLS
+	".crt",
+	".cert",
+	".p12",
+	".pfx",
+	"ca-bundle",
+
+	// Kernel & System Internals (potential privilege escalation)
+	"/proc/",
+	"/sys/kernel/",
+	"/dev/mem",
+	"/dev/kmem",
+	"/boot/",
+
+	// Sensitive System Configs
+	"/etc/crontab",
+	"/etc/cron.",
+	"/etc/ssh/sshd_config",
+	"/etc/pam.d/",
+	"/etc/ld.so.conf",
+
+	// Logs (may contain sensitive data)
+	"/var/log/auth.log",
+	"/var/log/secure",
+	"/var/log/audit/",
+
+	// Browser & Email Data
+	".mozilla/",
+	".thunderbird/",
+	"cookies.sqlite",
+	"logins.json",
+
+	// Version Control (may contain secrets)
+	".git/config",
+	".gitconfig",
+	".svn/",
+
+	// Windows credential stores (paths normalized to forward slashes)
+	"C:/Windows/System32/config/SAM",
+	"C:/Windows/System32/config/SYSTEM",
+	"C:/Windows/System32/config/SECURITY",
+	"/AppData/Roaming/Microsoft/Protect/",   // DPAPI master keys
+	"/AppData/Local/Microsoft/Credentials/", // Windows Credential Manager
+	"ntds.dit",                              // Active Directory database
+
+	// Windows persistence paths
+	"C:/Windows/System32/Tasks/",
+	"/Start Menu/Programs/Startup/",
+}
+
+// MatchSuspiciousPath reports the first built-in suspicious-path pattern that
+// path matches, for callers outside the sampler (detection rules on hook
+// events). The per-org user watchlist is not consulted here.
+func MatchSuspiciousPath(path string) (pattern string, ok bool) {
+	if path == "" {
+		return "", false
+	}
+	for _, p := range builtinSuspiciousPaths {
+		if matchesPattern(path, p) {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // GetSampleRate returns the sample rate for an event type.

@@ -47,7 +47,44 @@ against the running kernel's BTF. Fields whose name or layout changed across
 kernels are guarded with `bpf_core_field_exists` / `bpf_core_enum_value_exists`
 (see the `iov_iter` handling in `dns.bpf.c`). `objects_load_test.go` loads
 every object through the verifier on the test machine (skips without BTF or
-CAP_BPF).
+CAP_BPF; set `CORRELIC_BPF_LOAD_REQUIRED=1` to turn those skips into
+failures, as CI does on runners that must load the objects).
+
+### Architectures: amd64 and arm64
+
+The programs are built for linux/amd64 and linux/arm64 from the same
+sources and the same x86-generated `bpf/vmlinux.h`: `generate.go` runs
+`bpf2go -target amd64,arm64`, which emits `<name>_x86_bpfel.{go,o}` (build
+tag `386 || amd64`) and `<name>_arm64_bpfel.{go,o}` (build tag `arm64`), and
+`GOARCH` picks the set that is embedded. CO-RE makes the shared `vmlinux.h`
+work: every kernel-struct access (task_struct, sock, msghdr, iov_iter,
+tracepoint contexts, ...) is relocated by field name against the running
+kernel's BTF, whatever its architecture. The one architecture-specific piece
+is the register file that kprobe programs read their arguments from:
+
+- `bpf/arch_arm64.h` declares `struct user_pt_regs` (x0..x30, sp, pc,
+  pstate: the arm64 kernel's user ABI and the first member of its
+  `struct pt_regs`) for `-target arm64`, because libbpf's `bpf_tracing.h`
+  implements `PT_REGS_PARMn()` / `BPF_KPROBE()` on arm64 as
+  `((const struct user_pt_regs *)ctx)->regs[n-1]` and the x86 `vmlinux.h`
+  has no such type. It is declared outside the `preserve_access_index`
+  pragma on purpose: those offsets are ABI constants, nothing to relocate.
+  Include it after `vmlinux.h` and before `<bpf/bpf_tracing.h>` in every
+  program that uses `PT_REGS_*` or `BPF_KPROBE` (`dns.bpf.c`,
+  `bind.bpf.c`); it is empty for other targets. Do not use the `*_CORE` or
+  `*_SYSCALL` flavours of the `PT_REGS_*` macros: they need the real arm64
+  `struct pt_regs`.
+- Tracepoint and raw-tracepoint programs need nothing: syscall tracepoints
+  read `ctx->args[]`, which is architecture independent.
+- arm64 uses the asm-generic syscall table, which has no `unlink(2)` (libc
+  implements `unlink()` with `unlinkat`), so the `sys_enter_unlink`
+  tracepoint does not exist there. `unlink_collector.go` treats that as
+  "not on this architecture" and monitors `unlinkat` only. `open(2)` is
+  likewise absent but was never hooked (`fileopen.bpf.c` uses `openat`).
+
+CI builds, vets and tests the agent on an `ubuntu-24.04-arm` runner
+(`agent-linux-arm64` in `.github/workflows/ci.yml`) and loads the arm64
+objects into that kernel with `CORRELIC_BPF_LOAD_REQUIRED=1`.
 
 ## Prerequisites
 
@@ -56,8 +93,10 @@ CAP_BPF).
   `bpf/bpf_tracing.h`, `bpf/bpf_core_read.h`, `bpf/bpf_endian.h`)
 - A BTF-enabled kernel (`/sys/kernel/btf/vmlinux`) for `vmlinux.h` and for tests
 
-The generated `*_x86_bpfel.go` / `*.o` files are git-ignored; `go build` needs
-them, so run `go generate` after a fresh clone and after any `.bpf.c` change.
+The generated `*_x86_bpfel.go` / `*_arm64_bpfel.go` and `.o` files are
+git-ignored (`agent/.gitignore` and the root `.gitignore` match `*_bpfel.*`);
+`go build` needs them, so run `go generate` after a fresh clone and after any
+`.bpf.c` change.
 
 ## Step 1: Generate vmlinux.h
 
@@ -89,7 +128,9 @@ CPATH=/path/to/libbpf/include go generate ./internal/ebpf/...
 ```
 
 This compiles every `bpf/*.bpf.c` with `clang -O2 -g -Wall -Werror -target bpf`
-via `bpf2go` and writes `<name>_x86_bpfel.go` + `.o` next to the Go code.
+via `bpf2go`, once per supported architecture (`-target amd64,arm64`), and
+writes `<name>_x86_bpfel.go` + `.o` and `<name>_arm64_bpfel.go` + `.o` next
+to the Go code. One `go generate` on any host serves native and cross builds.
 
 ## Step 4: Build and Test
 
@@ -97,8 +138,13 @@ via `bpf2go` and writes `<name>_x86_bpfel.go` + `.o` next to the Go code.
 go build ./...
 go vet ./...
 go test -race ./...           # includes the kernel load test when run with CAP_BPF
+GOOS=linux GOARCH=arm64 go build ./... && GOOS=linux GOARCH=arm64 go vet ./...   # cross build
 sudo ./correlic-agent --config /etc/correlic/agent.yaml
 ```
+
+`CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o correlic-agent ./cmd/agent`
+produces the arm64 agent from an x86_64 host (and vice versa); the eBPF
+objects for both architectures are already in place after `go generate`.
 
 A live check without a backend: point `backend_url`/`telemetry_url` at an
 unreachable https address, enable the monitors, start the agent and confirm
@@ -118,6 +164,10 @@ Run the agent as root or with CAP_BPF + CAP_PERFMON.
 
 ### "unknown type name 'struct trace_event_raw_sched_process_exec'"
 Regenerate vmlinux.h - it may be from a different kernel.
+
+### "unknown type name 'struct user_pt_regs'" (arm64 target)
+A kprobe program uses `PT_REGS_*` / `BPF_KPROBE` without including
+`arch_arm64.h` before `<bpf/bpf_tracing.h>`. See "Architectures" above.
 
 ### Verifier errors
 Usually a stack overflow (512 B limit), an unbounded loop or a CO-RE field

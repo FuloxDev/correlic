@@ -12,7 +12,7 @@ Correlic is a distributed security observability platform that monitors AI codin
 | Repo | Language | Purpose |
 |------|----------|---------|
 | `backend/` | Go 1.26+ | API server — event ingestion, detection engine, incident correlation, 80+ API endpoints |
-| `agent/` | Go 1.26+ | Kernel telemetry collector — eBPF (Linux), ETW (Windows), kqueue + polling (macOS, preview) |
+| `agent/` | Go 1.26+ | Kernel telemetry collector — eBPF (Linux), ETW (Windows), kqueue + polling (macOS, preview); also builds `correlic-hook` (AI tool hooks, all platforms) |
 | `ui/` | Next.js 16 / React 19 / TypeScript | Web dashboard — findings, incidents, baselines, block rules, AI chat |
 | `correlic-ui-proxy/` | Node.js | HTTPS reverse proxy — TLS termination, routes /api/* → backend, /* → UI |
 
@@ -20,6 +20,7 @@ Correlic is a distributed security observability platform that monitors AI codin
 
 ```
 1. COLLECTION   Agent (eBPF/ESF/ETW) → kernel events → canonical schema → HTTPS dispatch
+                correlic-hook (Claude Code / Cursor tool hooks) → ai_tool_call events → same endpoint
                      ↓
 2. PROCESSING   Backend: sampling (90% reduction) → detection (13 rules + 11 chains)
                 → baseline suppression → incident clustering → notification
@@ -150,6 +151,7 @@ Correlic is a distributed security observability platform that monitors AI codin
 | Linux agent (eBPF) | `docs/LINUX_AGENT.md` |
 | Windows agent (ETW + USN) | `docs/WINDOWS_AGENT.md` |
 | macOS agent (ESF + kqueue) | `docs/MACOS_AGENT.md` |
+| AI tool hooks (correlic-hook, `ai_tool_call`) | `docs/HOOKS.md` |
 | 4-layer architecture | `docs/LAYERS.md` |
 | AI process race conditions | `docs/ai_process_tracking.md` |
 | Suspicious file patterns | `docs/suspicious-files-reference.md` |
@@ -189,6 +191,7 @@ Correlic is a distributed security observability platform that monitors AI codin
 | Package | Purpose |
 |---------|---------|
 | `cmd/agent/` | Entry point + platform-specific startup (linux/darwin/windows) |
+| `cmd/correlic-hook/`, `internal/hook/` | Claude Code / Cursor hook binary: `ai_tool_call` events, block-rule denial, spool |
 | `internal/ebpf/` | eBPF programs (12 C files) + collectors + runners (Linux) |
 | `internal/darwin/` | ESF + FSEvents + kqueue + lsof collectors (macOS) |
 | `internal/windows/` | ETW + USN Journal + audit subscribers (Windows) |

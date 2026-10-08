@@ -54,7 +54,7 @@ func (p *PostgresActivityStream) GetAgentActivityStream(ctx context.Context, org
 		FROM events
 		WHERE ts >= $1
 		  AND ($2::uuid IS NULL OR org_id IS NULL OR org_id = $2::uuid)
-		  AND type IN ('file_open', 'file_write', 'net_connect', 'net_dns', 'net_accept', 'net_listen', 'process_exec')
+		  AND type IN ('file_open', 'file_write', 'net_connect', 'net_dns', 'net_accept', 'net_listen', 'process_exec', 'ai_tool_call')
 		  AND (COALESCE(context->>'ai_session_id', '') <> '' OR context->>'is_ai' = 'true')
 		ORDER BY ts DESC
 		LIMIT $3
@@ -262,6 +262,7 @@ type activitySession struct {
 	root         *sessionRoot // chosen root (nil when no process_exec was stored for the session)
 	earliest     *event.Event // earliest event in the window
 	earliestExec *event.Event // earliest non-synthetic process_exec in the window
+	hookEvents   int          // ai_tool_call events (correlic-hook) folded into the session
 	pids         map[int]struct{}
 	actions      []AgentAction
 	stats        AgentStats
@@ -275,6 +276,18 @@ type activitySession struct {
 func buildActivityStream(events []event.Event, roots map[string][]sessionRoot, since, now time.Time, minSignificance int) *AgentActivityResponse {
 	sessions := make(map[string]*activitySession)
 	var order []string
+
+	// Hook events arrive in pre/post pairs for one tool call; the post event
+	// only adds the outcome, so it is not shown as a second action when its
+	// pre event is in the window (events arrive newest first, hence a pass).
+	preCalls := make(map[string]struct{})
+	for i := range events {
+		if events[i].Type == eventTypeToolCall && hookPhase(&events[i]) == "pre" {
+			if id := hookString(&events[i], "tool_use_id"); id != "" {
+				preCalls[id] = struct{}{}
+			}
+		}
+	}
 
 	for i := range events {
 		evt := &events[i]
@@ -318,8 +331,20 @@ func buildActivityStream(events []event.Event, roots map[string][]sessionRoot, s
 		if target == nil {
 			target = &event.TargetStruct{}
 		}
-		action := buildAction(evt.Type, target.FilePath, target.IP, target.Port, target.Domain,
-			strings.Join(actor.Cmdline, " "), actor.Comm, actor.ExePath)
+		var action AgentAction
+		isWrite := evt.Type == "file_write"
+		if evt.Type == eventTypeToolCall {
+			s.hookEvents++
+			if hookPhase(evt) == "post" {
+				if _, paired := preCalls[hookString(evt, "tool_use_id")]; paired {
+					continue
+				}
+			}
+			action, isWrite = buildToolCallAction(evt)
+		} else {
+			action = buildAction(evt.Type, target.FilePath, target.IP, target.Port, target.Domain,
+				strings.Join(actor.Cmdline, " "), actor.Comm, actor.ExePath)
+		}
 		if action.Significance < minSignificance {
 			continue
 		}
@@ -333,7 +358,7 @@ func buildActivityStream(events []event.Event, roots map[string][]sessionRoot, s
 		s.stats.TotalEvents++
 		switch action.Category {
 		case "file":
-			if evt.Type == "file_write" {
+			if isWrite {
 				s.stats.FilesModified++
 			} else {
 				s.stats.FilesRead++
@@ -373,6 +398,15 @@ func buildActivityStream(events []event.Event, roots map[string][]sessionRoot, s
 				comm, exePath = s.earliest.Process.Comm, s.earliest.Process.ExePath
 			}
 			started = s.earliest.Timestamp
+			if s.hookEvents > 0 {
+				// No process_exec was recorded for the session (no kernel agent
+				// on this host): name it after the AI tool the hook reported,
+				// e.g. "claude-code (hooks)", and use the hook's parent PID.
+				comm = s.aiType + " (hooks)"
+				if s.earliest.Process != nil {
+					rootPID = s.earliest.Process.PID
+				}
+			}
 		}
 		if comm == "" {
 			comm = s.aiType
@@ -401,4 +435,68 @@ func buildActivityStream(events []event.Event, roots map[string][]sessionRoot, s
 		WindowStart: since,
 		WindowEnd:   now,
 	}
+}
+
+// eventTypeToolCall is the canonical type of AI tool-hook events
+// (source "hook", emitted by correlic-hook for Claude Code and Cursor).
+const eventTypeToolCall = "ai_tool_call"
+
+func hookString(evt *event.Event, key string) string {
+	if evt.Context == nil {
+		return ""
+	}
+	v, _ := evt.Context[key].(string)
+	return strings.TrimSpace(v)
+}
+
+func hookPhase(evt *event.Event) string { return hookString(evt, "phase") }
+
+// hookEditTools are the hook tool names that modify a file.
+var hookEditTools = map[string]bool{
+	"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true, "file_edit": true,
+}
+
+// buildToolCallAction renders one ai_tool_call event. A denied call is
+// always significance 5; otherwise commands, file reads/edits and URL
+// fetches reuse the scoring of the kernel event they correspond to.
+// The second result reports whether the call modified a file.
+func buildToolCallAction(evt *event.Event) (AgentAction, bool) {
+	toolName := hookString(evt, "tool_name")
+	command := hookString(evt, "command")
+	filePath := hookString(evt, "file_path")
+	url := hookString(evt, "url")
+	blocked := hookString(evt, "decision") == "blocked"
+	isWrite := hookEditTools[toolName]
+
+	var action AgentAction
+	switch {
+	case command != "":
+		exe := ""
+		if fields := strings.Fields(command); len(fields) > 0 {
+			exe = baseName(fields[0])
+		}
+		action = buildCommandAction(command, exe, "")
+	case filePath != "":
+		action = buildFileAction("file", filePath, isWrite)
+	case url != "":
+		action = AgentAction{Category: "network", Action: "🌐 Fetched " + url, Detail: url, Significance: 3}
+	case hookPhase(evt) == "session":
+		verb := "started"
+		if strings.Contains(strings.ToLower(hookString(evt, "hook_event")), "end") {
+			verb = "ended"
+		}
+		action = AgentAction{Category: "other", Action: "session " + verb, Significance: 1}
+	case toolName != "":
+		action = AgentAction{Category: "command", Action: "🔌 Tool call: " + toolName, Detail: toolName, Significance: 2}
+	default:
+		action = AgentAction{Category: "other", Action: "AI tool call", Significance: 1}
+	}
+	if toolName != "" && action.Detail != "" {
+		action.Detail = toolName + ": " + action.Detail
+	}
+	if blocked {
+		action.Action = "⛔ Blocked: " + action.Action
+		action.Significance = 5
+	}
+	return action, isWrite
 }

@@ -1,5 +1,8 @@
 name: correlic
-arch: amd64
+# Go architecture name (amd64 or arm64), substituted by the build workflow
+# like ${VERSION}; nfpm maps it to the deb (amd64/arm64) and rpm
+# (x86_64/aarch64) names itself.
+arch: ${ARCH}
 version: ${VERSION}
 maintainer: "Correlic maintainers"
 description: "Correlic Security Observability — eBPF agent, backend API, and dashboard"
@@ -32,6 +35,10 @@ contents:
       mode: 0755
   - src: pkg/usr/bin/correlic-agent
     dst: /usr/bin/correlic-agent
+    file_info:
+      mode: 0755
+  - src: pkg/usr/bin/correlic-hook
+    dst: /usr/bin/correlic-hook
     file_info:
       mode: 0755
   - src: pkg/lib/systemd/system/correlic-api.service

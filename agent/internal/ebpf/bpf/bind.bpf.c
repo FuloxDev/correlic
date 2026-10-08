@@ -7,6 +7,7 @@
 // - Reverse shell patterns (bind + exec shell)
 
 #include "vmlinux.h"
+#include "arch_arm64.h"  // struct user_pt_regs for -target arm64; must precede bpf_tracing.h
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>

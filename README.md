@@ -76,6 +76,14 @@ the release also carries
 and
 [`correlic-1.0.1-1.x86_64.rpm`](https://github.com/FuloxDev/correlic/releases/download/v1.0.1/correlic-1.0.1-1.x86_64.rpm).
 
+Linux is supported on x86_64 (amd64) and arm64 (aarch64): Apple Silicon
+Linux VMs, AWS Graviton, Raspberry Pi 5 with a BTF-enabled kernel, and any
+other arm64 machine running Linux 5.8+ with BTF. The installer picks the
+bundle for the machine it runs on. The arm64 assets
+(`correlic-linux-<version>-arm64.tar.gz`, `correlic_<version>_arm64.deb`,
+`correlic-<version>-1.aarch64.rpm`) and the linux/arm64 container images are
+published from the first release after v1.0.1.
+
 ### Windows
 
 ```powershell
@@ -87,6 +95,29 @@ The script downloads
 (PostgreSQL, Neo4j, a Java runtime and Node.js are bundled, about 590 MB),
 installs it and starts Correlic. To add only the agent on another Windows
 machine, run `install/install-agent.ps1` from the same release.
+
+### AI tool hooks (all platforms, no kernel driver needed)
+
+`correlic-hook` is a small binary that Claude Code and Cursor run on every
+tool call. It records the command, file or URL the AI used, with the session
+it belongs to, and can deny a call that matches one of your block rules before
+it runs. It needs no root and no kernel driver, so it also works on a Mac
+without a paid Apple account, where it is the only host-level signal; next to
+the Linux or Windows agent it adds exact attribution to the kernel events.
+
+```bash
+# the binary ships in bin/ next to correlic-agent (or: cd agent && go build ./cmd/correlic-hook)
+cat > ~/.correlic/hook.yaml <<'YAML'
+telemetry_url: "https://localhost:8081"
+api_key: "<agent api key>"          # correlic-admin create-api-key --type agent
+tls_ca_file: "/opt/correlic/certs/ca.crt"
+YAML
+correlic-hook setup        # registers it in ~/.claude/settings.json and ~/.cursor/hooks.json
+correlic-hook test         # sends one synthetic event and prints the backend's answer
+```
+
+Only commands, paths, URLs, names and ids are sent — never file contents,
+tool output or prompts. See `backend/docs/HOOKS.md`.
 
 ### From source
 
@@ -143,15 +174,23 @@ user's role (`admin` or `member`), and configuration changes require `admin`.
 
 ## Status
 
-- Linux agent: eBPF collectors for exec, exit, fork, file open, connect, bind,
-  unlink, setuid and DNS; tested on kernels 5.8 to 6.18.
+- Linux agent (amd64 and arm64): eBPF collectors for exec, exit, fork, file
+  open, connect, bind, unlink, setuid and DNS; tested on kernels 5.8 to 6.18.
 - Windows agent: ETW and Security audit log; block rules enforced.
-- macOS agent: best-effort preview. kqueue process events plus polling for
-  files and network, built from source; there are no signed or notarized
-  macOS builds and no Endpoint Security support, because both require a paid
-  Apple Developer Program membership that the project does not maintain. For
-  full coverage on a Mac, run the coding agent inside a Linux VM or container
-  with the Linux agent, and run the backend and dashboard with Docker.
+- macOS agent: best-effort preview, built from source. On macOS 13 or newer
+  it gets Endpoint Security process and file events with real PIDs through
+  Apple's own `/usr/bin/eslogger` (run as root with Full Disk Access; no
+  Apple Developer account needed); otherwise kqueue process events plus
+  polling for files. Network stays on lsof polling and there is no DNS.
+  There are no signed or notarized macOS builds and no native Endpoint
+  Security client, because both require a paid Apple Developer Program
+  membership that the project does not maintain. For full coverage on a Mac,
+  run the coding agent inside a Linux VM or container with the Linux agent
+  (on Apple Silicon that VM is arm64, which the Linux agent supports), and
+  run the backend and dashboard with Docker.
+- AI tool hooks: `correlic-hook` for Claude Code and Cursor on Linux, macOS
+  and Windows; records every tool call as an `ai_tool_call` event and denies
+  calls that match block rules. See `backend/docs/HOOKS.md`.
 - Detection: 13 AI-gated rules and 11 chain patterns; see
   `backend/docs/DETECTION_ENGINE.md`.
 
