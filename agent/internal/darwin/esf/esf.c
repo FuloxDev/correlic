@@ -146,10 +146,10 @@ correlic_es_client_t *correlic_es_new_client(void *go_chan, char **out_err) {
                     *out_err = strdup("not running as root");
                     break;
                 case ES_NEW_CLIENT_RESULT_ERR_NOT_PERMITTED:
-                    *out_err = strdup("not permitted (TCC/SIP restriction)");
+                    *out_err = strdup("not permitted (grant the agent Full Disk Access in System Settings)");
                     break;
-                case ES_NEW_CLIENT_RESULT_ERR_ALREADY_ENABLED:
-                    *out_err = strdup("another ESF client already running");
+                case ES_NEW_CLIENT_RESULT_ERR_TOO_MANY_CLIENTS:
+                    *out_err = strdup("too many Endpoint Security clients on this host");
                     break;
                 default:
                     *out_err = strdup("es_new_client failed");
