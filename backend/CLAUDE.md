@@ -4,7 +4,7 @@
 Go API server. Receives telemetry from agents (Linux/macOS/Windows), applies intelligent sampling (90% reduction), runs 13 detection rules + 11 chain patterns, correlates incidents, stores events in PostgreSQL + Neo4j (optional), and serves 80+ API endpoints to the UI.
 
 ## Tech Stack
-- Go 1.24+, standard library `net/http` (`http.NewServeMux()`), pgx driver (via `database/sql`)
+- Go 1.26+, standard library `net/http` (`http.NewServeMux()`), pgx driver (via `database/sql`)
 - PostgreSQL 14+ (JSONB for event payloads)
 - Neo4j 5+ (optional — graph database for process trees + attack chains)
 - Env vars: `DATABASE_URL`, `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `MTLS_CA_FILE`, `ALLOW_API_KEY_AUTH`, `ENABLE_DEBUG_ENDPOINTS`, `CORRELIC_RATE_LIMIT_PER_MIN`, `LLM_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `FRONTEND_URL`

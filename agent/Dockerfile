@@ -2,7 +2,7 @@
 # Two-stage: generate eBPF objects, then build the Go binary
 
 # Build stage — needs clang for bpf2go
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \

@@ -17,17 +17,17 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: go build ./...
       - run: go vet ./...
-      # Pinned: staticcheck 2025.1 matches the Go 1.24 toolchain in go.mod.
-      # @latest requires a newer Go and makes GOTOOLCHAIN=auto download one on
-      # every run, which fails whenever the newest patch is not yet in the
-      # Go sum database.
-      - run: GOTOOLCHAIN=local go run honnef.co/go/tools/cmd/staticcheck@v0.6.1 ./...
+      # Pinned: staticcheck 2026.1 (v0.8.1) matches the Go 1.26 toolchain in
+      # go.mod. @latest can require a newer Go than go.mod and, with
+      # GOTOOLCHAIN=auto, download one on every run; that fails whenever the
+      # newest patch is not yet in the Go sum database.
+      - run: GOTOOLCHAIN=local go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
       - run: go test ./...
 
   agent:
@@ -38,7 +38,7 @@ jobs:
         working-directory: agent
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
@@ -64,7 +64,7 @@ jobs:
         working-directory: ui
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -84,7 +84,7 @@ jobs:
         working-directory: ui-proxy
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm

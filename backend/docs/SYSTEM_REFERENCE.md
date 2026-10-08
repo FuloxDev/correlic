@@ -11,8 +11,8 @@ Correlic is a distributed security observability platform that monitors AI codin
 
 | Repo | Language | Purpose |
 |------|----------|---------|
-| `backend/` | Go 1.24+ | API server — event ingestion, detection engine, incident correlation, 80+ API endpoints |
-| `agent/` | Go 1.25+ | Kernel telemetry collector — eBPF (Linux), ETW (Windows), kqueue + polling (macOS, preview) |
+| `backend/` | Go 1.26+ | API server — event ingestion, detection engine, incident correlation, 80+ API endpoints |
+| `agent/` | Go 1.26+ | Kernel telemetry collector — eBPF (Linux), ETW (Windows), kqueue + polling (macOS, preview) |
 | `ui/` | Next.js 16 / React 19 / TypeScript | Web dashboard — findings, incidents, baselines, block rules, AI chat |
 | `correlic-ui-proxy/` | Node.js | HTTPS reverse proxy — TLS termination, routes /api/* → backend, /* → UI |
 

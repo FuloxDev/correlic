@@ -4,7 +4,7 @@
 Runs on monitored hosts. On Linux it loads eBPF programs into the kernel, reads events from ring buffers, parses/enriches them, attributes them to AI process sessions and ships them to the backend over HTTPS (macOS: kqueue/FSEvents/ESF, Windows: ETW).
 
 ## Tech Stack
-- Go 1.25+, cilium/ebpf, libbpf headers, clang
+- Go 1.26+, cilium/ebpf, libbpf headers, clang
 - Requires Linux 5.8+ with BTF (`/sys/kernel/btf/vmlinux`)
 - Needs root / CAP_BPF (+ CAP_PERFMON)
 

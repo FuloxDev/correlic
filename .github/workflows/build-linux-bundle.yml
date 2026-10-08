@@ -33,7 +33,7 @@ jobs:
           echo "bare=${V#v}" >> "$GITHUB_OUTPUT"
 
       # ── Go binaries ────────────────────────────────────────────
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: |
@@ -61,7 +61,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.v.outputs.version }}" -o ../build/correlic-agent ./cmd/agent
 
       # ── UI + proxy (built here, not downloaded) ────────────────
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -158,7 +158,7 @@ jobs:
       - name: Checksums
         run: sha256sum correlic-linux-${{ steps.v.outputs.version }}.tar.gz correlic_*.deb correlic-*.rpm > SHA256SUMS-linux.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: correlic-linux-${{ steps.v.outputs.version }}
           path: |

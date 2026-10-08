@@ -164,7 +164,7 @@ See `docs/LINUX_AGENT.md`, `docs/WINDOWS_AGENT.md`, `docs/MACOS_AGENT.md` for pl
 | `mcp` | `cmd/mcp/main.go` | Model Context Protocol server (LLM-native interface) |
 
 **Technology Stack:**
-- Go 1.24+
+- Go 1.26+
 - Standard library `net/http` (router: `http.NewServeMux()`)
 - pgx database driver (via `database/sql` wrapper)
 - PostgreSQL 14+ (JSONB for event payloads)

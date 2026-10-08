@@ -154,7 +154,7 @@ func (r *ExecRunner) Run(ctx context.Context) {
 - Local buffering on network failure
 
 ### Technology
-- **Language:** Go 1.21+
+- **Language:** Go 1.26+
 - **eBPF library:** cilium/ebpf
 - **HTTP client:** net/http with TLS
 
@@ -260,7 +260,7 @@ func (s *Sampler) ShouldKeep(evt *event.Event) bool {
 - `/api/v1/incidents` - Incident management
 
 ### Technology
-- **Language:** Go 1.21+
+- **Language:** Go 1.26+
 - **Database:** PostgreSQL 14+ with JSONB
 - **Router:** standard library `net/http` (`http.NewServeMux()`)
 - **Driver:** pgx

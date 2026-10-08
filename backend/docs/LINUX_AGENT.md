@@ -260,7 +260,7 @@ All detection rules work identically on Linux and Windows thanks to path normali
 ### Requirements
 - Linux 5.8+ with BTF (`/sys/kernel/btf/vmlinux`)
 - Root or `CAP_BPF` + `CAP_PERFMON` + `CAP_SYS_ADMIN` capabilities
-- Go 1.25+ and clang/llvm/libbpf-dev (build time)
+- Go 1.26+ and clang/llvm/libbpf-dev (build time)
 
 ### Running
 The agent reads one YAML file, located by `CORRELIC_CONFIG` or `--config`

@@ -19,7 +19,7 @@ ARG VERSION=dev
 # ============================================================
 # Stage 1: Build backend Go binaries
 # ============================================================
-FROM golang:1.24-alpine AS builder-backend
+FROM golang:1.26-alpine AS builder-backend
 
 RUN apk add --no-cache git
 
@@ -35,7 +35,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /correlic
 # ============================================================
 # Stage 2: Build agent Go binary (needs eBPF toolchain)
 # ============================================================
-FROM golang:1.25-bookworm AS builder-agent
+FROM golang:1.26-bookworm AS builder-agent
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang llvm libbpf-dev linux-headers-generic \
