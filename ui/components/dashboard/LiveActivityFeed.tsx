@@ -36,7 +36,7 @@ function formatTimeAgo(ts: string): string {
 
 function eventToAction(evt: TelemetryEvent): AgentAction & { agentName: string } {
     const p = evt.payload || {}
-    const category = mapEventCategory(evt.event_type)
+    const category = mapEventCategory(evt.event_type, p)
     const action = buildEventLabel(evt.event_type, p)
     const detail = buildEventDetail(evt.event_type, p)
     const significance = mapEventSignificance(evt.event_type, p)
@@ -55,7 +55,19 @@ function eventToAction(evt: TelemetryEvent): AgentAction & { agentName: string }
     }
 }
 
-function mapEventCategory(eventType: string): string {
+/** ai_tool_call events (correlic-hook) carry their fields under context. */
+function hookContext(p: Record<string, unknown>): Record<string, unknown> {
+    const ctx = p.context
+    return ctx && typeof ctx === 'object' ? (ctx as Record<string, unknown>) : p
+}
+
+function mapEventCategory(eventType: string, p?: Record<string, unknown>): string {
+    if (eventType === 'ai_tool_call') {
+        const c = hookContext(p || {})
+        if (c.command) return 'command'
+        if (c.url) return 'network'
+        return 'file'
+    }
     if (eventType.startsWith('file_')) return 'file'
     if (eventType.startsWith('net_connect') || eventType === 'net_bind' || eventType === 'net_accept' || eventType === 'net_listen') return 'network'
     if (eventType === 'net_dns') return 'dns'
@@ -84,12 +96,22 @@ function buildEventLabel(eventType: string, p: Record<string, unknown>): string 
             return `Ran: ${p.cmdline as string || comm || fname}`
         case 'process_exit':
             return `Process exited ${comm}`
+        case 'ai_tool_call': {
+            const c = hookContext(p)
+            const what = (c.command as string) || (c.file_path as string) || (c.url as string) || (c.tool_name as string) || ''
+            const prefix = c.decision === 'blocked' ? 'Blocked AI tool call' : 'AI tool call'
+            return what ? `${prefix}: ${what}` : prefix
+        }
         default:
             return `${eventType} ${fname || comm}`
     }
 }
 
 function buildEventDetail(eventType: string, p: Record<string, unknown>): string {
+    if (eventType === 'ai_tool_call') {
+        const c = hookContext(p)
+        return (c.command as string) || (c.file_path as string) || (c.url as string) || ''
+    }
     const path = p.file_path as string || p.target_path as string || ''
     const cmdline = p.cmdline as string || ''
     if (cmdline) return cmdline
@@ -99,10 +121,11 @@ function buildEventDetail(eventType: string, p: Record<string, unknown>): string
 }
 
 function mapEventSignificance(eventType: string, p: Record<string, unknown>): number {
+    if (eventType === 'ai_tool_call' && hookContext(p).decision === 'blocked') return 5
     const path = (p.file_path as string || p.target_path as string || '').toLowerCase()
     if (path.includes('/.ssh/') || path.includes('/etc/shadow') || path.includes('/etc/passwd')) return 5
     if (path.includes('.env') || path.includes('credentials') || path.includes('.pem')) return 4
-    if (eventType === 'process_exec') return 3
+    if (eventType === 'process_exec' || eventType === 'ai_tool_call') return 3
     if (eventType === 'net_connect' || eventType === 'net_dns') return 2
     return 1
 }

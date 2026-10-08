@@ -16,6 +16,7 @@ const LANE_CONFIG: Record<string, { y: number; color: string; label: string }> =
     file_open:    { y: 1, color: '#06b6d4', label: 'File' },
     net_connect:  { y: 2, color: '#a855f7', label: 'Network' },
     net_dns:      { y: 2, color: '#8b5cf6', label: 'DNS' },
+    ai_tool_call: { y: 3, color: '#22c55e', label: 'AI tool call' },
 };
 
 const LANE_HEIGHT = 80;
