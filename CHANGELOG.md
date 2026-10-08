@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+Build
+- The backend and the agent require Go 1.26 (golang.org/x/crypto 0.57 and
+  golang.org/x/sys 0.48 need it); the Docker build stages use golang:1.26.
+- Dependency updates: pgx 5.11, neo4j-go-driver 5.28.5, ulid 2.1.2,
+  cilium/ebpf 0.22, React 19.3, framer-motion 14, Tailwind CSS 4.3,
+  tailwind-merge 3.7; GitHub Actions on their Node 24 releases.
+
 ## v1.0.1 (2026-10-08)
 
 Release: https://github.com/FuloxDev/correlic/releases/tag/v1.0.1

@@ -11,6 +11,11 @@ updates:
     schedule: { interval: weekly }
     groups:
       next: { patterns: ["next", "eslint-config-next", "react", "react-dom"] }
+    ignore:
+      # typescript-eslint (pulled in by eslint-config-next) rejects TypeScript 7;
+      # drop this once it supports TS >= 7.1 (typescript-eslint#10940).
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /ui-proxy
     schedule: { interval: weekly }

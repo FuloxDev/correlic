@@ -35,7 +35,7 @@ jobs:
           V="${{ inputs.version }}"; [ -z "$V" ] && V="${GITHUB_REF_NAME}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: |
@@ -51,7 +51,7 @@ jobs:
             && go build -ldflags="$LD" -o ../bundle/bin/correlic-admin.exe ./cmd/admin)
           (cd agent && go build -ldflags="$LD" -o ../bundle/bin/correlic-agent.exe ./cmd/agent)
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -112,7 +112,7 @@ jobs:
           (cd bundle && zip -qr ../correlic-windows-${{ steps.v.outputs.version }}.zip .)
           sha256sum correlic-windows-${{ steps.v.outputs.version }}.zip > SHA256SUMS-windows.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: correlic-windows-${{ steps.v.outputs.version }}
           path: |

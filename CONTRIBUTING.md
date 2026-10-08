@@ -6,10 +6,10 @@ each has its own toolchain notes in a `CLAUDE.md` next to its code.
 ## Building and testing
 
 ```bash
-# backend (Go 1.24+)
+# backend (Go 1.26+)
 cd backend && go build ./... && go vet ./... && go test ./...
 
-# agent (Go 1.25+, clang/llvm/libbpf-dev for the eBPF objects)
+# agent (Go 1.26+, clang/llvm/libbpf-dev for the eBPF objects)
 cd agent && go generate ./internal/ebpf/... && go build ./... && go test ./...
 
 # dashboard and proxy (Node 20+)

@@ -51,7 +51,7 @@ CAP_BPF).
 
 ## Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - clang/LLVM (18+ known good) and `libbpf` headers (`bpf/bpf_helpers.h`,
   `bpf/bpf_tracing.h`, `bpf/bpf_core_read.h`, `bpf/bpf_endian.h`)
 - A BTF-enabled kernel (`/sys/kernel/btf/vmlinux`) for `vmlinux.h` and for tests
