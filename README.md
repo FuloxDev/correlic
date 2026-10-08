@@ -88,6 +88,29 @@ The script downloads
 installs it and starts Correlic. To add only the agent on another Windows
 machine, run `install/install-agent.ps1` from the same release.
 
+### AI tool hooks (all platforms, no kernel driver needed)
+
+`correlic-hook` is a small binary that Claude Code and Cursor run on every
+tool call. It records the command, file or URL the AI used, with the session
+it belongs to, and can deny a call that matches one of your block rules before
+it runs. It needs no root and no kernel driver, so it also works on a Mac
+without a paid Apple account, where it is the only host-level signal; next to
+the Linux or Windows agent it adds exact attribution to the kernel events.
+
+```bash
+# the binary ships in bin/ next to correlic-agent (or: cd agent && go build ./cmd/correlic-hook)
+cat > ~/.correlic/hook.yaml <<'YAML'
+telemetry_url: "https://localhost:8081"
+api_key: "<agent api key>"          # correlic-admin create-api-key --type agent
+tls_ca_file: "/opt/correlic/certs/ca.crt"
+YAML
+correlic-hook setup        # registers it in ~/.claude/settings.json and ~/.cursor/hooks.json
+correlic-hook test         # sends one synthetic event and prints the backend's answer
+```
+
+Only commands, paths, URLs, names and ids are sent — never file contents,
+tool output or prompts. See `backend/docs/HOOKS.md`.
+
 ### From source
 
 Needs Go 1.26+, Node 22+ (the bundles ship Node 24 LTS), PostgreSQL, `openssl`, and on Linux `clang`, `llvm`
@@ -152,6 +175,9 @@ user's role (`admin` or `member`), and configuration changes require `admin`.
   Apple Developer Program membership that the project does not maintain. For
   full coverage on a Mac, run the coding agent inside a Linux VM or container
   with the Linux agent, and run the backend and dashboard with Docker.
+- AI tool hooks: `correlic-hook` for Claude Code and Cursor on Linux, macOS
+  and Windows; records every tool call as an `ai_tool_call` event and denies
+  calls that match block rules. See `backend/docs/HOOKS.md`.
 - Detection: 13 AI-gated rules and 11 chain patterns; see
   `backend/docs/DETECTION_ENGINE.md`.
 
