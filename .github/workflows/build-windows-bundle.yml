@@ -35,7 +35,7 @@ jobs:
           V="${{ inputs.version }}"; [ -z "$V" ] && V="${GITHUB_REF_NAME}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: |

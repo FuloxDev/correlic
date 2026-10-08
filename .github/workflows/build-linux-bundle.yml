@@ -33,7 +33,7 @@ jobs:
           echo "bare=${V#v}" >> "$GITHUB_OUTPUT"
 
       # ── Go binaries ────────────────────────────────────────────
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: |
