@@ -41,7 +41,7 @@ Correlic is a distributed security observability platform that monitors AI codin
 | `api` | `cmd/api/main.go` | HTTP server on :8080 — all endpoints |
 | `admin` | `cmd/admin/main.go` | CLI — migrations, org/user/key management |
 | `telemetry` | `cmd/telemetry/main.go` | Async telemetry processing plane |
-| `mcp` | `cmd/mcp/main.go` | Model Context Protocol server |
+| `mcp` | `cmd/mcp/main.go` | Model Context Protocol server for Claude Code / Claude Desktop / Cursor (`docs/MCP_SERVER.md`) |
 
 ## Tech Stack
 
@@ -64,7 +64,7 @@ Correlic is a distributed security observability platform that monitors AI codin
 7. AI attribution: track AI agent session UUIDs
 8. Detection engine: 13 rules evaluate → findings (baseline/exception/cooldown suppression)
 9. Chain correlation: 11 patterns → chain findings → incident clustering
-10. Notification: in-app + webhook/Slack delivery
+10. Notification: in-app + webhook / Slack / Discord / e-mail / syslog delivery
 ```
 
 ## Detection System
@@ -105,7 +105,7 @@ Correlic is a distributed security observability platform that monitors AI codin
 | `behavioral_baselines` | Learned normal behavior |
 | `block_rules` | Process termination rules |
 | `block_events` | Block execution log |
-| `notification_endpoints` | Webhook/Slack channel config |
+| `notification_endpoints` | Channel config (webhook, Slack, Discord, e-mail, syslog); secrets sealed |
 | `notifications` | In-app notification feed |
 | `notification_deliveries_v2` | External delivery queue |
 | `ai_system_profiles` | Layer 1 AI context |
@@ -166,7 +166,7 @@ Correlic is a distributed security observability platform that monitors AI codin
 | `internal/detection/ai_pack/` | 13 AI detection rules |
 | `internal/correlation/` | Event buffer, worker, window manager, process tree writer |
 | `internal/incident/` | Incident correlator, store, context assembler |
-| `internal/notification/` | Manager, delivery worker, webhook/Slack senders |
+| `internal/notification/` | Manager, delivery worker, webhook / Slack / Discord / e-mail / syslog senders, config validation |
 | `internal/ai/intelligence/` | 3-layer context: profile, rollups, patterns, worker |
 | `internal/ai/provider/` | BYOK LLM providers (OpenAI, Anthropic, Gemini, Groq) |
 | `internal/ai/dossier/` | Pre-computed LLM context for incidents |
@@ -184,7 +184,8 @@ Correlic is a distributed security observability platform that monitors AI codin
 | `internal/model/` | Data models |
 | `internal/config/` | Environment loading |
 | `internal/service/` | Business logic (agent inventory) |
-| `internal/mcp/` | Model Context Protocol integration |
+| `internal/mcp/` | MCP server (stdio JSON-RPC), REST client, tool catalogue (`docs/MCP_SERVER.md`) |
+| `internal/secrets/` | AES-256-GCM cipher under `LLM_ENCRYPTION_KEY` for stored secrets |
 
 ## Agent Package Map
 

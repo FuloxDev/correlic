@@ -16,6 +16,17 @@ All endpoints are served on `:8080` over TLS (or plain HTTP in dev mode).
 
 ---
 
+## 0. MCP server
+
+The same API backs `correlic-mcp`, the Model Context Protocol server for
+Claude Code, Claude Desktop and Cursor (`cmd/mcp`): its tools call
+`/agents`, `/agents/activity`, `/api/v1/findings`, `/api/v1/incidents`,
+`/api/v1/incidents/{id}`, `/ai/proof`, `/network/summary`, `/ports/summary`
+and `/telemetry` with the configured API key, and `PATCH /api/v1/findings/{id}`
+only when started with `--allow-writes`. See `docs/MCP_SERVER.md`.
+
+---
+
 ## 1. Health and Debug
 
 | Method | Path | Auth | Description |

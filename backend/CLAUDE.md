@@ -7,7 +7,7 @@ Go API server. Receives telemetry from agents (Linux/macOS/Windows), applies int
 - Go 1.26+, standard library `net/http` (`http.NewServeMux()`), pgx driver (via `database/sql`)
 - PostgreSQL 14+ (JSONB for event payloads)
 - Neo4j 5+ (optional — graph database for process trees + attack chains)
-- Env vars: `DATABASE_URL`, `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `MTLS_CA_FILE`, `ALLOW_API_KEY_AUTH`, `ENABLE_DEBUG_ENDPOINTS`, `CORRELIC_RATE_LIMIT_PER_MIN`, `LLM_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `FRONTEND_URL`, `LISTEN_ADDR` (api, default `:8080`), `TELEMETRY_LISTEN_ADDR` (default `:8081`)
+- Env vars: `DATABASE_URL`, `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `MTLS_CA_FILE`, `ALLOW_API_KEY_AUTH`, `ENABLE_DEBUG_ENDPOINTS`, `CORRELIC_RATE_LIMIT_PER_MIN`, `LLM_ENCRYPTION_KEY` (also seals notification endpoint secrets), `GOOGLE_CLIENT_ID`, `FRONTEND_URL` (incident links in Discord/e-mail alerts), `LISTEN_ADDR` (api, default `:8080`), `TELEMETRY_LISTEN_ADDR` (default `:8081`)
 
 ## Directory Structure
 ```
@@ -37,14 +37,15 @@ correlic-backend/
 │   ├── detection/          # Detection engine (13 rules + 11 chain patterns)
 │   │   └── ai_pack/        # AI detection rules
 │   ├── incident/           # Incident clustering + context assembly
-│   ├── notification/       # Alert delivery (webhook, Slack, in-app)
+│   ├── notification/       # Alert delivery (in-app, webhook, Slack, Discord, e-mail, syslog)
+│   ├── secrets/            # AES-GCM cipher under LLM_ENCRYPTION_KEY for stored secrets
 │   ├── enrichment/         # Event enrichment (IP resolution)
 │   ├── query/              # Query services (PostgreSQL + Neo4j timeline)
 │   ├── service/            # Business logic (agent inventory)
 │   ├── maintenance/        # Data retention cleanup
 │   ├── model/              # Data models
 │   ├── config/             # Environment loading
-│   ├── mcp/                # MCP integration
+│   ├── mcp/                # MCP server + tool catalogue (correlic-mcp)
 │   └── tier/               # Tier/subscription logic
 ├── migrations/             # consolidated SQL migrations (schema, seed, incremental)
 ├── docs/                   # Architecture & design docs (start here for AI context)
@@ -64,6 +65,7 @@ correlic-backend/
 │   ├── WINDOWS_AGENT.md    # ETW + USN Windows agent
 │   ├── MACOS_AGENT.md      # ESF + kqueue macOS agent
 │   ├── HOOKS.md            # correlic-hook: Claude Code / Cursor tool hooks (ai_tool_call)
+│   ├── MCP_SERVER.md       # correlic-mcp: MCP server install, tools, security model, transcript
 │   ├── LAYERS.md           # 4-layer architecture overview
 │   ├── ROADMAP.md          # v0.3 status + planned features
 │   ├── ai_process_tracking.md  # AI process race condition handling
@@ -86,7 +88,7 @@ correlic-backend/
 | GET/POST | `/api/v1/exceptions` | Rule exception management |
 | GET | `/api/v1/detection/settings` | Per-org rule thresholds |
 | GET | `/api/v1/notifications` | In-app notifications |
-| GET/POST | `/api/v1/notification-endpoints` | Webhook/Slack config |
+| GET/POST | `/api/v1/notification-endpoints` | Channel config (webhook, Slack, Discord, e-mail, syslog) |
 | POST | `/auth/sessions` | Login (email/password) |
 | POST | `/auth/google` | Google OAuth sign-in |
 | GET | `/dashboard/stats` | Dashboard metrics |
