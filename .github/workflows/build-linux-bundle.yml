@@ -67,6 +67,7 @@ jobs:
             GOARCH=$ARCH go build -ldflags="$LD" -o ../build/$ARCH/correlic-api ./cmd/api
             GOARCH=$ARCH go build -ldflags="$LD" -o ../build/$ARCH/correlic-telemetry ./cmd/telemetry
             GOARCH=$ARCH go build -ldflags="$LD" -o ../build/$ARCH/correlic-admin ./cmd/admin
+            GOARCH=$ARCH go build -ldflags="$LD" -o ../build/$ARCH/correlic-mcp ./cmd/mcp
           done
 
       - name: Build agent
@@ -139,6 +140,7 @@ jobs:
             mkdir -p pkg/usr/bin pkg/etc/correlic pkg/usr/share/correlic pkg/var/lib/correlic/certs pkg/var/log/correlic pkg/lib/systemd/system
             cp build/$ARCH/correlic-api build/$ARCH/correlic-telemetry build/$ARCH/correlic-admin build/$ARCH/correlic-agent pkg/usr/bin/
             cp build/$ARCH/correlic-hook pkg/usr/bin/
+            cp build/$ARCH/correlic-mcp pkg/usr/bin/
             chmod 755 pkg/usr/bin/*
             cp install/gen-certs.sh pkg/etc/correlic/gen-certs.sh && chmod 755 pkg/etc/correlic/gen-certs.sh
             cp -r backend/migrations pkg/usr/share/correlic/migrations
@@ -159,6 +161,7 @@ jobs:
             mkdir -p bundle/bin bundle/certs bundle/logs
             cp build/$ARCH/correlic-api build/$ARCH/correlic-telemetry build/$ARCH/correlic-admin build/$ARCH/correlic-agent bundle/bin/
             cp build/$ARCH/correlic-hook bundle/bin/
+            cp build/$ARCH/correlic-mcp bundle/bin/
             cp -r build/$ARCH/node bundle/node
             cp -r build/ui bundle/ui
             cp -r build/ui-proxy bundle/ui-proxy

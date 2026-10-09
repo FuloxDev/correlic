@@ -397,6 +397,8 @@ fi
 chmod +x "$INSTALL_DIR/bin/"* 2>/dev/null || true
 # correlic-hook (Claude Code / Cursor hook) ships in bin/ next to the agent.
 chmod +x "$INSTALL_DIR/bin/correlic-hook" 2>/dev/null || true
+# correlic-mcp (MCP server for Claude Code / Claude Desktop / Cursor) ships in bin/ too.
+chmod +x "$INSTALL_DIR/bin/correlic-mcp" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/node/bin/node" 2>/dev/null || true
 mkdir -p "$INSTALL_DIR/logs"
 
