@@ -12,16 +12,53 @@
 #              stay out of C:\Correlic\.env. Everything except the two graph
 #              look-back rules (ai.data_exfiltration, ai.excessive_writes) and
 #              the Neo4j timeline works on PostgreSQL alone.
+#   -Version v1.2.3   Install that release instead of the latest one.
 # Environment (works with the irm | iex form):
-#   $env:CORRELIC_NEO4J = "no"   Same as -NoNeo4j.
+#   $env:CORRELIC_NEO4J = "no"        Same as -NoNeo4j.
+#   $env:CORRELIC_VERSION = "v1.2.3"  Same as -Version.
+#
+# Version: the installer asks the GitHub releases API for the latest tag and
+# installs it; -Version / CORRELIC_VERSION win, and when the API is
+# unreachable it falls back to the pinned $PinnedVersion below, printing
+# which of the three it chose.
 # ============================================================
 
 param(
-    [switch]$NoNeo4j
+    [switch]$NoNeo4j,
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "v1.0.1"
+# GitHub requires TLS 1.2; Windows PowerShell 5.1 does not always enable it.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+$PinnedVersion = "v1.0.1"   # pinned fallback — also the release the README links to
+$ReleasesApi = if ($env:CORRELIC_RELEASES_API) { $env:CORRELIC_RELEASES_API } else { "https://api.github.com/repos/FuloxDev/correlic/releases/latest" }
+
+# Returns the tag to install (always "v"-prefixed) and how it was chosen.
+function Resolve-CorrelicVersion {
+    param([string]$Requested)
+    if (-not $Requested -and $env:CORRELIC_VERSION) { $Requested = $env:CORRELIC_VERSION }
+    if ($Requested) {
+        return @{ Tag = ("v" + ($Requested -replace '^[vV]', '')); Source = "requested" }
+    }
+    try {
+        $prevProgress = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+        $release = Invoke-RestMethod -Uri $ReleasesApi -UseBasicParsing -TimeoutSec 10 `
+            -Headers @{ 'Accept' = 'application/vnd.github+json'; 'User-Agent' = 'correlic-installer' }
+        $ProgressPreference = $prevProgress
+        if ("$($release.tag_name)" -match '^v?\d+\.\d+\.\d+') {
+            return @{ Tag = ("v" + ("$($release.tag_name)" -replace '^[vV]', '')); Source = "latest GitHub release" }
+        }
+    } catch {
+        # fall through to the pinned version
+    }
+    return @{ Tag = $PinnedVersion; Source = "pinned fallback, GitHub releases API unavailable" }
+}
+
+$resolved = Resolve-CorrelicVersion -Requested $Version
+$Version = $resolved.Tag
+$VersionSource = $resolved.Source
 $InstallDir = "C:\Correlic"
 $BaseURL = if ($env:CORRELIC_BUNDLE_BASE_URL) { $env:CORRELIC_BUNDLE_BASE_URL } else { "https://github.com/FuloxDev/correlic/releases/download/$Version" }
 $BundleFile = "correlic-windows-$Version.zip"
@@ -113,6 +150,7 @@ if (-not $isAdmin) {
 
 Write-Step 1 "Checking prerequisites..."
 Write-OK "Running as Administrator"
+Write-OK "Installing Correlic $Version ($VersionSource)"
 if ($WithNeo4j) {
     Write-OK "Profile: PostgreSQL + Neo4j graph"
 } else {

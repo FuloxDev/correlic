@@ -16,10 +16,18 @@ set -euo pipefail
 #                     upgrade keeps whatever profile the existing .env has).
 # Environment:
 #   CORRELIC_NEO4J=no|yes   Same as the flags, for `curl | sudo -E bash`.
+#   CORRELIC_VERSION=1.2.3  Install that release instead of the latest one.
+#   CORRELIC_BUNDLE_URL     Download this bundle instead of the release asset.
+#
+# Version: the installer asks the GitHub releases API for the latest tag and
+# installs it; when CORRELIC_VERSION is set that wins, and when the API is
+# unreachable (no network, rate limit, proxy) it falls back to the pinned
+# VERSION below, printing which of the three it chose.
 # ============================================================
 
-VERSION="1.0.1"
+VERSION="1.0.1"   # pinned fallback — also the release the README links to
 INSTALL_DIR="/opt/correlic"
+RELEASES_API="${CORRELIC_RELEASES_API:-https://api.github.com/repos/FuloxDev/correlic/releases/latest}"
 # Target architecture. The amd64 bundle keeps its historical name
 # (correlic-linux-v<version>.tar.gz); other architectures carry a suffix
 # (correlic-linux-v<version>-arm64.tar.gz). Unsupported machines fail in step 1.
@@ -29,7 +37,11 @@ case "$MACHINE" in
   aarch64|arm64) ARCH="arm64"; BUNDLE_SUFFIX="-arm64" ;;
   *)             ARCH="";      BUNDLE_SUFFIX="" ;;
 esac
-BUNDLE_URL="${CORRELIC_BUNDLE_URL:-https://github.com/FuloxDev/correlic/releases/download/v${VERSION}/correlic-linux-v${VERSION}${BUNDLE_SUFFIX}.tar.gz}"
+# INSTALL_VERSION and BUNDLE_URL are set by resolve_version below, once the
+# options are parsed (CORRELIC_VERSION > latest GitHub release > VERSION).
+INSTALL_VERSION=""
+VERSION_SOURCE=""
+BUNDLE_URL=""
 TOTAL_STEPS=10
 CURRENT_STEP=0
 TEMP_FILE=""
@@ -187,13 +199,43 @@ case "$(echo "$NEO4J_CHOICE" | tr '[:upper:]' '[:lower:]')" in
 esac
 WITH_NEO4J=true
 
+# ── Version ──────────────────────────────────────────────────
+# Sets INSTALL_VERSION (no "v" prefix) and VERSION_SOURCE. The GitHub call
+# is best effort with a short timeout: any failure or an unexpected answer
+# means the pinned VERSION.
+resolve_version() {
+  if [ -n "${CORRELIC_VERSION:-}" ]; then
+    INSTALL_VERSION="${CORRELIC_VERSION#v}"
+    VERSION_SOURCE="CORRELIC_VERSION"
+    return
+  fi
+  local tag=""
+  if command -v curl &>/dev/null; then
+    tag=$(curl -fsSL --max-time 10 -H "Accept: application/vnd.github+json" "$RELEASES_API" 2>/dev/null \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1) || true
+  fi
+  case "$tag" in
+    v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*)
+      INSTALL_VERSION="${tag#v}"
+      VERSION_SOURCE="latest GitHub release"
+      return
+      ;;
+  esac
+  INSTALL_VERSION="$VERSION"
+  VERSION_SOURCE="pinned fallback, GitHub releases API unavailable"
+}
+
+resolve_version
+BUNDLE_URL="${CORRELIC_BUNDLE_URL:-https://github.com/FuloxDev/correlic/releases/download/v${INSTALL_VERSION}/correlic-linux-v${INSTALL_VERSION}${BUNDLE_SUFFIX}.tar.gz}"
+
 # ── Header ───────────────────────────────────────────────────
 
 echo ""
 echo -e "${BOLD}================================================${NC}"
-echo -e "${BOLD}  Correlic Installer v${VERSION}${NC}"
+echo -e "${BOLD}  Correlic Installer${NC}"
 echo -e "${BOLD}  Security Observability — Self-Hosted${NC}"
 echo -e "${BOLD}================================================${NC}"
+echo -e "  Installing Correlic ${BOLD}v${INSTALL_VERSION}${NC} (${VERSION_SOURCE})"
 
 # ==============================================================
 # 1. Check prerequisites
