@@ -3,12 +3,14 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/correlic/correlic-backend/internal/api/middleware"
 	"github.com/correlic/correlic-backend/internal/notification"
+	"github.com/correlic/correlic-backend/internal/secrets"
 	"github.com/google/uuid"
 )
 
@@ -17,14 +19,25 @@ type NotificationHandler struct {
 	notifStore    *notification.NotificationStore
 	endpointStore *notification.EndpointStore
 	deliveryStore *notification.DeliveryStore
+	// cipher seals endpoint secrets before they are stored; senders deliver
+	// test notifications with the same configuration as the worker.
+	cipher  *secrets.Cipher
+	senders *notification.Senders
 }
 
-// NewNotificationHandler creates a new notification handler.
-func NewNotificationHandler(notifStore *notification.NotificationStore, endpointStore *notification.EndpointStore, deliveryStore *notification.DeliveryStore) *NotificationHandler {
+// NewNotificationHandler creates a new notification handler. senders may be
+// nil, in which case a default set (no secret cipher, no dashboard link) is
+// used for test deliveries.
+func NewNotificationHandler(notifStore *notification.NotificationStore, endpointStore *notification.EndpointStore, deliveryStore *notification.DeliveryStore, cipher *secrets.Cipher, senders *notification.Senders) *NotificationHandler {
+	if senders == nil {
+		senders = notification.NewSenders(notification.SenderOptions{Cipher: cipher})
+	}
 	return &NotificationHandler{
 		notifStore:    notifStore,
 		endpointStore: endpointStore,
 		deliveryStore: deliveryStore,
+		cipher:        cipher,
+		senders:       senders,
 	}
 }
 
@@ -174,14 +187,15 @@ func (h *NotificationHandler) ListEndpoints(w http.ResponseWriter, r *http.Reque
 		Internal(w)
 		return
 	}
-	if endpoints == nil {
-		endpoints = []notification.Endpoint{}
+	redacted := make([]notification.Endpoint, 0, len(endpoints))
+	for _, e := range endpoints {
+		redacted = append(redacted, notification.Redacted(e))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"endpoints": endpoints,
-		"count":     len(endpoints),
+		"endpoints": redacted,
+		"count":     len(redacted),
 	})
 }
 
@@ -209,17 +223,23 @@ func (h *NotificationHandler) CreateEndpoint(w http.ResponseWriter, r *http.Requ
 		BadRequest(w, "name is required")
 		return
 	}
-	if body.ChannelType != "webhook" && body.ChannelType != "slack" {
-		BadRequest(w, "channel_type must be 'webhook' or 'slack'")
+	if !notification.IsChannelType(body.ChannelType) {
+		BadRequest(w, notification.ChannelTypesMessage)
 		return
 	}
 	if body.Config == nil {
 		body.Config = map[string]any{}
 	}
 
-	// Validate channel-specific config, including the SSRF guard on the URL.
-	if msg, ok := validateEndpointConfig(body.ChannelType, body.Config); !ok {
-		BadRequest(w, msg)
+	// Validate channel-specific config, including the SSRF guard on URLs,
+	// then seal the secrets so they are never stored in the clear.
+	if err := notification.ValidateConfig(body.ChannelType, body.Config); err != nil {
+		BadRequest(w, err.Error())
+		return
+	}
+	if err := notification.SealSecrets(h.cipher, body.ChannelType, body.Config); err != nil {
+		log.Printf("ERROR: seal notification endpoint secrets: %v", err)
+		Internal(w)
 		return
 	}
 
@@ -256,7 +276,7 @@ func (h *NotificationHandler) CreateEndpoint(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{
-		"endpoint": endpoint,
+		"endpoint": notification.Redacted(endpoint),
 	})
 }
 
@@ -303,13 +323,16 @@ func (h *NotificationHandler) UpdateEndpoint(w http.ResponseWriter, r *http.Requ
 		existing.Name = *body.Name
 	}
 	if body.ChannelType != nil {
-		if *body.ChannelType != "webhook" && *body.ChannelType != "slack" {
-			BadRequest(w, "channel_type must be 'webhook' or 'slack'")
+		if !notification.IsChannelType(*body.ChannelType) {
+			BadRequest(w, notification.ChannelTypesMessage)
 			return
 		}
 		existing.ChannelType = *body.ChannelType
 	}
 	if body.Config != nil {
+		// A config that omits a secret (or resends the redacted form) keeps
+		// the stored one; a new plaintext value replaces it.
+		notification.MergeSecrets(existing.ChannelType, existing.Config, body.Config)
 		existing.Config = body.Config
 	}
 	if body.MinSeverity != nil {
@@ -326,8 +349,13 @@ func (h *NotificationHandler) UpdateEndpoint(w http.ResponseWriter, r *http.Requ
 
 	// Re-run the config/URL validation whenever the channel or config changed.
 	if body.ChannelType != nil || body.Config != nil {
-		if msg, ok := validateEndpointConfig(existing.ChannelType, existing.Config); !ok {
-			BadRequest(w, msg)
+		if err := notification.ValidateConfig(existing.ChannelType, existing.Config); err != nil {
+			BadRequest(w, err.Error())
+			return
+		}
+		if err := notification.SealSecrets(h.cipher, existing.ChannelType, existing.Config); err != nil {
+			log.Printf("ERROR: seal notification endpoint secrets: %v", err)
+			Internal(w)
 			return
 		}
 	}
@@ -340,7 +368,7 @@ func (h *NotificationHandler) UpdateEndpoint(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"endpoint": existing,
+		"endpoint": notification.Redacted(*existing),
 	})
 }
 
@@ -405,6 +433,7 @@ func (h *NotificationHandler) TestEndpoint(w http.ResponseWriter, r *http.Reques
 			"title":            "Test Notification",
 			"summary":          "This is a test notification from Correlic to verify your endpoint configuration.",
 			"host_id":          "test-host",
+			"category":         "test",
 			"mitre_techniques": []string{"T0000"},
 			"finding_count":    1,
 		},
@@ -412,20 +441,13 @@ func (h *NotificationHandler) TestEndpoint(w http.ResponseWriter, r *http.Reques
 
 	// Stored endpoints predate the SSRF guard or may have been re-pointed by
 	// DNS since: validate again before contacting anything.
-	if msg, ok := validateEndpointConfig(endpoint.ChannelType, endpoint.Config); !ok {
-		BadRequest(w, msg)
+	if err := notification.ValidateConfig(endpoint.ChannelType, endpoint.Config); err != nil {
+		BadRequest(w, err.Error())
 		return
 	}
 
-	var sendErr error
-	switch endpoint.ChannelType {
-	case "webhook":
-		sender := notification.NewWebhookSender()
-		sendErr = sender.Send(r.Context(), *endpoint, testPayload)
-	case "slack":
-		sender := notification.NewSlackSender()
-		sendErr = sender.Send(r.Context(), *endpoint, testPayload)
-	default:
+	sendErr := h.senders.Send(r.Context(), *endpoint, testPayload)
+	if errors.Is(sendErr, notification.ErrUnsupportedChannel) {
 		BadRequest(w, "unsupported channel type")
 		return
 	}
@@ -442,30 +464,6 @@ func (h *NotificationHandler) TestEndpoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"ok": true})
-}
-
-// validateEndpointConfig checks the channel-specific config of a notification
-// endpoint and runs the outbound URL guard. It returns a client-safe message
-// and false on failure.
-func validateEndpointConfig(channelType string, config map[string]any) (string, bool) {
-	var key, rawURL string
-	switch channelType {
-	case "webhook":
-		key = "url"
-	case "slack":
-		key = "webhook_url"
-	default:
-		return "channel_type must be 'webhook' or 'slack'", false
-	}
-	rawURL, _ = config[key].(string)
-	if strings.TrimSpace(rawURL) == "" {
-		return channelType + " config requires '" + key + "'", false
-	}
-	if err := notification.ValidateOutboundURL(rawURL); err != nil {
-		log.Printf("WARN: notification endpoint %s rejected: %v", key, err)
-		return key + " rejected: " + notification.CategorizeSendError(err), false
-	}
-	return "", true
 }
 
 // --- Delivery History ---

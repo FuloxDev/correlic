@@ -1,0 +1,172 @@
+name: Security
+
+# Static analysis and dependency scanning for every component:
+#   * CodeQL for Go (backend + agent, traced manual build so the generated
+#     eBPF objects exist) and JavaScript/TypeScript (dashboard + proxy).
+#   * govulncheck for the two Go modules: reports known vulnerabilities that
+#     are reachable from this code, not every advisory in the module graph.
+#   * Trivy filesystem scan of the repository (dependency vulnerabilities and
+#     Dockerfile/IaC misconfigurations).
+#   * Dependency review on pull requests (new dependencies with known
+#     advisories).
+# OpenSSF Scorecard runs in its own workflow (scorecard.yml): its publishing
+# API rejects workflows with top-level env/defaults or other jobs that hold
+# id-token: write.
+#
+# Day-one policy: CodeQL and Trivy only upload results to the Security tab
+# (code scanning) and never fail. govulncheck and dependency review are the
+# only jobs that can fail, and only on a known vulnerability in a dependency
+# (reachable code for govulncheck, newly added for dependency review), never
+# on style or pre-existing findings.
+#
+# Third-party actions are pinned to a release tag; once the Scorecard run is
+# green they are candidates for SHA pinning (Dependabot's github-actions
+# updates keep SHA pins current).
+
+# Dependency review (actions/dependency-review-action) is not included: it
+# requires the Dependency graph to be enabled in the repository settings
+# (Settings > Security > Code security). Dependabot, govulncheck and Trivy
+# cover dependency advisories in the meantime.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'   # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # upload results to code scanning
+      packages: read          # CodeQL query packs from GHCR
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Go is a compiled language: the agent needs clang/libbpf and
+          # `go generate` before it builds, so the build is run here
+          # explicitly (build-mode manual) and CodeQL traces it.
+          - language: go
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        if: matrix.language == 'go'
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache-dependency-path: |
+            backend/go.sum
+            agent/go.sum
+
+      - name: Install eBPF toolchain
+        if: matrix.language == 'go'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-headers-generic
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+
+      - name: Build the Go modules (traced by CodeQL)
+        if: matrix.language == 'go'
+        run: |
+          (cd agent && go generate ./internal/ebpf/... && go build ./...)
+          (cd backend && go build ./...)
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+          # A pull request from a fork has a read-only token and cannot
+          # upload; the analysis itself still runs.
+          upload: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'never' || 'always' }}
+
+  govulncheck:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [backend, agent]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Install eBPF toolchain
+        if: matrix.module == 'agent'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-headers-generic
+
+      - name: Generate eBPF objects
+        if: matrix.module == 'agent'
+        run: go generate ./internal/ebpf/...
+
+      # Exit status 3 (and a failed job) only when a known vulnerability is
+      # reachable from this module's code; advisories in unreachable code are
+      # printed as informational. GOTOOLCHAIN=local keeps `go run` from
+      # downloading a newer toolchain on every run (see the staticcheck note
+      # in ci.yml); pin govulncheck to a version if @latest ever requires a
+      # Go newer than go.mod.
+      - name: govulncheck
+        run: GOTOOLCHAIN=local go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  trivy-fs:
+    name: Trivy (repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # upload results to code scanning
+    steps:
+      - uses: actions/checkout@v7
+
+      # Dependency vulnerabilities (go.mod, package-lock.json) and
+      # misconfigurations (Dockerfiles, compose file). Informational:
+      # exit-code 0; the results land in the Security tab under trivy-fs.
+      - name: Scan the repository with Trivy
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: '0'
+
+      - name: Upload Trivy results to code scanning
+        # A pull request from a fork has a read-only token and cannot upload.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+

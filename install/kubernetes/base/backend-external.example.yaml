@@ -1,0 +1,38 @@
+# Optional — not part of the kustomization. Agents on hosts outside the
+# cluster need to reach both backend planes directly (mTLS end to end, no
+# HTTP Ingress in between). This exposes them with LoadBalancer services;
+# use NodePort or an L4 passthrough instead if that fits your cluster.
+#
+# Before the first apply, put the external address(es) in
+# CERT_EXTRA_SANS (ConfigMap) so the server certificate is valid for them,
+# and set AGENT_BACKEND_URL / AGENT_TELEMETRY_URL so the generated
+# agent.yaml points at them.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api-external
+  labels:
+    app.kubernetes.io/name: backend-api
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: backend-api
+  ports:
+    - name: https
+      port: 8080
+      targetPort: https
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-tel-external
+  labels:
+    app.kubernetes.io/name: backend-tel
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: backend-tel
+  ports:
+    - name: https
+      port: 8081
+      targetPort: https

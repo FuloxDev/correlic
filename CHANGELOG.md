@@ -89,6 +89,85 @@ Linux arm64
   objects into the runner's kernel; `CORRELIC_BPF_LOAD_REQUIRED=1` makes the
   load test fail instead of skipping when BTF or privileges are missing.
 
+Supply chain and security scanning
+- Container images are signed by digest with Sigstore keyless signing
+  (`cosign sign --recursive`; identity `release-images.yml`, issuer GitHub
+  OIDC, recorded in Rekor), carry SLSA provenance (`provenance: mode=max`)
+  and a BuildKit SBOM in the image index, and get one syft SPDX SBOM per
+  platform attached with `cosign attest --type spdxjson`. The workflow
+  verifies the signature and the attestations before it finishes and scans
+  each pushed image with Trivy (SARIF to the Security tab, non-blocking).
+- Release assets: every tar.gz, .deb, .rpm, zip and the `SHA256SUMS-*.txt`
+  files are signed with `cosign sign-blob` and published with a
+  `<asset>.sigstore.json` bundle; syft writes `<asset>.spdx.json` for every
+  bundle and package tree, listed in the signed checksum file. Both bundle
+  workflows verify their own signatures with `cosign verify-blob` before
+  uploading. `SHA256SUMS-linux.txt` now also covers the apt/yum repo
+  tarball. The optional GPG signing of .deb/.rpm is unchanged and documented.
+- New `.github/workflows/security.yml`: CodeQL for Go (traced manual build
+  with the eBPF objects generated) and JavaScript/TypeScript, `govulncheck`
+  for the backend and the agent, a Trivy filesystem scan (vulnerabilities and
+  misconfigurations) and `dependency-review-action` on pull requests; weekly,
+  on push to `main` and on pull requests. New
+  `.github/workflows/scorecard.yml` runs the OpenSSF Scorecard with
+  published results. Only `govulncheck` and the dependency review can fail,
+  and only on a known vulnerability.
+- Docs: `SECURITY.md` rewritten (supported versions, reporting, response
+  targets, scope, the security design with code paths, a hardening
+  checklist and "Verifying a release" with the exact cosign commands);
+  new `backend/docs/THREAT_MODEL.md` (assets, trust boundaries, four attacker
+  models, what is and is not detected, mitigations mapped to code, residual
+  risks) and `backend/docs/RELEASE_PROCESS.md` (cutting a release, what is
+  signed where, GPG key rotation, verification). `.github/CODEOWNERS` added;
+  `NOTICE.md` lists the Node.js 24 runtime the bundles actually ship.
+Integrations and detection coverage
+- Notification channels: Discord (channel webhook, one embed per incident
+  with severity colour, host, rule, MITRE and dashboard link; only
+  `discord.com` / `discordapp.com` webhook URLs are accepted), e-mail (SMTP
+  via `net/smtp`: STARTTLS by default and refused if the server does not
+  offer it, implicit TLS or none, SMTP PLAIN auth, plain-text plus minimal
+  HTML body, subject prefix) and syslog (RFC 5424 over UDP, TCP with
+  octet-counting framing, or TCP+TLS with an optional CA file; app-name
+  `correlic`, structured data with incident/finding ids, severity, host,
+  category, detection ids and MITRE techniques; JSON payload as the
+  message), next to webhook and Slack. The Settings page offers all five.
+- Endpoint secrets (SMTP password, webhook HMAC secret) are sealed with
+  `LLM_ENCRYPTION_KEY` (AES-256-GCM, shared `internal/secrets` package)
+  before storage and are no longer returned by the API; responses carry
+  `password_set` / `secret_set` instead, and an update that omits the secret
+  keeps the stored one. Existing webhook endpoints keep working with their
+  plaintext secret until it is re-entered. The telemetry plane reads
+  `LLM_ENCRYPTION_KEY` optionally and leaves deliveries it cannot decrypt to
+  the API plane. `FRONTEND_URL` gives Discord embeds and e-mails an absolute
+  incident link. The delivery payload gains `category`, `detection_ids` and
+  `finding_ids`.
+- Detection coverage: migration 006 seeds process patterns for OpenCode,
+  Sourcegraph Amp, AWS Kiro (IDE and kiro-cli), Google Jules Tools, Roo
+  Code, Charm Crush, Factory Droid, Qwen Code, JetBrains Junie, Augment
+  (`auggie` CLI), Moonshot Kimi CLI, Codebuff and Plandex, plus their vendor
+  API domains (and Trae's), bringing the seeded list to 43 tools. The
+  migration documents the false-positive risk of the short names (`amp`,
+  `roo`, `crush`, `jules`) and leaves `augment` out on purpose. The
+  dashboard shows display names for every seeded agent type.
+- MCP server: `correlic-mcp` (`backend/cmd/mcp`) now exposes
+  `correlic.findings.list`, `correlic.incidents.list`,
+  `correlic.incident.get`, `correlic.agents.activity`,
+  `correlic.agents.list` and, only with `--allow-writes`,
+  `correlic.finding.resolve`, next to the existing `ai.proof`,
+  `network.summary`, `ports.summary` and `telemetry.search` tools; every
+  tool has a precise description and JSON schema, API and argument errors
+  come back as MCP tool errors, `since` accepts durations (`30m`, `6h`,
+  `7d`), and the server connects to the API plane with mTLS
+  (`CORRELIC_TLS_*`, the hook's variable names) and `Authorization: Bearer`.
+  Protocol version negotiation follows the specification (a newer client
+  revision is answered with the server's instead of refused), `initialize`
+  carries usage instructions, and `--version` is supported. The binary ships
+  in the Linux and Windows bundles and the `.deb`/`.rpm`.
+  `backend/docs/MCP_SERVER.md` has the install steps for Claude Code, Claude
+  Desktop and Cursor, the tool reference, the security model and a captured
+  transcript; `scripts/dev/mcp_client.py` is a stdio JSON-RPC client for
+  trying the server without an MCP host.
+
 ## v1.0.1 (2026-10-08)
 
 Release: https://github.com/FuloxDev/correlic/releases/tag/v1.0.1

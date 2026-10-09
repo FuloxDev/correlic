@@ -19,8 +19,9 @@ service; every feature listed runs on your own machines.
   list), per-org thresholds, MITRE ATT&CK mapping. Rules run with or without
   Neo4j; the graph adds process-tree context when present.
 - **Backend** — Go, PostgreSQL (plus optional Neo4j), telemetry and API
-  planes, incident clustering, notifications (in-app, webhook, Slack), BYOK
-  LLM layer with streaming chat and pre-computed incident dossiers, MCP server.
+  planes, incident clustering, notifications (in-app, webhook, Slack,
+  Discord, e-mail, syslog), BYOK LLM layer with streaming chat and
+  pre-computed incident dossiers, MCP server (`correlic-mcp`, ten tools).
 - **Dashboard** — findings triage, incidents with AI chat, baselines, block
   rules, timeline, settings.
 - **Install paths** — all-in-one container, Docker Compose, Linux installer

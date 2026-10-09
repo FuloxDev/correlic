@@ -41,6 +41,10 @@ contents:
     dst: /usr/bin/correlic-hook
     file_info:
       mode: 0755
+  - src: pkg/usr/bin/correlic-mcp
+    dst: /usr/bin/correlic-mcp
+    file_info:
+      mode: 0755
   - src: pkg/lib/systemd/system/correlic-api.service
     dst: /lib/systemd/system/correlic-api.service
   - src: pkg/lib/systemd/system/correlic-telemetry.service

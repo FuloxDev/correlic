@@ -199,6 +199,32 @@ Two-level severity:
 
 All methods populate `evt.Process.Cmdline` from Neo4j index position 5 (JSON array or fallback string).
 
+## AI Tool Recognition
+
+Rules fire only for processes inside an AI agent tree. The agent decides
+membership with the pattern list it fetches from `GET /api/v1/ai/patterns`
+(table `ai_agent_patterns`, seeded by migrations 002/003/006; org-specific
+rows come from `POST /api/v1/ai/agent-patterns` or the Settings page).
+Matching is whole-token on the process name, executable path, `argv[0]` and
+argument basenames (`agent/internal/lineage/tracker.go`); patterns shorter
+than 3 characters or containing a dot are ignored for process matching.
+
+Seeded tools (46 rows covering 43 tools; `cursor`/`Cursor` and the legacy aliases count once):
+
+| Group | Patterns (`agent_type`) |
+|-------|-------------------------|
+| CLI agents | `claude`, `aider`, `cline`, `codex`, `gemini`, `goose`, `devin`, `opencode`, `amp`, `jules`, `roo`, `crush`, `droid`, `qwen`, `auggie` (augment), `kimi`, `codebuff`, `plandex` |
+| IDEs / forks / plugins | `cursor`, `windsurf`, `antigravity`, `zed`, `trae`, `pearai`, `void`, `kiro`, `junie` |
+| Editor extensions / language servers | `copilot`, `codeium`, `tabnine`, `continue`, `supermaven` |
+| Python agent frameworks | `langchain`, `langgraph`, `llamaindex`, `autogpt`, `autogen`, `crewai`, `openhands` (+ `opendevin`), `smolagents`, `agno` (+ `phidata`), `metagpt`, `babyagi` |
+
+The vendor API domains of these tools are seeded into `safe_domains_list`
+so model traffic is not reported by `ai.data_exfiltration`. Short or
+generic names (`amp`, `roo`, `crush`, `jules`) can match unrelated
+binaries or directories; migration `006_ai_patterns_2026q4.sql` documents
+each risk, and a pattern can be removed per org through
+`DELETE /api/v1/ai/agent-patterns/{id}`.
+
 ## AI Detection Rules (13 rules + 11 chain patterns)
 
 All rules gate on `IsAIProcess()` first — only fire for processes within an AI agent tree.
@@ -267,7 +293,7 @@ Context: `match_type` ("binary" or "cmdline_pattern"), `matched_pattern`.
 
 ### ai.excessive_writes (dynamic severity)
 
-**Triggers on:** `file_open` (scope fixed from dead `file_write`) | **Window:** 30s | **MITRE:** T1485, T1486
+**Triggers on:** `file_open` (scope fixed from dead `file_write`) | **Window:** 30s | **MITRE:** T1485, T1486 | **Needs Neo4j** (the 30 s look-back is a graph query; without `NEO4J_URI` the rule never fires)
 
 Path diversity scoring — classifies paths into project vs system scopes:
 - **Project scope:** `/home/*/`, `/tmp/`, relative paths
@@ -289,7 +315,7 @@ Thresholds are per-org tunable via `RuleSettingsStore`.
 
 ### ai.data_exfiltration (critical)
 
-**Triggers on:** `net_connect` | **Window:** 15 min | **MITRE:** T1041, T1567
+**Triggers on:** `net_connect` | **Window:** 15 min | **MITRE:** T1041, T1567 | **Needs Neo4j** (session / PID-tree look-back is a graph query; without `NEO4J_URI` the rule never fires)
 
 Detects read-then-exfiltrate: AI reads sensitive file → outbound connection.
 
@@ -413,7 +439,7 @@ Context: `signal_type="container_escape"`, `pattern="{file_path}"` (file); `sign
 
 ### ai.discovery (low)
 
-**Triggers on:** `process_exec` | **Window:** 60s | **MITRE:** T1082, T1083, T1057, T1016, T1049, T1033
+**Triggers on:** `process_exec` | **Window:** 60s | **MITRE:** T1082, T1083, T1057, T1016, T1049, T1033 | **Partially graph-dependent:** the scanner signal works on PostgreSQL alone; the burst count reads the graph look-back, so without `NEO4J_URI` it only sees the current command
 
 Detects AI agent reconnaissance and pre-attack enumeration. High-value active scanners (nmap, masscan, nikto, linpeas, pspy) fire immediately at high severity. Common discovery commands (whoami, id, ifconfig, ps, netstat, etc.) only fire when 3+ distinct recon binaries execute within a 60-second window. Severity escalates with the number of distinct commands.
 

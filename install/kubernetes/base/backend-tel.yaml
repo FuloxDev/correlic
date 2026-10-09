@@ -1,0 +1,105 @@
+# Telemetry plane (cmd/telemetry): agent ingestion on :8081. Client
+# certificates are verified when presented, so the kubelet can probe
+# /health and /readiness over HTTPS (certificate check skipped by the probe).
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-tel
+  labels:
+    app.kubernetes.io/name: backend-tel
+spec:
+  selector:
+    app.kubernetes.io/name: backend-tel
+  ports:
+    - name: https
+      port: 8081
+      targetPort: https
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-tel
+  labels:
+    app.kubernetes.io/name: backend-tel
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # the certs volume is ReadWriteOnce
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend-tel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend-tel
+        correlic.io/certs: "true"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  correlic.io/certs: "true"
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: telemetry
+          image: ghcr.io/fuloxdev/correlic-backend:v1.0.1
+          args: ["telemetry"]
+          envFrom:
+            - configMapRef:
+                name: correlic-config
+            - secretRef:
+                name: correlic-secrets
+          env:
+            - name: TELEMETRY_LISTEN_ADDR
+              value: ":8081"
+          ports:
+            - name: https
+              containerPort: 8081
+          startupProbe:
+            httpGet:
+              path: /health
+              port: https
+              scheme: HTTPS
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: https
+              scheme: HTTPS
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: https
+              scheme: HTTPS
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: certs
+          persistentVolumeClaim:
+            claimName: correlic-certs

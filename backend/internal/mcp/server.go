@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// ProtocolVersion is the MCP revision this server implements. Clients that
+// request a newer revision are answered with this one, as the specification
+// requires; the subset used here (initialize, tools/list, tools/call, ping)
+// is identical across revisions.
 const ProtocolVersion = "2024-11-05"
 
 type ServerInfo struct {
@@ -18,15 +22,36 @@ type ServerInfo struct {
 }
 
 type Server struct {
-	info        ServerInfo
-	tools       []Tool
-	callTool    func(name string, args map[string]any) (ToolResult, error)
-	mu          sync.Mutex
-	initialized bool
+	info         ServerInfo
+	instructions string
+	tools        []Tool
+	callTool     func(name string, args map[string]any) (ToolResult, error)
+	mu           sync.Mutex
+	initialized  bool
 }
 
 func NewServer(info ServerInfo, tools []Tool, callTool func(name string, args map[string]any) (ToolResult, error)) *Server {
 	return &Server{info: info, tools: tools, callTool: callTool}
+}
+
+// SetInstructions sets the text returned in the initialize result, which
+// clients show the model as guidance for using this server.
+func (s *Server) SetInstructions(text string) {
+	s.instructions = text
+}
+
+// Instructions is the guidance handed to MCP clients at initialize.
+func Instructions(allowWrites bool) string {
+	text := "Correlic is a runtime security monitor for AI coding agents. " +
+		"Start with correlic.agents.list to learn the host ids, correlic.agents.activity for what the agents did recently, " +
+		"correlic.findings.list / correlic.incidents.list for detections and correlic.incident.get for the full story of one incident. " +
+		"Timestamps are RFC 3339 UTC; `since` also accepts durations like 30m, 6h, 7d."
+	if allowWrites {
+		text += " correlic.finding.resolve changes finding status; confirm with the user before resolving."
+	} else {
+		text += " This server is read-only."
+	}
+	return text
 }
 
 type rpcRequest struct {
@@ -149,28 +174,17 @@ func (s *Server) handleInitialize(req *rpcRequest) rpcResponse {
 	}
 	_ = json.Unmarshal(req.Params, &params)
 
-	// Only support the documented protocol version for now.
-	if params.ProtocolVersion != "" && params.ProtocolVersion != ProtocolVersion {
-		return rpcResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &rpcError{
-				Code:    -32602,
-				Message: "Unsupported protocol version",
-				Data: map[string]any{
-					"supported": []string{ProtocolVersion},
-					"requested": params.ProtocolVersion,
-				},
-			},
-		}
-	}
-
+	// A client asking for another revision gets the one we implement and
+	// decides whether to continue (MCP lifecycle, version negotiation).
 	res := map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities": map[string]any{
 			"tools": map[string]any{"listChanged": false},
 		},
 		"serverInfo": s.info,
+	}
+	if s.instructions != "" {
+		res["instructions"] = s.instructions
 	}
 	return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: res}
 }

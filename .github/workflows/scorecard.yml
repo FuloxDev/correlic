@@ -1,0 +1,58 @@
+name: OpenSSF Scorecard
+
+# Runs the OpenSSF Scorecard checks (branch protection, pinned dependencies,
+# token permissions, dangerous workflow patterns, signed releases, ...) and
+# uploads the SARIF to the Security tab. publish_results makes the score
+# available at https://scorecard.dev/viewer/?uri=github.com/FuloxDev/correlic
+# and powers the README badge.
+#
+# Kept in its own file on purpose: the Scorecard publishing API rejects
+# workflows that have top-level env/defaults, workflow-level write
+# permissions, other jobs with id-token: write, or steps outside its
+# approved list (checkout, upload-artifact, upload-sarif, scorecard-action,
+# harden-runner). Do not add steps or jobs here.
+#
+# ossf/scorecard-action is pinned to a release tag (it has no major-version
+# alias); a candidate for SHA pinning once this run is green.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 6 * * 1'   # Mondays 06:41 UTC
+  # Re-run when branch protection changes, so the score reflects it.
+  branch_protection_rule:
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # upload the SARIF to code scanning
+      id-token: write         # publish_results: sign the result with the workflow's OIDC identity
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # The SARIF stays downloadable for a few days for debugging.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
+
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif

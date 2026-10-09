@@ -1,8 +1,8 @@
 # Closing the AI Agent Trust Gap: Kernel-Level Runtime Security Monitoring for AI Agents
 
-**Author:** Ayush Mishra
+**Author:** Ayush Mishra · ORCID [0009-0002-3116-1969](https://orcid.org/0009-0002-3116-1969)
 
-*Correlic — https://correlic.com*
+*Technical report, 2026 · Correlic · Source code: https://github.com/FuloxDev/correlic · Supplementary rule set: [paper-supplementary](https://github.com/FuloxDev/correlic/tree/main/paper-supplementary)*
 
 ---
 

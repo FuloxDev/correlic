@@ -181,7 +181,7 @@ struct event {
 TimestampNs: littleEndian.Uint64(data[24:32]), // Skip padding!
 ```
 
-See [eBPF String Fix Walkthrough](../correlic-backend/docs/ebpf-string-fix-walkthrough.md).
+See the string-handling notes in [LINUX_AGENT.md](LINUX_AGENT.md) and the agent's `internal/ebpf/BUILD.md`.
 
 #### Event Enrichment
 - Resolve `/proc/<pid>/exe` for full executable path

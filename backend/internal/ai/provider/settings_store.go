@@ -2,16 +2,11 @@ package provider
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"time"
 
+	"github.com/correlic/correlic-backend/internal/secrets"
 	"github.com/google/uuid"
 )
 
@@ -32,28 +27,29 @@ type LLMSettings struct {
 
 // SettingsStore manages LLM settings in the database.
 type SettingsStore struct {
-	db            *sql.DB
-	encryptionKey []byte // 32 bytes for AES-256
+	db     *sql.DB
+	cipher *secrets.Cipher
 }
 
 // NewSettingsStore creates a new settings store.
 //
-// The AES-256 key is derived as SHA-256(LLM_ENCRYPTION_KEY), so the whole env value
-// contributes to the key regardless of its length. Releases before 1.0.1 used the
-// first 32 bytes of the env value directly; provider keys encrypted by those builds
-// are NOT readable by this one (acceptable pre-release — re-enter the provider key
+// Provider keys are sealed with the shared secrets.Cipher (AES-256-GCM under
+// SHA-256(LLM_ENCRYPTION_KEY)). Releases before 1.0.1 used the first 32 bytes
+// of the env value directly; provider keys encrypted by those builds are NOT
+// readable by this one (acceptable pre-release — re-enter the provider key
 // in Settings).
 func NewSettingsStore(db *sql.DB, encryptionKey string) (*SettingsStore, error) {
-	// The value is hashed to a 32-byte AES-256 key, so any length works; a
-	// short value is still a weak key, so insist on a minimum.
-	if len(encryptionKey) < 16 {
-		return nil, fmt.Errorf("LLM_ENCRYPTION_KEY must be at least 16 characters (generate one with `openssl rand -hex 32`)")
+	c, err := secrets.NewCipher(encryptionKey)
+	if err != nil {
+		return nil, err
 	}
-	sum := sha256.Sum256([]byte(encryptionKey))
-	return &SettingsStore{
-		db:            db,
-		encryptionKey: sum[:],
-	}, nil
+	return &SettingsStore{db: db, cipher: c}, nil
+}
+
+// Cipher returns the cipher the store seals provider keys with, so other
+// stores (notification endpoints) can protect their secrets the same way.
+func (s *SettingsStore) Cipher() *secrets.Cipher {
+	return s.cipher
 }
 
 // SaveSettings saves or updates LLM settings for an organization.
@@ -265,54 +261,12 @@ func (s *SettingsStore) EnableProvider(ctx context.Context, orgID uuid.UUID, pro
 	return settings, nil
 }
 
-// encrypt encrypts plaintext using AES-256-GCM.
+// encrypt seals plaintext with the shared cipher.
 func (s *SettingsStore) encrypt(plaintext string) (string, error) {
-	block, err := aes.NewCipher(s.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return s.cipher.Encrypt(plaintext)
 }
 
-// decrypt decrypts ciphertext using AES-256-GCM.
+// decrypt opens a value produced by encrypt.
 func (s *SettingsStore) decrypt(ciphertext string) (string, error) {
-	data, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return "", err
-	}
-
-	block, err := aes.NewCipher(s.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-
-	nonce, ciphertextBytes := data[:nonceSize], data[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertextBytes, nil)
-	if err != nil {
-		return "", err
-	}
-
-	return string(plaintext), nil
+	return s.cipher.Decrypt(ciphertext)
 }

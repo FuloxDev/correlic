@@ -24,6 +24,9 @@ import {
     Lock,
     Radio,
     MessageSquare,
+    MessageCircle,
+    Mail,
+    Server,
     ExternalLink,
     Hash
 } from 'lucide-react';
@@ -71,6 +74,91 @@ const providerMeta: Record<string, { label: string; sub: string; icon: React.Rea
     xai: { label: 'xAI', sub: 'Grok', icon: <Bot className="w-5 h-5" />, color: '#8b5cf6' },
 };
 
+/* ── Notification channel types (mirrors notification.ChannelTypes in the backend) ── */
+type ChannelType = 'webhook' | 'slack' | 'discord' | 'email' | 'syslog';
+const channelMeta: Record<ChannelType, { label: string; icon: React.ReactNode; hint: string }> = {
+    webhook: { label: 'Webhook', icon: <Webhook className="w-4 h-4" />, hint: 'JSON POST with an optional HMAC-SHA256 signature' },
+    slack: { label: 'Slack', icon: <MessageSquare className="w-4 h-4" />, hint: 'Slack incoming webhook (Block Kit message)' },
+    discord: { label: 'Discord', icon: <MessageCircle className="w-4 h-4" />, hint: 'Discord channel webhook (embed with severity colour)' },
+    email: { label: 'Email', icon: <Mail className="w-4 h-4" />, hint: 'SMTP with STARTTLS, implicit TLS or none' },
+    syslog: { label: 'Syslog', icon: <Server className="w-4 h-4" />, hint: 'RFC 5424 over UDP, TCP or TCP+TLS' },
+};
+const channelTypes = Object.keys(channelMeta) as ChannelType[];
+
+const emptyEndpointForm = {
+    name: '', channel_type: 'webhook' as ChannelType, url: '', secret: '', min_severity: 'medium',
+    // email
+    smtp_host: '', smtp_port: '587', security: 'starttls', username: '', password: '', from: '', to: '', subject_prefix: '',
+    // syslog
+    host: '', port: '', protocol: 'udp', facility: 'local0', ca_file: '', insecure_skip_verify: false,
+};
+type EndpointForm = typeof emptyEndpointForm;
+
+/** Builds the channel-specific config the API expects from the form state. */
+function endpointConfigFromForm(f: EndpointForm): Record<string, unknown> {
+    switch (f.channel_type) {
+        case 'slack':
+        case 'discord':
+            return { webhook_url: f.url.trim() };
+        case 'email':
+            return {
+                smtp_host: f.smtp_host.trim(),
+                smtp_port: f.smtp_port.trim() ? Number(f.smtp_port) : undefined,
+                security: f.security,
+                username: f.username.trim() || undefined,
+                password: f.password || undefined,
+                from: f.from.trim(),
+                to: f.to.split(',').map(a => a.trim()).filter(Boolean),
+                subject_prefix: f.subject_prefix.trim() || undefined,
+            };
+        case 'syslog':
+            return {
+                host: f.host.trim(),
+                port: f.port.trim() ? Number(f.port) : undefined,
+                protocol: f.protocol,
+                facility: f.facility,
+                ca_file: f.protocol === 'tcp+tls' && f.ca_file.trim() ? f.ca_file.trim() : undefined,
+                insecure_skip_verify: f.protocol === 'tcp+tls' ? f.insecure_skip_verify : undefined,
+            };
+        default:
+            return { url: f.url.trim(), ...(f.secret ? { secret: f.secret } : {}) };
+    }
+}
+
+/** True when the form has what the backend requires for its channel type. */
+function endpointFormValid(f: EndpointForm): boolean {
+    if (!f.name.trim()) return false;
+    switch (f.channel_type) {
+        case 'email':
+            return !!f.smtp_host.trim() && !!f.from.trim() && !!f.to.trim();
+        case 'syslog':
+            return !!f.host.trim();
+        default:
+            return !!f.url.trim();
+    }
+}
+
+/** One-line summary of where an endpoint delivers to, for the channel list. */
+function endpointTarget(ep: NotificationEndpoint): string {
+    const c = ep.config || {};
+    switch (ep.channel_type) {
+        case 'slack':
+        case 'discord':
+            return (c.webhook_url as string) || '—';
+        case 'email': {
+            const to = Array.isArray(c.to) ? (c.to as string[]).join(', ') : String(c.to || '');
+            return `${c.smtp_host || '?'}:${c.smtp_port || 587} (${c.security || 'starttls'}) → ${to || '—'}`;
+        }
+        case 'syslog':
+            return `${c.protocol || 'udp'}://${c.host || '?'}:${c.port || 514} ${c.facility ? `(${c.facility})` : ''}`.trim();
+        default:
+            return (c.url as string) || '—';
+    }
+}
+
+const inputClass = 'w-full bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-xl px-4 py-2.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20 transition-all';
+const selectClass = inputClass + ' appearance-none';
+
 /* ── Severity badge helper ── */
 const severityBadge: Record<string, { bg: string; border: string; text: string }> = {
     critical: { bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-400' },
@@ -104,9 +192,8 @@ export default function Settings() {
 
     const [endpoints, setEndpoints] = useState<NotificationEndpoint[]>([]);
     const [showEndpointForm, setShowEndpointForm] = useState(false);
-    const [endpointForm, setEndpointForm] = useState({
-        name: '', channel_type: 'webhook' as string, url: '', secret: '', min_severity: 'medium',
-    });
+    const [endpointForm, setEndpointForm] = useState<EndpointForm>(emptyEndpointForm);
+    const [endpointError, setEndpointError] = useState<string | null>(null);
     const [testingEndpoint, setTestingEndpoint] = useState<string | null>(null);
     const [testResult, setTestResult] = useState<{ id: string, ok: boolean, error?: string } | null>(null);
 
@@ -230,20 +317,19 @@ export default function Settings() {
     }
 
     async function handleCreateEndpoint() {
-        if (!endpointForm.name || !endpointForm.url) return;
-        const config: Record<string, unknown> = endpointForm.channel_type === 'slack'
-            ? { webhook_url: endpointForm.url }
-            : { url: endpointForm.url, ...(endpointForm.secret ? { secret: endpointForm.secret } : {}) };
+        if (!endpointFormValid(endpointForm)) return;
+        setEndpointError(null);
         try {
             await createNotificationEndpoint({
-                name: endpointForm.name, channel_type: endpointForm.channel_type,
-                config, min_severity: endpointForm.min_severity,
+                name: endpointForm.name.trim(), channel_type: endpointForm.channel_type,
+                config: endpointConfigFromForm(endpointForm), min_severity: endpointForm.min_severity,
             });
-            setEndpointForm({ name: '', channel_type: 'webhook', url: '', secret: '', min_severity: 'medium' });
+            setEndpointForm(emptyEndpointForm);
             setShowEndpointForm(false);
             fetchData();
         } catch (err) {
             console.error('Failed to create endpoint:', err);
+            setEndpointError(err instanceof Error ? err.message : 'Failed to create channel');
         }
     }
 
@@ -591,7 +677,7 @@ export default function Settings() {
                                     </div>
                                     <div>
                                         <h2 className="text-lg font-semibold text-white">Notification Channels</h2>
-                                        <p className="text-xs text-gray-400">Receive incident alerts via webhook or Slack</p>
+                                        <p className="text-xs text-gray-400">Receive incident alerts via webhook, Slack, Discord, email or syslog</p>
                                     </div>
                                 </div>
                                 <motion.button
@@ -628,40 +714,48 @@ export default function Settings() {
                                                 </div>
                                                 <div>
                                                     <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Type</label>
-                                                    <div className="flex gap-2">
-                                                        {(['webhook', 'slack'] as const).map(type => (
+                                                    <div className="flex gap-2 flex-wrap">
+                                                        {channelTypes.map(type => (
                                                             <button
                                                                 key={type}
+                                                                type="button"
+                                                                title={channelMeta[type].hint}
                                                                 onClick={() => setEndpointForm({ ...endpointForm, channel_type: type })}
-                                                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border-2 transition-all duration-200 ${
+                                                                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium border-2 transition-all duration-200 ${
                                                                     endpointForm.channel_type === type
                                                                         ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
                                                                         : 'bg-[#0d1117]/60 border-white/[0.07] text-gray-400 hover:border-white/[0.14] hover:text-gray-200'
                                                                 }`}
                                                             >
-                                                                {type === 'webhook' ? <Webhook className="w-4 h-4" /> : <MessageSquare className="w-4 h-4" />}
-                                                                {type.charAt(0).toUpperCase() + type.slice(1)}
+                                                                {channelMeta[type].icon}
+                                                                {channelMeta[type].label}
                                                             </button>
                                                         ))}
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <div>
-                                                <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">
-                                                    {endpointForm.channel_type === 'slack' ? 'Slack Webhook URL' : 'Webhook URL'}
-                                                </label>
-                                                <div className="relative">
-                                                    <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
-                                                    <input
-                                                        type="url"
-                                                        value={endpointForm.url}
-                                                        onChange={e => setEndpointForm({ ...endpointForm, url: e.target.value })}
-                                                        placeholder={endpointForm.channel_type === 'slack' ? 'https://hooks.slack.com/services/...' : 'https://your-endpoint.com/webhook'}
-                                                        className="w-full pl-9 pr-4 py-2.5 text-sm bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-xl text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20 transition-all"
-                                                    />
+                                            {(endpointForm.channel_type === 'webhook' || endpointForm.channel_type === 'slack' || endpointForm.channel_type === 'discord') && (
+                                                <div>
+                                                    <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">
+                                                        {endpointForm.channel_type === 'slack' ? 'Slack Webhook URL' : endpointForm.channel_type === 'discord' ? 'Discord Webhook URL' : 'Webhook URL'}
+                                                    </label>
+                                                    <div className="relative">
+                                                        <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
+                                                        <input
+                                                            type="url"
+                                                            value={endpointForm.url}
+                                                            onChange={e => setEndpointForm({ ...endpointForm, url: e.target.value })}
+                                                            placeholder={
+                                                                endpointForm.channel_type === 'slack' ? 'https://hooks.slack.com/services/...'
+                                                                    : endpointForm.channel_type === 'discord' ? 'https://discord.com/api/webhooks/...'
+                                                                        : 'https://your-endpoint.com/webhook'
+                                                            }
+                                                            className={`${inputClass} pl-9`}
+                                                        />
+                                                    </div>
                                                 </div>
-                                            </div>
+                                            )}
 
                                             {endpointForm.channel_type === 'webhook' && (
                                                 <div>
@@ -669,14 +763,111 @@ export default function Settings() {
                                                     <div className="relative">
                                                         <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dim" />
                                                         <input
-                                                            type="text"
+                                                            type="password"
+                                                            autoComplete="off"
                                                             value={endpointForm.secret}
                                                             onChange={e => setEndpointForm({ ...endpointForm, secret: e.target.value })}
-                                                            placeholder="Used for X-Correlic-Signature verification"
-                                                            className="w-full pl-9 pr-4 py-2.5 text-sm bg-[#0d1117]/60 border-2 border-white/[0.07] rounded-xl text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/20 transition-all"
+                                                            placeholder="Used for X-Correlic-Signature verification; stored encrypted, never shown again"
+                                                            className={`${inputClass} pl-9`}
                                                         />
                                                     </div>
                                                 </div>
+                                            )}
+
+                                            {endpointForm.channel_type === 'email' && (
+                                                <div className="space-y-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                        <div className="sm:col-span-2">
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">SMTP Host</label>
+                                                            <input type="text" value={endpointForm.smtp_host} onChange={e => setEndpointForm({ ...endpointForm, smtp_host: e.target.value })} placeholder="smtp.example.com" className={inputClass} />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Port</label>
+                                                            <input type="number" min={1} max={65535} value={endpointForm.smtp_port} onChange={e => setEndpointForm({ ...endpointForm, smtp_port: e.target.value })} placeholder="587" className={inputClass} />
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Security</label>
+                                                            <select value={endpointForm.security} onChange={e => setEndpointForm({ ...endpointForm, security: e.target.value })} className={selectClass}>
+                                                                <option value="starttls">STARTTLS (587)</option>
+                                                                <option value="tls">Implicit TLS (465)</option>
+                                                                <option value="none">None (local relay)</option>
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Username (optional)</label>
+                                                            <input type="text" autoComplete="off" value={endpointForm.username} onChange={e => setEndpointForm({ ...endpointForm, username: e.target.value })} className={inputClass} />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Password</label>
+                                                            <input type="password" autoComplete="new-password" value={endpointForm.password} onChange={e => setEndpointForm({ ...endpointForm, password: e.target.value })} placeholder="Stored encrypted, never shown again" className={inputClass} />
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">From</label>
+                                                            <input type="email" value={endpointForm.from} onChange={e => setEndpointForm({ ...endpointForm, from: e.target.value })} placeholder="correlic@example.com" className={inputClass} />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">To (comma-separated)</label>
+                                                            <input type="text" value={endpointForm.to} onChange={e => setEndpointForm({ ...endpointForm, to: e.target.value })} placeholder="soc@example.com, oncall@example.com" className={inputClass} />
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Subject Prefix (optional)</label>
+                                                        <input type="text" maxLength={64} value={endpointForm.subject_prefix} onChange={e => setEndpointForm({ ...endpointForm, subject_prefix: e.target.value })} placeholder="[prod]" className={inputClass} />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {endpointForm.channel_type === 'syslog' && (
+                                                <div className="space-y-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                                                        <div className="sm:col-span-2">
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Collector Host</label>
+                                                            <input type="text" value={endpointForm.host} onChange={e => setEndpointForm({ ...endpointForm, host: e.target.value })} placeholder="syslog.internal" className={inputClass} />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Port</label>
+                                                            <input type="number" min={1} max={65535} value={endpointForm.port} onChange={e => setEndpointForm({ ...endpointForm, port: e.target.value })} placeholder={endpointForm.protocol === 'tcp+tls' ? '6514' : '514'} className={inputClass} />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Protocol</label>
+                                                            <select value={endpointForm.protocol} onChange={e => setEndpointForm({ ...endpointForm, protocol: e.target.value })} className={selectClass}>
+                                                                <option value="udp">UDP</option>
+                                                                <option value="tcp">TCP</option>
+                                                                <option value="tcp+tls">TCP + TLS</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                        <div>
+                                                            <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">Facility</label>
+                                                            <select value={endpointForm.facility} onChange={e => setEndpointForm({ ...endpointForm, facility: e.target.value })} className={selectClass}>
+                                                                {['local0', 'local1', 'local2', 'local3', 'local4', 'local5', 'local6', 'local7', 'auth', 'authpriv', 'daemon', 'security', 'user'].map(f => (
+                                                                    <option key={f} value={f}>{f}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                        {endpointForm.protocol === 'tcp+tls' && (
+                                                            <>
+                                                                <div>
+                                                                    <label className="text-xs text-dim mb-1.5 block uppercase tracking-wider">CA file on backend (optional)</label>
+                                                                    <input type="text" value={endpointForm.ca_file} onChange={e => setEndpointForm({ ...endpointForm, ca_file: e.target.value })} placeholder="/etc/correlic/syslog-ca.pem" className={inputClass} />
+                                                                </div>
+                                                                <label className="flex items-end gap-2 pb-2.5 text-xs text-gray-400 cursor-pointer select-none">
+                                                                    <input type="checkbox" checked={endpointForm.insecure_skip_verify} onChange={e => setEndpointForm({ ...endpointForm, insecure_skip_verify: e.target.checked })} className="accent-cyan-500" />
+                                                                    Skip certificate verification
+                                                                </label>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {endpointError && (
+                                                <p className="text-xs text-red-400 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />{endpointError}</p>
                                             )}
 
                                             <div className="flex items-center justify-between">
@@ -705,7 +896,7 @@ export default function Settings() {
                                                     whileHover={{ scale: 1.03 }}
                                                     whileTap={{ scale: 0.97 }}
                                                     onClick={handleCreateEndpoint}
-                                                    disabled={!endpointForm.name || !endpointForm.url}
+                                                    disabled={!endpointFormValid(endpointForm)}
                                                     className="px-5 py-2.5 bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 rounded-2xl text-sm font-semibold hover:bg-cyan-500/25 hover:shadow-lg hover:shadow-cyan-500/5 hover:border-cyan-500/50 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                                                 >
                                                     <Plus className="w-4 h-4" />
@@ -734,7 +925,7 @@ export default function Settings() {
                                                 <Bell className="w-10 h-10 text-cyan-400/30 mx-auto mb-3" />
                                             </motion.div>
                                             <p className="text-sm text-gray-400">No notification channels configured</p>
-                                            <p className="text-xs text-dim mt-1">Add a webhook or Slack channel to receive incident alerts</p>
+                                            <p className="text-xs text-dim mt-1">Add a webhook, Slack, Discord, email or syslog channel to receive incident alerts</p>
                                         </motion.div>
                                     ) : endpoints.map((ep) => {
                                         const sevStyle = severityBadge[ep.min_severity] || severityBadge.medium;
@@ -749,11 +940,8 @@ export default function Settings() {
                                                 className="group flex items-center justify-between bg-[#0d1117]/60 border border-white/[0.07] rounded-2xl px-4 py-3 hover:border-white/[0.14] hover:bg-white/[0.03] transition-all duration-200"
                                             >
                                                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                                                    <div className={`p-2 rounded-xl ${ep.enabled ? 'bg-cyan-500/10' : 'bg-white/5'}`}>
-                                                        {ep.channel_type === 'slack'
-                                                            ? <MessageSquare className={`w-4 h-4 ${ep.enabled ? 'text-cyan-400' : 'text-dim'}`} />
-                                                            : <Webhook className={`w-4 h-4 ${ep.enabled ? 'text-cyan-400' : 'text-dim'}`} />
-                                                        }
+                                                    <div className={`p-2 rounded-xl ${ep.enabled ? 'bg-cyan-500/10 text-cyan-400' : 'bg-white/5 text-dim'}`}>
+                                                        {(channelMeta[ep.channel_type as ChannelType] || channelMeta.webhook).icon}
                                                     </div>
                                                     <div className="min-w-0 flex-1">
                                                         <div className="flex items-center gap-2 flex-wrap">
@@ -763,8 +951,8 @@ export default function Settings() {
                                                                 {ep.min_severity}+
                                                             </span>
                                                         </div>
-                                                        <p className="text-xs text-dim mt-0.5 truncate">
-                                                            {(ep.channel_type === 'slack' ? ep.config.webhook_url as string : ep.config.url as string) || '—'}
+                                                        <p className="text-xs text-dim mt-0.5 truncate" title={endpointTarget(ep)}>
+                                                            {endpointTarget(ep)}
                                                         </p>
                                                     </div>
                                                 </div>

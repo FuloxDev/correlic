@@ -35,6 +35,7 @@ import (
 	"github.com/correlic/correlic-backend/internal/ingest"
 	"github.com/correlic/correlic-backend/internal/notification"
 	"github.com/correlic/correlic-backend/internal/query"
+	"github.com/correlic/correlic-backend/internal/secrets"
 	"github.com/correlic/correlic-backend/internal/service"
 	"github.com/correlic/correlic-backend/internal/storage"
 	"github.com/correlic/correlic-backend/internal/storage/eventstore"
@@ -243,13 +244,34 @@ func main() {
 
 	log.Println("Incident mapping enabled")
 
+	// LLM_ENCRYPTION_KEY seals every stored secret: BYOK provider keys and
+	// the secrets of notification endpoints (SMTP passwords, webhook HMAC
+	// secrets). Required on this plane.
+	llmEncryptionKey := os.Getenv("LLM_ENCRYPTION_KEY")
+	if llmEncryptionKey == "" {
+		log.Fatal("LLM_ENCRYPTION_KEY is required: it encrypts stored LLM provider keys and notification secrets. " +
+			"Generate one with `openssl rand -hex 32`. Installs that previously relied on the " +
+			"built-in default must set it to \"correlic-default-key-change-in-prod!\" to keep " +
+			"existing provider settings readable, then rotate.")
+	}
+	secretCipher, err := secrets.NewCipher(llmEncryptionKey)
+	if err != nil {
+		log.Fatalf("LLM_ENCRYPTION_KEY invalid: %v", err)
+	}
+
 	// Phase 6: Notification engine
 	endpointStore := notification.NewEndpointStore(db)
 	notifStore := notification.NewNotificationStore(db)
 	deliveryStore := notification.NewDeliveryStore(db)
 	notifManager := notification.NewManager(notifStore, deliveryStore, endpointStore)
 	incidentCorrelator.SetNotificationEmitter(notifManager)
-	deliveryWorker := notification.NewDeliveryWorker(deliveryStore, endpointStore)
+	// FRONTEND_URL (also used for e-mail verification links below) gives
+	// Discord embeds and alert e-mails a link back to the incident.
+	notifSenders := notification.NewSenders(notification.SenderOptions{
+		Cipher:       secretCipher,
+		DashboardURL: os.Getenv("FRONTEND_URL"),
+	})
+	deliveryWorker := notification.NewDeliveryWorker(deliveryStore, endpointStore, notifSenders)
 	if deliveryWorker != nil {
 		go deliveryWorker.Start()
 		defer deliveryWorker.Stop()
@@ -386,14 +408,7 @@ func main() {
 	intelligenceStore := intelligence.NewStore(db)
 	patternLearner := intelligence.NewPatternLearner(intelligenceStore)
 
-	// BYOK LLM AI endpoints
-	llmEncryptionKey := os.Getenv("LLM_ENCRYPTION_KEY")
-	if llmEncryptionKey == "" {
-		log.Fatal("LLM_ENCRYPTION_KEY is required: it encrypts stored LLM provider keys. " +
-			"Generate one with `openssl rand -hex 32`. Installs that previously relied on the " +
-			"built-in default must set it to \"correlic-default-key-change-in-prod!\" to keep " +
-			"existing provider settings readable, then rotate.")
-	}
+	// BYOK LLM AI endpoints (LLM_ENCRYPTION_KEY was validated above).
 	// A bad key must not silently drop the AI routes (the agent fetches its
 	// pattern list from /api/v1/ai/patterns), so this is fatal.
 	if llmSettingsStore, err := provider.NewSettingsStore(db, llmEncryptionKey); err != nil {
@@ -619,7 +634,7 @@ func main() {
 	mux.Handle("/api/v1/enrich/ips", wrapAuthed(http.HandlerFunc(api.ResolveBulkIPs)))
 
 	// Notifications API (Phase 6)
-	notifHandler := api.NewNotificationHandler(notifStore, endpointStore, deliveryStore)
+	notifHandler := api.NewNotificationHandler(notifStore, endpointStore, deliveryStore, secretCipher, notifSenders)
 	// In-app notifications
 	mux.Handle("/api/v1/notifications", wrapAuthed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -761,9 +776,15 @@ func main() {
 		log.Println("debug endpoints enabled (admin only): /debug/vars, /debug/pprof/*")
 	}
 
-	log.Println("Correlic backend listening on :8080")
+	// LISTEN_ADDR overrides the bind address (default ":8080"); used by the
+	// integration tests to run several stacks side by side.
+	listenAddr := os.Getenv("LISTEN_ADDR")
+	if listenAddr == "" {
+		listenAddr = ":8080"
+	}
+	log.Printf("Correlic backend listening on %s", listenAddr)
 	srv := &http.Server{
-		Addr:              ":8080",
+		Addr:              listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

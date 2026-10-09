@@ -6,7 +6,19 @@
 # admin (API key + email/password) and a separate agent key, then starts
 # every service under supervisord. Everything that must survive a container
 # upgrade lives under /var/lib/correlic (the data volume).
+#
+# CORRELIC_GRAPH=on|off (default on, this image bundles Neo4j): "off" never
+# starts Neo4j and leaves NEO4J_URI unset, so both planes run on PostgreSQL
+# alone (no ai.data_exfiltration / ai.excessive_writes rules, no Neo4j
+# timeline). The Neo4j data directory is kept, so the graph can be switched
+# on again later.
 set -euo pipefail
+
+case "${CORRELIC_GRAPH:-on}" in
+    on|ON|yes|true|1)   GRAPH_ENABLED=1 ;;
+    off|OFF|no|false|0) GRAPH_ENABLED=0 ;;
+    *) echo "[correlic] CORRELIC_GRAPH must be on or off (got '${CORRELIC_GRAPH}')" >&2; exit 1 ;;
+esac
 
 CORRELIC_DIR="/opt/correlic"
 DATA_DIR="/var/lib/correlic"
@@ -135,6 +147,8 @@ CREDS
 
     su - postgres -c "$PG_BIN/pg_ctl -D $PG_DATA stop" 2>&1
 
+    # The initial password is set even with CORRELIC_GRAPH=off: it needs no
+    # running server, and it lets the graph be enabled later without a reset.
     log "[5/6] Initializing Neo4j..."
     neo4j-admin dbms set-initial-password "$NEO4J_PASSWORD" 2>&1 || true
     chown -R neo4j:neo4j "$NEO4J_DATA" 2>/dev/null || true
@@ -155,9 +169,14 @@ set -u
 ORG_ID="${ORG_ID:-$(cat "$DATA_DIR/.org_id" 2>/dev/null || echo "default")}"
 
 export DATABASE_URL="postgres://correlic:${DB_PASSWORD}@localhost:5432/correlic?sslmode=disable"
-export NEO4J_URI="bolt://localhost:7687"
-export NEO4J_USERNAME="neo4j"
-export NEO4J_PASSWORD="${NEO4J_PASSWORD}"
+if [ "$GRAPH_ENABLED" = "1" ]; then
+    export NEO4J_URI="bolt://localhost:7687"
+    export NEO4J_USERNAME="neo4j"
+    export NEO4J_PASSWORD="${NEO4J_PASSWORD}"
+else
+    # PostgreSQL-only profile: an unset NEO4J_URI disables the graph in both planes.
+    unset NEO4J_URI NEO4J_USERNAME NEO4J_PASSWORD
+fi
 export TLS_CERT_FILE="$CERTS_DIR/server.crt"
 export TLS_KEY_FILE="$CERTS_DIR/server.key"
 export MTLS_CA_FILE="$CERTS_DIR/ca.crt"
@@ -170,7 +189,7 @@ export CORRELIC_CONFIG="$CERTS_DIR/agent.yaml"
 if [ -n "${CORRELIC_API_URL:-}" ]; then export CORRELIC_API_URL; fi
 
 # ============================================================
-# Start supervisord (PostgreSQL + Neo4j auto-start)
+# Start supervisord (PostgreSQL auto-starts; Neo4j only with the graph on)
 # ============================================================
 log "Starting Correlic services..."
 /usr/bin/supervisord -c /etc/supervisor/conf.d/correlic.conf &
@@ -205,8 +224,14 @@ if [ ! -f "$CERTS_DIR/agent.yaml" ] && [ -n "${AGENT_API_KEY:-}" ]; then
     write_agent_config "$AGENT_API_KEY"
 fi
 
-log "Waiting for Neo4j..."
-wait_for_neo4j && log "Neo4j ready" || true
+if [ "$GRAPH_ENABLED" = "1" ]; then
+    log "Starting Neo4j..."
+    supervisorctl start neo4j 2>/dev/null
+    log "Waiting for Neo4j..."
+    wait_for_neo4j && log "Neo4j ready" || true
+else
+    log "Graph disabled (CORRELIC_GRAPH=off): Neo4j not started, running on PostgreSQL only"
+fi
 
 log "Starting backend services..."
 supervisorctl start backend-api backend-telemetry 2>/dev/null
@@ -234,6 +259,11 @@ log "  Correlic is running!"
 log "============================================"
 log "  Dashboard: http://localhost:3001"
 log "  Version:   ${CORRELIC_VERSION:-dev}"
+if [ "$GRAPH_ENABLED" = "1" ]; then
+    log "  Profile:   PostgreSQL + Neo4j graph (CORRELIC_GRAPH=on)"
+else
+    log "  Profile:   PostgreSQL only (CORRELIC_GRAPH=off)"
+fi
 if [ "$FIRST_RUN" = "1" ]; then
     log ""
     log "  Dashboard login (also stored in $CREDS_FILE):"

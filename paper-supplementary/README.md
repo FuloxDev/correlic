@@ -3,7 +3,7 @@
 Machine-readable artifacts accompanying the paper:
 
 **Closing the AI Agent Trust Gap: Kernel-Level Runtime Security Monitoring for AI Agents**
-Ayush Mishra · Correlic · ORCID [0009-0002-3116-1969](https://orcid.org/0009-0002-3116-1969) · arXiv preprint, 2026
+Ayush Mishra · Correlic · ORCID [0009-0002-3116-1969](https://orcid.org/0009-0002-3116-1969) · Technical report, 2026 ([Markdown](../backend/docs/paper/correlic-paper.md) · [PDF](../backend/docs/paper/correlic-paper.pdf))
 
 These YAML files are referenced in the paper and released to enable independent audit of the detection engine and reproduction of the evaluation setup described in §11.
 
@@ -38,18 +38,17 @@ If you find a pattern that should be included and is not — particularly in `ne
 ## Citation
 
 ```bibtex
-@misc{mishra2026correlic,
-  author       = {Ayush Mishra},
-  title        = {Closing the {AI} Agent Trust Gap: Kernel-Level Runtime Security Monitoring for {AI} Agents},
-  year         = {2026},
-  eprint       = {arXiv:XXXX.XXXXX},
-  archivePrefix = {arXiv},
-  primaryClass = {cs.CR},
-  note         = {Supplementary artifacts: \url{https://github.com/FuloxDev/correlic/tree/main/paper-supplementary}}
+@techreport{mishra2026correlic,
+  author      = {Ayush Mishra},
+  title       = {Closing the {AI} Agent Trust Gap: Kernel-Level Runtime Security Monitoring for {AI} Agents},
+  institution = {Correlic},
+  year        = {2026},
+  url         = {https://github.com/FuloxDev/correlic/blob/main/backend/docs/paper/correlic-paper.md},
+  note        = {Technical report. Supplementary artifacts: \url{https://github.com/FuloxDev/correlic/tree/main/paper-supplementary}}
 }
 ```
 
-*Replace `XXXX.XXXXX` with the arXiv paper ID once assigned.*
+The repository root also carries a `CITATION.cff`, so GitHub's "Cite this repository" button produces the same reference. If the report is later deposited with a DOI or preprint server, the identifier will be added here.
 
 ## License
 

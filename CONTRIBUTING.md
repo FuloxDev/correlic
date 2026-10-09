@@ -18,6 +18,9 @@ cd ui-proxy && npm ci && node --check index.js
 ```
 
 CI runs the same commands on every pull request (`.github/workflows/ci.yml`).
+`.github/workflows/security.yml` adds CodeQL, `govulncheck`, a Trivy scan and
+a dependency review; only `govulncheck` and the dependency review can fail a
+pull request, and only on a known vulnerability in a dependency.
 
 ## Pull requests
 
@@ -34,6 +37,15 @@ CI runs the same commands on every pull request (`.github/workflows/ci.yml`).
 correlation, incident and AI layers each have their own document in
 `backend/docs/`.
 
+## Security-relevant changes
+
+Read [`backend/docs/THREAT_MODEL.md`](backend/docs/THREAT_MODEL.md) before
+touching the ingest path, authentication, the agent's enforcer, the hook or
+a release workflow; it says which code paths carry which guarantee. Changes
+to `.github/workflows/` need a code owner review (`.github/CODEOWNERS`) and,
+for the release workflows, a dry run as described in
+[`backend/docs/RELEASE_PROCESS.md`](backend/docs/RELEASE_PROCESS.md).
+
 ## Reporting bugs
 
-Use the issue templates. For security problems see `SECURITY.md`.
+Use the issue templates. For security problems see [`SECURITY.md`](SECURITY.md).

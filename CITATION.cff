@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use Correlic in research or production, please cite it as below."
+title: "Correlic: kernel-level runtime security monitoring for AI coding agents"
+type: software
+authors:
+  - family-names: Mishra
+    given-names: Ayush
+    orcid: "https://orcid.org/0009-0002-3116-1969"
+repository-code: "https://github.com/FuloxDev/correlic"
+license: MIT
+version: "1.1.0"
+date-released: "2026-10-09"
+keywords:
+  - eBPF
+  - runtime security
+  - AI agents
+  - endpoint detection
+  - MITRE ATT&CK
+preferred-citation:
+  type: report
+  title: "Closing the AI Agent Trust Gap: Kernel-Level Runtime Security Monitoring for AI Agents"
+  authors:
+    - family-names: Mishra
+      given-names: Ayush
+      orcid: "https://orcid.org/0009-0002-3116-1969"
+  year: 2026
+  institution:
+    name: "Correlic"
+  url: "https://github.com/FuloxDev/correlic/blob/main/backend/docs/paper/correlic-paper.md"
+  notes: "Technical report. Supplementary artifacts: https://github.com/FuloxDev/correlic/tree/main/paper-supplementary"

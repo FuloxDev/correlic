@@ -1,0 +1,24 @@
+# Correlic on Kubernetes — PostgreSQL + Neo4j graph overlay.
+#
+#   kubectl apply -k install/kubernetes/overlays/graph
+#
+# Adds a single-replica Neo4j 5 Community StatefulSet and points both backend
+# planes at it (NEO4J_URI=bolt://neo4j:7687, password from secret.yaml). The
+# graph enables the ai.data_exfiltration and ai.excessive_writes rules and the
+# Neo4j timeline; everything else already runs on the PostgreSQL-only base.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - neo4j.yaml
+
+patches:
+  - path: backend-graph-env.yaml
+    target:
+      kind: Deployment
+      name: backend-api
+  - path: backend-graph-env.yaml
+    target:
+      kind: Deployment
+      name: backend-tel
