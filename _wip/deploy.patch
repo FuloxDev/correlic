@@ -1,0 +1,581 @@
+diff --git a/backend/internal/metrics/http.go b/backend/internal/metrics/http.go
+new file mode 100644
+index 0000000..4415c00
+--- /dev/null
++++ b/backend/internal/metrics/http.go
+@@ -0,0 +1,71 @@
++package metrics
++
++import (
++	"net/http"
++	"strconv"
++	"time"
++)
++
++// HTTP records correlic_http_request_duration_seconds for every request that
++// reaches next. Wrap the ServeMux with it directly (inside any header
++// middleware) so that the route label can be read from the pattern the mux
++// matched: the mux sets r.Pattern on the request before calling the handler,
++// so it is available here once next returns. Requests that match no route
++// are labelled "unmatched".
++func HTTP(next http.Handler) http.Handler {
++	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		start := time.Now()
++		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
++		next.ServeHTTP(rec, r)
++		route := r.Pattern
++		if route == "" {
++			route = "unmatched"
++		}
++		httpDuration.WithLabelValues(route, methodLabel(r.Method), strconv.Itoa(rec.status)).
++			Observe(time.Since(start).Seconds())
++	})
++}
++
++func methodLabel(m string) string {
++	switch m {
++	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
++		http.MethodDelete, http.MethodOptions:
++		return m
++	}
++	return "other"
++}
++
++// statusRecorder captures the status code. It forwards Flush so streaming
++// responses (SSE) keep working through the middleware and exposes Unwrap for
++// http.ResponseController.
++type statusRecorder struct {
++	http.ResponseWriter
++	status      int
++	wroteHeader bool
++}
++
++func (r *statusRecorder) WriteHeader(code int) {
++	if !r.wroteHeader {
++		r.status = code
++		r.wroteHeader = true
++	}
++	r.ResponseWriter.WriteHeader(code)
++}
++
++func (r *statusRecorder) Write(b []byte) (int, error) {
++	if !r.wroteHeader {
++		r.status = http.StatusOK
++		r.wroteHeader = true
++	}
++	return r.ResponseWriter.Write(b)
++}
++
++func (r *statusRecorder) Flush() {
++	if f, ok := r.ResponseWriter.(http.Flusher); ok {
++		f.Flush()
++	}
++}
++
++func (r *statusRecorder) Unwrap() http.ResponseWriter {
++	return r.ResponseWriter
++}
+diff --git a/backend/internal/metrics/metrics.go b/backend/internal/metrics/metrics.go
+new file mode 100644
+index 0000000..1733968
+--- /dev/null
++++ b/backend/internal/metrics/metrics.go
+@@ -0,0 +1,284 @@
++// Package metrics exposes the backend's Prometheus metrics. Both planes
++// (cmd/api and cmd/telemetry) register the same collectors on one dedicated
++// registry and serve it at GET /metrics behind the plane's usual
++// authentication.
++//
++// Cardinality is bounded on purpose: event types, severities, channels and
++// outcomes are normalised to fixed sets, rule ids come from the detection
++// registry (a fixed list compiled into the binary), HTTP routes are the
++// ServeMux patterns, and no metric carries a host, organisation, agent or
++// user identifier.
++package metrics
++
++import (
++	"net/http"
++	"sync"
++
++	"github.com/prometheus/client_golang/prometheus"
++	"github.com/prometheus/client_golang/prometheus/collectors"
++	"github.com/prometheus/client_golang/prometheus/promhttp"
++)
++
++// Namespace prefixes every metric name.
++const Namespace = "correlic"
++
++// Ingest results, the "result" label of correlic_ingest_events_total.
++const (
++	ResultReceived = "received" // counted for every event in a batch
++	ResultRejected = "rejected" // failed validation or storage
++	ResultDropped  = "dropped"  // sampled out
++	ResultKept     = "kept"     // stored
++)
++
++// Incident kinds, the "kind" label of correlic_incidents_created_total.
++const (
++	IncidentStandalone = "standalone"
++	IncidentChain      = "chain"
++)
++
++// Notification delivery outcomes, the "outcome" label of
++// correlic_notification_deliveries_total.
++const (
++	OutcomeQueued    = "queued"    // enqueued for an external endpoint
++	OutcomeDelivered = "delivered" // sent, or written as an in-app notification
++	OutcomeRetry     = "retry"     // failed, will be retried
++	OutcomeDead      = "dead"      // failed for the last time
++	OutcomeError     = "error"     // could not be enqueued or looked up
++)
++
++// Registry holds every Correlic collector plus the Go runtime and process
++// collectors. Handler serves it.
++var Registry = prometheus.NewRegistry()
++
++var (
++	ingestEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
++		Namespace: Namespace, Subsystem: "ingest", Name: "events_total",
++		Help: "Events seen by POST /ingest/events by canonical event type and result (received, rejected, dropped by the sampler, kept).",
++	}, []string{"type", "result"})
++
++	ingestBatch = prometheus.NewHistogram(prometheus.HistogramOpts{
++		Namespace: Namespace, Subsystem: "ingest", Name: "batch_events",
++		Help:    "Events per POST /ingest/events request.",
++		Buckets: []float64{1, 5, 10, 25, 50, 100, 250, 500},
++	})
++
++	findings = prometheus.NewCounterVec(prometheus.CounterOpts{
++		Namespace: Namespace, Subsystem: "detection", Name: "findings_total",
++		Help: "Findings stored by detection rule, severity and status (emitted or suppressed by a baseline or exception).",
++	}, []string{"rule", "severity", "status"})
++
++	incidents = prometheus.NewCounterVec(prometheus.CounterOpts{
++		Namespace: Namespace, Subsystem: "incidents", Name: "created_total",
++		Help: "Incidents created by kind (standalone or chain), severity and initial status.",
++	}, []string{"kind", "severity", "status"})
++
++	deliveries = prometheus.NewCounterVec(prometheus.CounterOpts{
++		Namespace: Namespace, Subsystem: "notification", Name: "deliveries_total",
++		Help: "Notification deliveries by channel (in_app, webhook, slack) and outcome.",
++	}, []string{"channel", "outcome"})
++
++	httpDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
++		Namespace: Namespace, Subsystem: "http", Name: "request_duration_seconds",
++		Help:    "HTTP request duration by ServeMux route pattern, method and status code.",
++		Buckets: prometheus.DefBuckets,
++	}, []string{"route", "method", "status"})
++
++	buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
++		Namespace: Namespace, Name: "build_info",
++		Help: "Build information of this plane; always 1.",
++	}, []string{"component", "version"})
++)
++
++// Queue and sampler statistics are read on scrape from the live objects,
++// which register a reader with ObserveQueue / ObserveSampler.
++var (
++	statsMu   sync.RWMutex
++	queueFn   func() (depth, capacity, dropped int64)
++	samplerFn func() (seen, kept, dropped int64)
++)
++
++func queueStat(pick func(depth, capacity, dropped int64) int64) float64 {
++	statsMu.RLock()
++	fn := queueFn
++	statsMu.RUnlock()
++	if fn == nil {
++		return 0
++	}
++	return float64(pick(fn()))
++}
++
++func samplerStat(pick func(seen, kept, dropped int64) int64) float64 {
++	statsMu.RLock()
++	fn := samplerFn
++	statsMu.RUnlock()
++	if fn == nil {
++		return 0
++	}
++	return float64(pick(fn()))
++}
++
++func init() {
++	Registry.MustRegister(
++		collectors.NewGoCollector(),
++		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
++		ingestEvents, ingestBatch, findings, incidents, deliveries, httpDuration, buildInfo,
++		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
++			Namespace: Namespace, Subsystem: "ingest", Name: "queue_depth",
++			Help: "Events waiting in the Tier 2 correlation buffer (0 without Neo4j).",
++		}, func() float64 { return queueStat(func(d, _, _ int64) int64 { return d }) }),
++		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
++			Namespace: Namespace, Subsystem: "ingest", Name: "queue_capacity",
++			Help: "Capacity of the Tier 2 correlation buffer (0 without Neo4j).",
++		}, func() float64 { return queueStat(func(_, c, _ int64) int64 { return c }) }),
++		prometheus.NewCounterFunc(prometheus.CounterOpts{
++			Namespace: Namespace, Subsystem: "ingest", Name: "queue_dropped_total",
++			Help: "Events dropped because the Tier 2 correlation buffer was full.",
++		}, func() float64 { return queueStat(func(_, _, d int64) int64 { return d }) }),
++		prometheus.NewCounterFunc(prometheus.CounterOpts{
++			Namespace: Namespace, Subsystem: "ingest", Name: "sampler_events_total",
++			Help:      "Sampler decisions since start, by result (seen, kept, dropped), read from the sampler's own counters.",
++			ConstLabels: prometheus.Labels{"result": "seen"},
++		}, func() float64 { return samplerStat(func(s, _, _ int64) int64 { return s }) }),
++		prometheus.NewCounterFunc(prometheus.CounterOpts{
++			Namespace: Namespace, Subsystem: "ingest", Name: "sampler_events_total",
++			Help:      "Sampler decisions since start, by result (seen, kept, dropped), read from the sampler's own counters.",
++			ConstLabels: prometheus.Labels{"result": "kept"},
++		}, func() float64 { return samplerStat(func(_, k, _ int64) int64 { return k }) }),
++		prometheus.NewCounterFunc(prometheus.CounterOpts{
++			Namespace: Namespace, Subsystem: "ingest", Name: "sampler_events_total",
++			Help:      "Sampler decisions since start, by result (seen, kept, dropped), read from the sampler's own counters.",
++			ConstLabels: prometheus.Labels{"result": "dropped"},
++		}, func() float64 { return samplerStat(func(_, _, d int64) int64 { return d }) }),
++	)
++}
++
++// Handler serves the registry in the Prometheus text format. Wire it behind
++// the plane's authentication; it does no auth of its own.
++func Handler() http.Handler {
++	return promhttp.HandlerFor(Registry, promhttp.HandlerOpts{})
++}
++
++// SetBuildInfo publishes correlic_build_info{component,version} = 1.
++func SetBuildInfo(component, version string) {
++	buildInfo.WithLabelValues(component, version).Set(1)
++}
++
++// IngestEvent counts one event with the given result. Unknown event types
++// are reported as "other" so a misbehaving agent cannot grow the series set.
++func IngestEvent(eventType, result string) {
++	ingestEvents.WithLabelValues(eventTypeLabel(eventType), resultLabel(result)).Inc()
++}
++
++// IngestBatch records the size of one ingest request.
++func IngestBatch(events int) {
++	ingestBatch.Observe(float64(events))
++}
++
++// FindingStored counts a stored finding. rule is the detection id
++// (for example "ai.credential_access"); suppressed findings are counted
++// with status "suppressed", the rest with "emitted".
++func FindingStored(rule, severity string, suppressed bool) {
++	status := "emitted"
++	if suppressed {
++		status = "suppressed"
++	}
++	findings.WithLabelValues(ruleLabel(rule), severityLabel(severity), status).Inc()
++}
++
++// IncidentCreated counts a newly created incident.
++func IncidentCreated(kind, severity, status string) {
++	if kind != IncidentChain {
++		kind = IncidentStandalone
++	}
++	incidents.WithLabelValues(kind, severityLabel(severity), incidentStatusLabel(status)).Inc()
++}
++
++// NotificationDelivery counts one delivery attempt or queue operation.
++func NotificationDelivery(channel, outcome string) {
++	deliveries.WithLabelValues(channelLabel(channel), outcomeLabel(outcome)).Inc()
++}
++
++// ObserveQueue registers the reader for the Tier 2 correlation buffer
++// gauges. A nil reader clears it (the gauges then report 0).
++func ObserveQueue(fn func() (depth, capacity, dropped int64)) {
++	statsMu.Lock()
++	queueFn = fn
++	statsMu.Unlock()
++}
++
++// ObserveSampler registers the reader for the sampler counters. A nil
++// reader clears it.
++func ObserveSampler(fn func() (seen, kept, dropped int64)) {
++	statsMu.Lock()
++	samplerFn = fn
++	statsMu.Unlock()
++}
++
++// ── Label normalisation ────────────────────────────────────────────────
++
++// knownEventTypes is the canonical event vocabulary across the Linux, macOS
++// and Windows agents and the tool hook. Anything else becomes "other".
++var knownEventTypes = map[string]struct{}{
++	"process_exec": {}, "process_exit": {}, "process_fork": {},
++	"file_open": {}, "file_write": {}, "file_unlink": {}, "file_access": {},
++	"net_connect": {}, "net_listen": {}, "net_accept": {}, "net_msg": {}, "net_tls": {}, "net_dns": {},
++	"container_start": {}, "ai_tool_call": {}, "agent_log": {},
++	"registry_write": {}, "schtask_create": {}, "privilege_use": {},
++	"identity_snapshot": {}, "git_event": {},
++}
++
++func eventTypeLabel(t string) string {
++	if _, ok := knownEventTypes[t]; ok {
++		return t
++	}
++	return "other"
++}
++
++func resultLabel(r string) string {
++	switch r {
++	case ResultReceived, ResultRejected, ResultDropped, ResultKept:
++		return r
++	}
++	return "other"
++}
++
++// ruleLabel keeps detection ids as they are (they are a fixed, compiled-in
++// set) but refuses empty or oversized values.
++func ruleLabel(rule string) string {
++	if rule == "" || len(rule) > 64 {
++		return "other"
++	}
++	return rule
++}
++
++func severityLabel(s string) string {
++	switch s {
++	case "critical", "high", "medium", "low", "info":
++		return s
++	}
++	return "unknown"
++}
++
++func incidentStatusLabel(s string) string {
++	switch s {
++	case "open", "auto_resolved":
++		return s
++	}
++	return "other"
++}
++
++func channelLabel(c string) string {
++	switch c {
++	case "in_app", "webhook", "slack":
++		return c
++	}
++	return "other"
++}
++
++func outcomeLabel(o string) string {
++	switch o {
++	case OutcomeQueued, OutcomeDelivered, OutcomeRetry, OutcomeDead, OutcomeError:
++		return o
++	}
++	return "other"
++}
+diff --git a/backend/internal/metrics/metrics_test.go b/backend/internal/metrics/metrics_test.go
+new file mode 100644
+index 0000000..73ea1ce
+--- /dev/null
++++ b/backend/internal/metrics/metrics_test.go
+@@ -0,0 +1,208 @@
++package metrics
++
++import (
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/prometheus/client_golang/prometheus/testutil"
++	dto "github.com/prometheus/client_model/go"
++)
++
++// histogramCount returns the sample count of the httpDuration series with the
++// given labels, or -1 when there is no such series.
++func histogramCount(t *testing.T, route, method, status string) int {
++	t.Helper()
++	families, err := Registry.Gather()
++	if err != nil {
++		t.Fatalf("gather: %v", err)
++	}
++	for _, mf := range families {
++		if mf.GetName() != "correlic_http_request_duration_seconds" {
++			continue
++		}
++		for _, m := range mf.GetMetric() {
++			labels := map[string]string{}
++			for _, lp := range m.GetLabel() {
++				labels[lp.GetName()] = lp.GetValue()
++			}
++			if labels["route"] == route && labels["method"] == method && labels["status"] == status {
++				return int(m.GetHistogram().GetSampleCount())
++			}
++		}
++	}
++	return -1
++}
++
++func TestHTTPMiddlewareLabelsByRoutePatternAndStatus(t *testing.T) {
++	mux := http.NewServeMux()
++	mux.HandleFunc("GET /api/v1/things/{id}", func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusCreated)
++		_, _ = io.WriteString(w, "ok")
++	})
++	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
++		// A handler that only writes: the recorder must report 200 and the
++		// Flush must reach the underlying writer.
++		_, _ = io.WriteString(w, "data: x\n\n")
++		if f, ok := w.(http.Flusher); ok {
++			f.Flush()
++		}
++	})
++	h := HTTP(mux)
++
++	for _, id := range []string{"1", "2", "three"} {
++		rr := httptest.NewRecorder()
++		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/things/"+id, nil))
++		if rr.Code != http.StatusCreated {
++			t.Fatalf("status=%d want 201", rr.Code)
++		}
++	}
++	rr := httptest.NewRecorder()
++	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/stream", nil))
++	if !rr.Flushed {
++		t.Fatalf("flush did not reach the underlying writer")
++	}
++	rr = httptest.NewRecorder()
++	h.ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/no/such/route", nil))
++	if rr.Code != http.StatusNotFound {
++		t.Fatalf("status=%d want 404", rr.Code)
++	}
++	rr = httptest.NewRecorder()
++	h.ServeHTTP(rr, httptest.NewRequest("BREW", "/stream", nil))
++
++	// The three ids collapse into one series keyed by the mux pattern.
++	if got := histogramCount(t, "GET /api/v1/things/{id}", "GET", "201"); got != 3 {
++		t.Fatalf("pattern series count=%d want 3", got)
++	}
++	if got := histogramCount(t, "/stream", "GET", "200"); got != 1 {
++		t.Fatalf("stream series count=%d want 1", got)
++	}
++	if got := histogramCount(t, "unmatched", "DELETE", "404"); got != 1 {
++		t.Fatalf("unmatched series count=%d want 1", got)
++	}
++	if got := histogramCount(t, "/stream", "other", "200"); got != 1 {
++		t.Fatalf("unknown method should be labelled other, count=%d", got)
++	}
++	if got := histogramCount(t, "/api/v1/things/1", "GET", "201"); got != -1 {
++		t.Fatalf("raw path must not become a label")
++	}
++}
++
++func TestIngestEventBoundsTheTypeLabel(t *testing.T) {
++	before := testutil.ToFloat64(ingestEvents.WithLabelValues("process_exec", ResultKept))
++	other := testutil.ToFloat64(ingestEvents.WithLabelValues("other", ResultKept))
++
++	IngestEvent("process_exec", ResultKept)
++	IngestEvent("process_exec", ResultKept)
++	IngestEvent("definitely-not-an-event-type-"+strings.Repeat("x", 40), ResultKept)
++	IngestEvent("process_exec", "bogus-result")
++
++	if got := testutil.ToFloat64(ingestEvents.WithLabelValues("process_exec", ResultKept)) - before; got != 2 {
++		t.Fatalf("process_exec kept delta=%v want 2", got)
++	}
++	if got := testutil.ToFloat64(ingestEvents.WithLabelValues("other", ResultKept)) - other; got != 1 {
++		t.Fatalf("unknown type must land on other, delta=%v", got)
++	}
++	if got := testutil.ToFloat64(ingestEvents.WithLabelValues("process_exec", "other")); got != 1 {
++		t.Fatalf("unknown result must land on other, got %v", got)
++	}
++}
++
++func TestFindingIncidentAndDeliveryCounters(t *testing.T) {
++	FindingStored("ai.credential_access", "high", false)
++	FindingStored("ai.credential_access", "high", true)
++	FindingStored("", "nope", false)
++	if got := testutil.ToFloat64(findings.WithLabelValues("ai.credential_access", "high", "emitted")); got != 1 {
++		t.Fatalf("emitted=%v want 1", got)
++	}
++	if got := testutil.ToFloat64(findings.WithLabelValues("ai.credential_access", "high", "suppressed")); got != 1 {
++		t.Fatalf("suppressed=%v want 1", got)
++	}
++	if got := testutil.ToFloat64(findings.WithLabelValues("other", "unknown", "emitted")); got != 1 {
++		t.Fatalf("empty rule / unknown severity must be normalised, got %v", got)
++	}
++
++	IncidentCreated(IncidentChain, "critical", "open")
++	IncidentCreated("something-else", "low", "auto_resolved")
++	if got := testutil.ToFloat64(incidents.WithLabelValues("chain", "critical", "open")); got != 1 {
++		t.Fatalf("chain incidents=%v want 1", got)
++	}
++	if got := testutil.ToFloat64(incidents.WithLabelValues("standalone", "low", "auto_resolved")); got != 1 {
++		t.Fatalf("unknown kind must become standalone, got %v", got)
++	}
++
++	NotificationDelivery("webhook", OutcomeDelivered)
++	NotificationDelivery("slack", OutcomeDead)
++	NotificationDelivery("pager", "exploded")
++	if got := testutil.ToFloat64(deliveries.WithLabelValues("webhook", "delivered")); got != 1 {
++		t.Fatalf("webhook delivered=%v want 1", got)
++	}
++	if got := testutil.ToFloat64(deliveries.WithLabelValues("slack", "dead")); got != 1 {
++		t.Fatalf("slack dead=%v want 1", got)
++	}
++	if got := testutil.ToFloat64(deliveries.WithLabelValues("other", "other")); got != 1 {
++		t.Fatalf("unknown channel/outcome must be normalised, got %v", got)
++	}
++}
++
++func TestQueueAndSamplerReadersAndHandler(t *testing.T) {
++	ObserveQueue(func() (int64, int64, int64) { return 7, 10000, 3 })
++	ObserveSampler(func() (int64, int64, int64) { return 100, 60, 40 })
++	t.Cleanup(func() { ObserveQueue(nil); ObserveSampler(nil) })
++	SetBuildInfo("test-plane", "9.9.9")
++	IngestBatch(42)
++
++	rr := httptest.NewRecorder()
++	Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
++	if rr.Code != http.StatusOK {
++		t.Fatalf("status=%d", rr.Code)
++	}
++	body := rr.Body.String()
++	for _, want := range []string{
++		`correlic_build_info{component="test-plane",version="9.9.9"} 1`,
++		"correlic_ingest_queue_depth 7",
++		"correlic_ingest_queue_capacity 10000",
++		"correlic_ingest_queue_dropped_total 3",
++		`correlic_ingest_sampler_events_total{result="seen"} 100`,
++		`correlic_ingest_sampler_events_total{result="kept"} 60`,
++		`correlic_ingest_sampler_events_total{result="dropped"} 40`,
++		`correlic_ingest_batch_events_bucket{le="50"}`,
++		"go_goroutines",
++	} {
++		if !strings.Contains(body, want) {
++			t.Fatalf("metrics output lacks %q\n%s", want, body)
++		}
++	}
++
++	// Clearing the readers must not break scrapes.
++	ObserveQueue(nil)
++	ObserveSampler(nil)
++	rr = httptest.NewRecorder()
++	Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
++	if !strings.Contains(rr.Body.String(), "correlic_ingest_queue_depth 0") {
++		t.Fatalf("cleared queue reader should report 0")
++	}
++}
++
++func TestNoHostOrOrgLabels(t *testing.T) {
++	families, err := Registry.Gather()
++	if err != nil {
++		t.Fatalf("gather: %v", err)
++	}
++	for _, mf := range families {
++		if !strings.HasPrefix(mf.GetName(), Namespace+"_") {
++			continue
++		}
++		for _, m := range mf.GetMetric() {
++			for _, lp := range m.GetLabel() {
++				switch lp.GetName() {
++				case "host", "host_id", "org", "org_id", "agent_id", "user_id":
++					t.Fatalf("%s carries a high-cardinality label %q", mf.GetName(), lp.GetName())
++				}
++			}
++		}
++	}
++	var _ *dto.MetricFamily // keep the client_model import explicit for readers
++}
