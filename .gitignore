@@ -63,3 +63,6 @@ uploads/
 *.code-workspace
 go.work
 go.work.sum
+
+# MkDocs build output
+site/

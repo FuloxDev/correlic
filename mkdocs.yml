@@ -1,0 +1,81 @@
+site_name: Correlic
+site_description: Kernel-level runtime security monitoring for AI coding agents
+site_url: https://fuloxdev.github.io/correlic/
+repo_url: https://github.com/FuloxDev/correlic
+repo_name: FuloxDev/correlic
+edit_uri: edit/main/backend/docs/
+docs_dir: backend/docs
+site_dir: site
+copyright: MIT licensed. Copyright Ayush Mishra.
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.details
+
+nav:
+  - Overview:
+      - Home: index.md
+      - System reference: SYSTEM_REFERENCE.md
+      - Architecture: ARCHITECTURE.md
+      - Layers: LAYERS.md
+      - Roadmap: ROADMAP.md
+  - Agents:
+      - Linux (eBPF): LINUX_AGENT.md
+      - Windows (ETW): WINDOWS_AGENT.md
+      - macOS (eslogger, kqueue): MACOS_AGENT.md
+      - AI tool hooks: HOOKS.md
+      - AI process tracking: ai_process_tracking.md
+  - Detection and correlation:
+      - Detection engine: DETECTION_ENGINE.md
+      - Correlation engine: CORRELATION_ENGINE.md
+      - Incident engine: INCIDENT_ENGINE.md
+      - Behavioural baselines: BEHAVIOURAL_ENGINE.md
+      - Block rules: BLOCK_RULES.md
+      - Enrichment: ENRICHMENT.md
+      - Suspicious file reference: suspicious-files-reference.md
+  - AI layer:
+      - AI intelligence: AI_INTELLIGENCE.md
+      - LLM providers and chat: AI_LAYER.md
+  - Operating Correlic:
+      - Alerting: ALERT_ENGINE.md
+      - Authentication and RBAC: AUTH_AND_RBAC.md
+      - Data retention: DATA_RETENTION.md
+      - Query and timeline: QUERY_AND_TIMELINE.md
+      - API reference: API_REFERENCE.md
+  - Research:
+      - Paper: paper/correlic-paper.md
