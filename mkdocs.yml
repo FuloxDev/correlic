@@ -77,5 +77,8 @@ nav:
       - Data retention: DATA_RETENTION.md
       - Query and timeline: QUERY_AND_TIMELINE.md
       - API reference: API_REFERENCE.md
+  - Security:
+      - Threat model: THREAT_MODEL.md
+      - Release process and signing: RELEASE_PROCESS.md
   - Research:
       - Paper: paper/correlic-paper.md
