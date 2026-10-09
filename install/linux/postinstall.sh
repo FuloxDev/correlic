@@ -17,10 +17,12 @@ if [ ! -f /etc/correlic/correlic.env ]; then
 
   cat > /etc/correlic/correlic.env <<ENV
 DATABASE_URL=postgres://correlic:CHANGE_ME@localhost:5432/correlic?sslmode=disable
-# Optional graph database. Leave NEO4J_URI empty to run without it.
-NEO4J_URI=bolt://localhost:7687
+# Optional Neo4j graph (adds the ai.data_exfiltration and ai.excessive_writes
+# rules and the Neo4j timeline). Empty NEO4J_URI = PostgreSQL only (default).
+# To enable: NEO4J_URI=bolt://localhost:7687 plus the username and password.
+NEO4J_URI=
 NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=CHANGE_ME
+NEO4J_PASSWORD=
 TLS_CERT_FILE=${CERT_DIR}/server.crt
 TLS_KEY_FILE=${CERT_DIR}/server.key
 MTLS_CA_FILE=${CERT_DIR}/ca.crt
@@ -65,9 +67,9 @@ ENV
 
   [correlic] Package installed. Next steps (run as root):
 
-    1. Install PostgreSQL 16+ (Neo4j 5+ is optional) and create a database:
+    1. Install PostgreSQL 16+ (Neo4j 5+ is an optional add-on) and create a database:
          sudo -u postgres psql -c "CREATE USER correlic WITH PASSWORD '<pw>';" -c "CREATE DATABASE correlic OWNER correlic;"
-    2. Put the database URL (and Neo4j settings, or an empty NEO4J_URI) in /etc/correlic/correlic.env
+    2. Put the database URL in /etc/correlic/correlic.env (set NEO4J_URI there only if you run Neo4j)
     3. Load the env and run migrations:
          set -a; . /etc/correlic/correlic.env; set +a
          correlic-admin migrate up

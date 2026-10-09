@@ -1,0 +1,38 @@
+# Correlic on Kubernetes — PostgreSQL-only base (the default profile).
+#
+#   cp secret.example.yaml secret.yaml   # then replace every value
+#   kubectl apply -k install/kubernetes/base
+#   kubectl -n correlic logs job/correlic-bootstrap    # dashboard login + agent key
+#
+# Add the Neo4j graph with overlays/graph instead of this directory.
+# See ../README.md for the full sequence, credentials and limitations.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: correlic
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: correlic
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml          # your copy of secret.example.yaml (git-ignored)
+  - certs-pvc.yaml
+  - postgres.yaml        # remove this line to use a managed PostgreSQL (see postgres.yaml)
+  - bootstrap-job.yaml
+  - backend-api.yaml
+  - backend-tel.yaml
+  - ui-proxy.yaml
+  - ui.yaml
+
+# One place to bump the release. The manifests reference v1.0.1 directly too,
+# so `kubectl apply -f` on a single file still works.
+images:
+  - name: ghcr.io/fuloxdev/correlic-backend
+    newTag: v1.0.1
+  - name: ghcr.io/fuloxdev/correlic-ui
+    newTag: v1.0.1
+  - name: ghcr.io/fuloxdev/correlic-ui-proxy
+    newTag: v1.0.1

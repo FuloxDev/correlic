@@ -1,0 +1,36 @@
+# Non-secret configuration shared by the backend planes, the bootstrap Job
+# and the dashboard. Secrets (database password, LLM_ENCRYPTION_KEY, Neo4j
+# password) live in secret.yaml; the dashboard and agent API keys are created
+# by the bootstrap Job, not configured here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: correlic-config
+data:
+  # ── Backend planes (cmd/api on :8080, cmd/telemetry on :8081) ──────────
+  ALLOW_API_KEY_AUTH: "true"
+  SAMPLING_ENABLED: "true"
+  # "default" resolves to the first organisation (the one bootstrap creates).
+  DEFAULT_ORG_ID: "default"
+  TLS_CERT_FILE: /certs/server.crt
+  TLS_KEY_FILE: /certs/server.key
+  MTLS_CA_FILE: /certs/ca.crt
+  # Public URL of the dashboard: used in e-mail verification links and as the
+  # proxy's allowed browser origin. Must match the Ingress host.
+  FRONTEND_URL: https://correlic.example.com
+  DASHBOARD_ORIGINS: https://correlic.example.com
+
+  # ── Bootstrap Job (first apply only) ───────────────────────────────────
+  CORRELIC_ORG_NAME: "Default"
+  CORRELIC_ADMIN_EMAIL: admin@local.dev
+  # Extra subjectAltNames for the backend server certificate, comma separated
+  # OpenSSL entries, e.g. "DNS:correlic-api.example.com,IP:203.0.113.10".
+  # Agents outside the cluster verify the backend by the address they dial,
+  # so put that address here BEFORE the first apply (the certificate is
+  # generated once and kept in the certs volume).
+  CERT_EXTRA_SANS: ""
+  # URLs written into the generated agent.yaml. Inside the cluster the service
+  # names below work as they are; for hosts outside the cluster set them to
+  # the LoadBalancer/NodePort address (see backend-external.example.yaml).
+  AGENT_BACKEND_URL: https://backend-api.correlic.svc:8080
+  AGENT_TELEMETRY_URL: https://backend-tel.correlic.svc:8081

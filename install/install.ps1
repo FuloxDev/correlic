@@ -4,10 +4,61 @@
 # Everything is bundled — zero external dependencies
 #
 # Usage: irm https://raw.githubusercontent.com/FuloxDev/correlic/main/install/install.ps1 | iex
+#
+# Options (download the script first to pass switches, e.g.
+#   irm .../install.ps1 -OutFile install.ps1; .\install.ps1 -NoNeo4j):
+#   -NoNeo4j   PostgreSQL-only profile: the bundled Neo4j and JRE are left
+#              untouched (no verification, no service, no start) and NEO4J_*
+#              stay out of C:\Correlic\.env. Everything except the two graph
+#              look-back rules (ai.data_exfiltration, ai.excessive_writes) and
+#              the Neo4j timeline works on PostgreSQL alone.
+#   -Version v1.2.3   Install that release instead of the latest one.
+# Environment (works with the irm | iex form):
+#   $env:CORRELIC_NEO4J = "no"        Same as -NoNeo4j.
+#   $env:CORRELIC_VERSION = "v1.2.3"  Same as -Version.
+#
+# Version: the installer asks the GitHub releases API for the latest tag and
+# installs it; -Version / CORRELIC_VERSION win, and when the API is
+# unreachable it falls back to the pinned $PinnedVersion below, printing
+# which of the three it chose.
 # ============================================================
 
+param(
+    [switch]$NoNeo4j,
+    [string]$Version = ""
+)
+
 $ErrorActionPreference = "Stop"
-$Version = "v1.0.1"
+# GitHub requires TLS 1.2; Windows PowerShell 5.1 does not always enable it.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+$PinnedVersion = "v1.0.1"   # pinned fallback — also the release the README links to
+$ReleasesApi = if ($env:CORRELIC_RELEASES_API) { $env:CORRELIC_RELEASES_API } else { "https://api.github.com/repos/FuloxDev/correlic/releases/latest" }
+
+# Returns the tag to install (always "v"-prefixed) and how it was chosen.
+function Resolve-CorrelicVersion {
+    param([string]$Requested)
+    if (-not $Requested -and $env:CORRELIC_VERSION) { $Requested = $env:CORRELIC_VERSION }
+    if ($Requested) {
+        return @{ Tag = ("v" + ($Requested -replace '^[vV]', '')); Source = "requested" }
+    }
+    try {
+        $prevProgress = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+        $release = Invoke-RestMethod -Uri $ReleasesApi -UseBasicParsing -TimeoutSec 10 `
+            -Headers @{ 'Accept' = 'application/vnd.github+json'; 'User-Agent' = 'correlic-installer' }
+        $ProgressPreference = $prevProgress
+        if ("$($release.tag_name)" -match '^v?\d+\.\d+\.\d+') {
+            return @{ Tag = ("v" + ("$($release.tag_name)" -replace '^[vV]', '')); Source = "latest GitHub release" }
+        }
+    } catch {
+        # fall through to the pinned version
+    }
+    return @{ Tag = $PinnedVersion; Source = "pinned fallback, GitHub releases API unavailable" }
+}
+
+$resolved = Resolve-CorrelicVersion -Requested $Version
+$Version = $resolved.Tag
+$VersionSource = $resolved.Source
 $InstallDir = "C:\Correlic"
 $BaseURL = if ($env:CORRELIC_BUNDLE_BASE_URL) { $env:CORRELIC_BUNDLE_BASE_URL } else { "https://github.com/FuloxDev/correlic/releases/download/$Version" }
 $BundleFile = "correlic-windows-$Version.zip"
@@ -15,6 +66,10 @@ $TotalSteps = 10
 
 # Neo4j version (bundled in ZIP alongside PostgreSQL + Node.js)
 $Neo4jVersion = "5.26.0"
+
+# Database profile: -NoNeo4j or CORRELIC_NEO4J=no selects PostgreSQL only.
+if (-not $NoNeo4j -and $env:CORRELIC_NEO4J -match '^(?i)(no|n|false|off|0)$') { $NoNeo4j = $true }
+$WithNeo4j = -not $NoNeo4j
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -95,6 +150,13 @@ if (-not $isAdmin) {
 
 Write-Step 1 "Checking prerequisites..."
 Write-OK "Running as Administrator"
+Write-OK "Installing Correlic $Version ($VersionSource)"
+if ($WithNeo4j) {
+    Write-OK "Profile: PostgreSQL + Neo4j graph"
+} else {
+    Write-OK "Profile: PostgreSQL only (graph features off)"
+    Write-Detail "Re-run with -NoNeo4j omitted (or CORRELIC_NEO4J=yes) to add the graph later"
+}
 
 # ── 2. Download Bundle ──────────────────────────────────────
 
@@ -180,15 +242,19 @@ Write-Step 4 "Verifying Neo4j graph database..."
 $neo4jHome = "$InstallDir\neo4j"
 $jreHome = "$InstallDir\jre"
 
-if (-not (Test-Path "$jreHome\bin\java.exe")) {
-    Write-Fail "JRE not found in bundle at $jreHome\bin\java.exe — re-download the bundle."
-}
-Write-OK "Java Runtime found"
+if ($WithNeo4j) {
+    if (-not (Test-Path "$jreHome\bin\java.exe")) {
+        Write-Fail "JRE not found in bundle at $jreHome\bin\java.exe — re-download the bundle."
+    }
+    Write-OK "Java Runtime found"
 
-if (-not (Test-Path "$neo4jHome\bin\neo4j-admin.bat")) {
-    Write-Fail "Neo4j not found in bundle at $neo4jHome — re-download the bundle."
+    if (-not (Test-Path "$neo4jHome\bin\neo4j-admin.bat")) {
+        Write-Fail "Neo4j not found in bundle at $neo4jHome — re-download the bundle."
+    }
+    Write-OK "Neo4j $Neo4jVersion found"
+} else {
+    Write-OK "Skipped (-NoNeo4j): the bundled Neo4j and JRE are not used"
 }
-Write-OK "Neo4j $Neo4jVersion found"
 
 # ── 5. Generate mTLS Certificates ───────────────────────────
 
@@ -260,13 +326,15 @@ if ($portInUse) {
 # ── Detect Neo4j Bolt port ──────────────────────────────────
 
 $neo4jBoltPort = 7687
-$portInUse = netstat -ano 2>$null | Select-String ":7687\s.*LISTENING"
-if ($portInUse) {
-    Write-Warn "Port 7687 (Neo4j Bolt) is already in use."
-    $neo4jBoltPort = 7688
-    Write-Warn "Will use port $neo4jBoltPort instead."
-} else {
-    Write-Detail "Neo4j Bolt port 7687 available"
+if ($WithNeo4j) {
+    $portInUse = netstat -ano 2>$null | Select-String ":7687\s.*LISTENING"
+    if ($portInUse) {
+        Write-Warn "Port 7687 (Neo4j Bolt) is already in use."
+        $neo4jBoltPort = 7688
+        Write-Warn "Will use port $neo4jBoltPort instead."
+    } else {
+        Write-Detail "Neo4j Bolt port 7687 available"
+    }
 }
 
 # ── 6. Generate Secrets ─────────────────────────────────────
@@ -324,15 +392,34 @@ MTLS_KEY=$certsDir\client.key
     Write-Detail "Config already exists, keeping existing"
     $apiKey = (Get-Content "$InstallDir\agent.yaml" | Select-String 'api_key: "(.+)"').Matches.Groups[1].Value
 
-    # Ensure Neo4j config exists in .env for existing installs
+    # Reconcile the graph settings of the existing .env with the chosen profile.
     $envContent = Get-Content "$InstallDir\.env" -Raw
-    if ($envContent -notmatch "NEO4J_URI") {
-        $neo4jPassword = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
-        Add-Content "$InstallDir\.env" "`nNEO4J_URI=bolt://localhost:${neo4jBoltPort}`nNEO4J_USERNAME=neo4j`nNEO4J_PASSWORD=$neo4jPassword"
-        Write-Detail "Added Neo4j config to existing .env"
-    } else {
-        $neo4jPassword = ((Get-Content "$InstallDir\.env" | Select-String "NEO4J_PASSWORD=(.+)").Matches.Groups[1].Value)
+    if ($WithNeo4j) {
+        if ($envContent -notmatch "(?m)^NEO4J_URI=.+") {
+            # Graph added to an install made with -NoNeo4j (or an old .env): keep an
+            # existing password, otherwise generate one.
+            $existingPw = ($envContent | Select-String "(?m)^NEO4J_PASSWORD=([^\r\n]+)")
+            if ($existingPw) { $neo4jPassword = $existingPw.Matches[0].Groups[1].Value }
+            $envContent = ($envContent -split "`r?`n" | Where-Object { $_ -notmatch '^NEO4J_(URI|USERNAME|PASSWORD)=' }) -join "`r`n"
+            $envContent = $envContent.TrimEnd() + "`r`nNEO4J_URI=bolt://localhost:${neo4jBoltPort}`r`nNEO4J_USERNAME=neo4j`r`nNEO4J_PASSWORD=$neo4jPassword`r`n"
+            [System.IO.File]::WriteAllText("$InstallDir\.env", $envContent, $utf8NoBom)
+            Write-Detail "Added Neo4j config to existing .env"
+        } else {
+            $neo4jPassword = ((Get-Content "$InstallDir\.env" | Select-String "NEO4J_PASSWORD=(.+)").Matches.Groups[1].Value)
+        }
+    } elseif ($envContent -match "(?m)^NEO4J_URI=.+") {
+        # Graph switched off: empty NEO4J_URI disables it; the password is kept for later.
+        $envContent = $envContent -replace "(?m)^NEO4J_URI=[^\r\n]*", "NEO4J_URI="
+        [System.IO.File]::WriteAllText("$InstallDir\.env", $envContent, $utf8NoBom)
+        Write-Detail "Graph switched off: NEO4J_URI emptied in .env"
     }
+}
+
+# start.ps1 reads this marker so a later restart does not launch the bundled Neo4j.
+if ($WithNeo4j) {
+    Remove-Item "$InstallDir\.no-neo4j" -ErrorAction SilentlyContinue
+} else {
+    [System.IO.File]::WriteAllText("$InstallDir\.no-neo4j", "PostgreSQL-only profile (installed with -NoNeo4j). Delete this file and re-run the installer to add the graph.`r`n", $utf8NoBom)
 }
 
 # ── 7. Initialize Database ──────────────────────────────────
@@ -493,11 +580,14 @@ if ($newInstall) {
 # Write backend .env NOW with the actual org UUID (not "default")
 if ($newInstall) {
     Write-Detail "Writing backend config with org ID..."
+    if ($WithNeo4j) {
+        $neo4jEnv = "NEO4J_URI=bolt://localhost:${neo4jBoltPort}`r`nNEO4J_USERNAME=neo4j`r`nNEO4J_PASSWORD=$neo4jPassword"
+    } else {
+        $neo4jEnv = "# Graph database (optional). An empty NEO4J_URI runs on PostgreSQL alone;`r`n# re-run the installer without -NoNeo4j to add it.`r`nNEO4J_URI="
+    }
     $envContent = @"
 DATABASE_URL=postgres://correlic:$dbPassword@localhost:${pgPort}/correlic
-NEO4J_URI=bolt://localhost:${neo4jBoltPort}
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=$neo4jPassword
+$neo4jEnv
 TLS_CERT_FILE=$certsDir\server.crt
 TLS_KEY_FILE=$certsDir\server.key
 MTLS_CA_FILE=$certsDir\ca.crt
@@ -518,6 +608,11 @@ Write-OK "Database ready"
 # ── 8. Initialize Neo4j ────────────────────────────────────
 
 Write-Step 8 "Setting up Neo4j graph database..."
+
+if (-not $WithNeo4j) {
+    Write-OK "Skipped (-NoNeo4j): running on PostgreSQL only"
+    Write-Detail "ai.data_exfiltration, ai.excessive_writes and the Neo4j timeline stay off; everything else runs"
+} else {
 
 $neo4jHome = "$InstallDir\neo4j"
 $jreHome = "$InstallDir\jre"
@@ -603,6 +698,8 @@ if ($neo4jPortOK) {
     Write-Warn "Neo4j did not start within 30s. Check logs at $neo4jHome\logs\"
     Write-Detail "Backend will retry connection on startup"
 }
+
+}  # end of the Neo4j step ($WithNeo4j)
 
 # ── 9. Install Agent Service ────────────────────────────────
 
@@ -871,7 +968,11 @@ if ($generatedApiKey -ne "") {
     Write-Host "           or:  " -NoNewline; Write-Host "admin@local.dev / $adminPassword" -ForegroundColor Cyan
     Write-Host "                (stored in $InstallDir\dashboard-credentials.txt)" -ForegroundColor Gray
 }
-Write-Host "  Neo4j:        " -NoNewline; Write-Host "bolt://localhost:$neo4jBoltPort" -ForegroundColor Gray
+if ($WithNeo4j) {
+    Write-Host "  Profile:      " -NoNewline; Write-Host "PostgreSQL + Neo4j graph (bolt://localhost:$neo4jBoltPort)" -ForegroundColor Gray
+} else {
+    Write-Host "  Profile:      " -NoNewline; Write-Host "PostgreSQL only — re-run without -NoNeo4j to add the graph" -ForegroundColor Gray
+}
 Write-Host "  Install dir:  $InstallDir"
 Write-Host "  Logs:         $InstallDir\logs"
 Write-Host ""

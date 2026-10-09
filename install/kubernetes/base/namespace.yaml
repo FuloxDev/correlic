@@ -1,0 +1,11 @@
+# Namespace for every Correlic object. Pod Security: "baseline" — the only
+# process that is not non-root is the certificate init container of the
+# bootstrap Job (it installs openssl into its own ephemeral filesystem);
+# every long-running container runs as a non-root user with a read-only
+# root filesystem where the image allows it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: correlic
+  labels:
+    pod-security.kubernetes.io/enforce: baseline

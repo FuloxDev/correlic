@@ -1,0 +1,196 @@
+# One-shot bootstrap, run on the first apply:
+#   1. init container "certs": generates the mTLS CA, server and client
+#      certificates into the certs volume (kept on later runs). This is the
+#      only root container in the deployment — it installs openssl into its
+#      own ephemeral filesystem and only writes /certs.
+#   2. container "bootstrap": waits for PostgreSQL, applies the migrations
+#      (`correlic-admin migrate up`), then on the first run creates the
+#      organisation, enrolls the client certificate, creates the dashboard
+#      admin (API key + password) and the restricted agent key, and writes
+#      agent.yaml + dashboard-credentials into the certs volume.
+#
+# Read the credentials with:  kubectl -n correlic logs job/correlic-bootstrap
+# A Job spec is immutable: before re-applying on an upgrade, delete it
+# (kubectl -n correlic delete job correlic-bootstrap); the re-run only
+# applies migrations because the volume carries the .bootstrapped marker.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: correlic-bootstrap
+  labels:
+    app.kubernetes.io/name: correlic-bootstrap
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: correlic-bootstrap
+        correlic.io/certs: "true"
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  correlic.io/certs: "true"
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: certs
+          image: alpine:3.20
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CERT_EXTRA_SANS
+              valueFrom:
+                configMapKeyRef:
+                  name: correlic-config
+                  key: CERT_EXTRA_SANS
+                  optional: true
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              if [ -f /certs/ca.crt ]; then
+                echo "certificates already exist in the certs volume, keeping them"
+                exit 0
+              fi
+              apk add --no-cache openssl >/dev/null
+              cd /certs
+              SANS="DNS:localhost,DNS:backend-api,DNS:backend-tel"
+              SANS="$SANS,DNS:backend-api.$NAMESPACE,DNS:backend-tel.$NAMESPACE"
+              SANS="$SANS,DNS:backend-api.$NAMESPACE.svc,DNS:backend-tel.$NAMESPACE.svc"
+              SANS="$SANS,DNS:backend-api.$NAMESPACE.svc.cluster.local,DNS:backend-tel.$NAMESPACE.svc.cluster.local"
+              SANS="$SANS,IP:127.0.0.1"
+              if [ -n "${CERT_EXTRA_SANS:-}" ]; then SANS="$SANS,$CERT_EXTRA_SANS"; fi
+              echo "generating mTLS certificates (server SANs: $SANS)"
+              openssl genrsa -out ca.key 4096 2>/dev/null
+              openssl req -new -x509 -days 3650 -key ca.key -out ca.crt -subj "/CN=Correlic CA" 2>/dev/null
+              openssl genrsa -out server.key 2048 2>/dev/null
+              openssl req -new -key server.key -out server.csr -subj "/CN=correlic-backend" 2>/dev/null
+              printf 'authorityKeyIdentifier=keyid,issuer\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=%s\n' "$SANS" > server.ext
+              openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 3650 -extfile server.ext 2>/dev/null
+              openssl genrsa -out client.key 2048 2>/dev/null
+              openssl req -new -key client.key -out client.csr -subj "/CN=correlic-agent" 2>/dev/null
+              printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n' > client.ext
+              openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 3650 -extfile client.ext 2>/dev/null
+              rm -f ./*.csr ./*.ext ./*.srl
+              chown 65534:65534 ./*
+              chmod 600 ./*.key
+              chmod 644 ./*.crt
+              echo "certificates generated"
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+      containers:
+        - name: bootstrap
+          image: ghcr.io/fuloxdev/correlic-backend:v1.0.1
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              kv() { grep -E "^[[:space:]]*$1=" | head -1 | sed -E "s/^[[:space:]]*$1=//" | tr -d '[:space:]'; }
+              echo "waiting for PostgreSQL and applying migrations..."
+              tries=0
+              until /app/admin migrate up; do
+                tries=$((tries + 1))
+                if [ "$tries" -ge 60 ]; then echo "ERROR: database not reachable after 5 minutes"; exit 1; fi
+                sleep 5
+              done
+              if [ -f /certs/.bootstrapped ]; then
+                echo "already bootstrapped (org $(cat /certs/.org_id 2>/dev/null)); migrations applied, nothing else to do"
+                exit 0
+              fi
+              echo "creating organisation, admin user, keys and agent config..."
+              ORG_ID=$(/app/admin create-org --name "${CORRELIC_ORG_NAME:-Default}" 2>&1 | tee /dev/stderr | kv org_id)
+              if [ -z "$ORG_ID" ]; then echo "ERROR: could not create the organisation"; exit 1; fi
+              echo "$ORG_ID" > /certs/.org_id
+              /app/admin enroll-client-cert --org-id "$ORG_ID" --name agent-cert --cert-file /certs/client.crt 2>&1 || true
+              ADMIN_OUT=$(/app/admin create-user --org-id "$ORG_ID" --email "${CORRELIC_ADMIN_EMAIL:-admin@local.dev}" --name "Admin" --role admin 2>&1)
+              ADMIN_ID=$(echo "$ADMIN_OUT" | kv user_id)
+              ADMIN_PASSWORD=$(echo "$ADMIN_OUT" | kv password)
+              DASHBOARD_KEY=$(/app/admin create-api-key --org-id "$ORG_ID" --user-id "$ADMIN_ID" --name dashboard 2>&1 | kv api_key)
+              AGENT_USER=$(/app/admin create-service-account --org-id "$ORG_ID" --email agent@local.dev --name "Agent" --role member 2>&1 | kv user_id)
+              AGENT_KEY=$(/app/admin create-api-key --org-id "$ORG_ID" --user-id "$AGENT_USER" --name agent --type agent 2>&1 | kv api_key)
+              if [ -z "$DASHBOARD_KEY" ] || [ -z "$AGENT_KEY" ]; then echo "ERROR: could not create the API keys (see output above)"; exit 1; fi
+              cat > /certs/agent.yaml <<YAML
+              # Correlic agent configuration (generated by the Kubernetes bootstrap Job).
+              # Copy this file with ca.crt, client.crt and client.key to each monitored
+              # host (the paths below assume /var/lib/correlic/certs, the layout of the
+              # Linux packages). Hosts outside the cluster need backend_url /
+              # telemetry_url set to the address they can reach (AGENT_BACKEND_URL /
+              # AGENT_TELEMETRY_URL in the ConfigMap), which must be in the server
+              # certificate's SANs (CERT_EXTRA_SANS).
+              backend_url: "${AGENT_BACKEND_URL:-https://backend-api.correlic.svc:8080}"
+              telemetry_url: "${AGENT_TELEMETRY_URL:-https://backend-tel.correlic.svc:8081}"
+              api_key: "$AGENT_KEY"
+              tls_ca_file: "/var/lib/correlic/certs/ca.crt"
+              tls_client_cert_file: "/var/lib/correlic/certs/client.crt"
+              tls_client_key_file: "/var/lib/correlic/certs/client.key"
+              profile: "developer"
+              log_level: "info"
+              heartbeat_interval: 30s
+              ebpf_enabled: true
+              process_exec_enabled: true
+              file_monitor_enabled: true
+              network_monitor_enabled: true
+              dns_monitor_enabled: true
+              block_enabled: false
+              YAML
+              chmod 600 /certs/agent.yaml
+              printf 'DASHBOARD_URL=%s\nAPI_KEY=%s\nADMIN_EMAIL=%s\nADMIN_PASSWORD=%s\n' \
+                "${FRONTEND_URL:-https://correlic.example.com}" "$DASHBOARD_KEY" "${CORRELIC_ADMIN_EMAIL:-admin@local.dev}" "$ADMIN_PASSWORD" > /certs/dashboard-credentials
+              chmod 600 /certs/dashboard-credentials
+              touch /certs/.bootstrapped
+              echo ""
+              echo "============================================"
+              echo "  Correlic bootstrap complete"
+              echo "  Org ID:     $ORG_ID"
+              echo "  Dashboard:  ${FRONTEND_URL:-https://correlic.example.com}"
+              echo "  Log in with the API key:"
+              echo "    $DASHBOARD_KEY"
+              echo "  or with ${CORRELIC_ADMIN_EMAIL:-admin@local.dev} / $ADMIN_PASSWORD"
+              echo "  Agent key (already in /certs/agent.yaml):"
+              echo "    $AGENT_KEY"
+              echo "  Also stored in the certs volume as dashboard-credentials."
+              echo "============================================"
+          envFrom:
+            - configMapRef:
+                name: correlic-config
+            - secretRef:
+                name: correlic-secrets
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+      volumes:
+        - name: certs
+          persistentVolumeClaim:
+            claimName: correlic-certs

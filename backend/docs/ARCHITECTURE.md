@@ -9,7 +9,7 @@ Correlic is designed as a **distributed security observability platform** with c
    - **macOS**: Endpoint Security Framework (ESF) with AUTH/NOTIFY events
    - **Windows**: ETW (Event Tracing for Windows) + Windows Security Audit (Event 4688/4657/4672)
 2. **Processing Layer** (Backend) — Event ingestion, sampling, 13 detection rules + 11 chain patterns, severity dampening, block rule enforcement
-3. **Storage Layer** (PostgreSQL + Neo4j) — Time-series events + process tree graph. Neo4j is **optional** — the system gracefully degrades when unavailable (graph features disabled, detection rules requiring graph context won't fire)
+3. **Storage Layer** (PostgreSQL, optionally Neo4j) — Time-series events in PostgreSQL; the process-tree graph in Neo4j. Neo4j is an **opt-in upgrade**: with `NEO4J_URI` empty (the default profile of every installer) everything runs on PostgreSQL alone except the two graph look-back rules (`ai.data_exfiltration`, `ai.excessive_writes`) and the Neo4j timeline (`/neo4j/*`, `/processes/*`). See `docs/CORRELATION_ENGINE.md` ("What needs the graph").
 4. **AI Intelligence Layer** — 3-layer context system (system profile, hierarchical rollups, learned patterns) for AI-powered incident analysis
 5. **Presentation Layer** (UI + Proxy) — Visualization, baselines, block rules, incident management
 
@@ -169,7 +169,7 @@ See `docs/LINUX_AGENT.md`, `docs/WINDOWS_AGENT.md`, `docs/MACOS_AGENT.md` and `d
 - Standard library `net/http` (router: `http.NewServeMux()`)
 - pgx database driver (via `database/sql` wrapper)
 - PostgreSQL 14+ (JSONB for event payloads)
-- Neo4j 5+ (optional — graph database for process trees + attack chains)
+- Neo4j 5+ (optional add-on — graph database for process trees + attack chains; off unless `NEO4J_URI` is set)
 - TLS 1.2+ with optional mTLS for agent authentication
 
 **Key Subsystems:**
@@ -328,7 +328,7 @@ Key endpoint groups:
 - **Process trees:** Parent-child relationships with unlimited depth traversal
 - **Attack chains:** BFS/DFS for multi-hop attack path visualization
 - **AI labeling:** Propagate AI session labels through process hierarchies
-- **Graceful degradation:** System fully functional without it; graph-dependent features simply disabled
+- **Opt-in:** PostgreSQL-only is the default profile. The graph adds exactly two detection rules (`ai.data_exfiltration`, `ai.excessive_writes` — both need the look-back window) and the graph timeline / investigation endpoints; ingestion, the other rules and chains, incidents, baselines, block rules, notifications, the dashboard and the AI chat do not depend on it. Enable it with `docker compose --profile graph`, `install.sh --with-neo4j`, the Windows installer without `-NoNeo4j`, `CORRELIC_GRAPH=on` in the all-in-one image, or the Kubernetes `overlays/graph`.
 
 ### Why Intelligent Sampling?
 - **Data volume:** Reduce storage by 90%

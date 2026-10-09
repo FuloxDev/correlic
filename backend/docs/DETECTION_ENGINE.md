@@ -293,7 +293,7 @@ Context: `match_type` ("binary" or "cmdline_pattern"), `matched_pattern`.
 
 ### ai.excessive_writes (dynamic severity)
 
-**Triggers on:** `file_open` (scope fixed from dead `file_write`) | **Window:** 30s | **MITRE:** T1485, T1486
+**Triggers on:** `file_open` (scope fixed from dead `file_write`) | **Window:** 30s | **MITRE:** T1485, T1486 | **Needs Neo4j** (the 30 s look-back is a graph query; without `NEO4J_URI` the rule never fires)
 
 Path diversity scoring — classifies paths into project vs system scopes:
 - **Project scope:** `/home/*/`, `/tmp/`, relative paths
@@ -315,7 +315,7 @@ Thresholds are per-org tunable via `RuleSettingsStore`.
 
 ### ai.data_exfiltration (critical)
 
-**Triggers on:** `net_connect` | **Window:** 15 min | **MITRE:** T1041, T1567
+**Triggers on:** `net_connect` | **Window:** 15 min | **MITRE:** T1041, T1567 | **Needs Neo4j** (session / PID-tree look-back is a graph query; without `NEO4J_URI` the rule never fires)
 
 Detects read-then-exfiltrate: AI reads sensitive file → outbound connection.
 
@@ -439,7 +439,7 @@ Context: `signal_type="container_escape"`, `pattern="{file_path}"` (file); `sign
 
 ### ai.discovery (low)
 
-**Triggers on:** `process_exec` | **Window:** 60s | **MITRE:** T1082, T1083, T1057, T1016, T1049, T1033
+**Triggers on:** `process_exec` | **Window:** 60s | **MITRE:** T1082, T1083, T1057, T1016, T1049, T1033 | **Partially graph-dependent:** the scanner signal works on PostgreSQL alone; the burst count reads the graph look-back, so without `NEO4J_URI` it only sees the current command
 
 Detects AI agent reconnaissance and pre-attack enumeration. High-value active scanners (nmap, masscan, nikto, linpeas, pspy) fire immediately at high severity. Common discovery commands (whoami, id, ifconfig, ps, netstat, etc.) only fire when 3+ distinct recon binaries execute within a 60-second window. Severity escalates with the number of distinct commands.
 
