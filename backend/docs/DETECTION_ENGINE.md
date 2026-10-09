@@ -199,6 +199,32 @@ Two-level severity:
 
 All methods populate `evt.Process.Cmdline` from Neo4j index position 5 (JSON array or fallback string).
 
+## AI Tool Recognition
+
+Rules fire only for processes inside an AI agent tree. The agent decides
+membership with the pattern list it fetches from `GET /api/v1/ai/patterns`
+(table `ai_agent_patterns`, seeded by migrations 002/003/006; org-specific
+rows come from `POST /api/v1/ai/agent-patterns` or the Settings page).
+Matching is whole-token on the process name, executable path, `argv[0]` and
+argument basenames (`agent/internal/lineage/tracker.go`); patterns shorter
+than 3 characters or containing a dot are ignored for process matching.
+
+Seeded tools (46 rows covering 43 tools; `cursor`/`Cursor` and the legacy aliases count once):
+
+| Group | Patterns (`agent_type`) |
+|-------|-------------------------|
+| CLI agents | `claude`, `aider`, `cline`, `codex`, `gemini`, `goose`, `devin`, `opencode`, `amp`, `jules`, `roo`, `crush`, `droid`, `qwen`, `auggie` (augment), `kimi`, `codebuff`, `plandex` |
+| IDEs / forks / plugins | `cursor`, `windsurf`, `antigravity`, `zed`, `trae`, `pearai`, `void`, `kiro`, `junie` |
+| Editor extensions / language servers | `copilot`, `codeium`, `tabnine`, `continue`, `supermaven` |
+| Python agent frameworks | `langchain`, `langgraph`, `llamaindex`, `autogpt`, `autogen`, `crewai`, `openhands` (+ `opendevin`), `smolagents`, `agno` (+ `phidata`), `metagpt`, `babyagi` |
+
+The vendor API domains of these tools are seeded into `safe_domains_list`
+so model traffic is not reported by `ai.data_exfiltration`. Short or
+generic names (`amp`, `roo`, `crush`, `jules`) can match unrelated
+binaries or directories; migration `006_ai_patterns_2026q4.sql` documents
+each risk, and a pattern can be removed per org through
+`DELETE /api/v1/ai/agent-patterns/{id}`.
+
 ## AI Detection Rules (13 rules + 11 chain patterns)
 
 All rules gate on `IsAIProcess()` first — only fire for processes within an AI agent tree.
