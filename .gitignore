@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+install/kubernetes/**/secret.yaml
 *.pem
 *.key
 *.crt

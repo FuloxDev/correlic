@@ -1,0 +1,18 @@
+# Holds the mTLS material the bootstrap Job generates (CA, server and client
+# certificates), the generated agent.yaml and the dashboard credentials.
+# Mounted by the Job, both backend planes and the ui-proxy.
+#
+# Limitation: ReadWriteOnce means every consumer must run on the same node;
+# the workloads carry a pod affinity on correlic.io/certs=true to guarantee
+# that. For a multi-node setup move the files into a Secret after the first
+# bootstrap (procedure in ../README.md).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: correlic-certs
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 64Mi
+  # storageClassName: <your-class>   # omit to use the cluster default

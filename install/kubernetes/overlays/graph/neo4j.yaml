@@ -1,0 +1,104 @@
+# Neo4j 5 Community, single replica, Bolt only (the HTTP browser port is not
+# exposed). The backend creates its own schema on first connection.
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j
+  labels:
+    app.kubernetes.io/name: neo4j
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: neo4j
+  ports:
+    - name: bolt
+      port: 7687
+      targetPort: bolt
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: neo4j
+  labels:
+    app.kubernetes.io/name: neo4j
+spec:
+  serviceName: neo4j
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: neo4j
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: neo4j
+    spec:
+      # uid/gid 7474 is the neo4j user of the official image.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 7474
+        runAsGroup: 7474
+        fsGroup: 7474
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: neo4j
+          image: neo4j:5-community
+          env:
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: correlic-secrets
+                  key: NEO4J_AUTH
+            - name: NEO4J_PLUGINS
+              value: "[]"
+            - name: NEO4J_server_memory_heap_initial__size
+              value: 512m
+            - name: NEO4J_server_memory_heap_max__size
+              value: 1g
+            - name: NEO4J_server_memory_pagecache_size
+              value: 512m
+            - name: NEO4J_db_transaction_timeout
+              value: 30s
+            - name: NEO4J_dbms_usage__report_enabled
+              value: "false"
+          ports:
+            - name: bolt
+              containerPort: 7687
+          startupProbe:
+            tcpSocket:
+              port: bolt
+            periodSeconds: 10
+            failureThreshold: 30   # first start can take a few minutes
+          readinessProbe:
+            tcpSocket:
+              port: bolt
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: bolt
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1536Mi
+            limits:
+              cpu: "2"
+              memory: 2560Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # readOnlyRootFilesystem stays off: the image writes /logs and
+            # rewrites its configuration from NEO4J_* at startup.
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

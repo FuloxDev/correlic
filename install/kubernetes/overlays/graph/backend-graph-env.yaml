@@ -1,0 +1,19 @@
+# JSON patch applied to both backend Deployments: turns the graph on.
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: NEO4J_URI
+    value: bolt://neo4j:7687
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: NEO4J_USERNAME
+    value: neo4j
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: NEO4J_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: correlic-secrets
+        key: NEO4J_PASSWORD

@@ -1,0 +1,108 @@
+# ui-proxy: holds the mTLS client certificate on behalf of the dashboard and
+# forwards the dashboard's API calls to backend-api. Internal only — reached
+# by the ui pods, never exposed through the Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui-proxy
+  labels:
+    app.kubernetes.io/name: ui-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: ui-proxy
+  ports:
+    - name: http
+      port: 8788
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui-proxy
+  labels:
+    app.kubernetes.io/name: ui-proxy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # the certs volume is ReadWriteOnce
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ui-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ui-proxy
+        correlic.io/certs: "true"
+    spec:
+      # Same uid as the bootstrap Job so the 0600 key files are readable.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  correlic.io/certs: "true"
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: ui-proxy
+          image: ghcr.io/fuloxdev/correlic-ui-proxy:v1.0.1
+          env:
+            - name: PORT
+              value: "8788"
+            - name: BIND_HOST
+              value: "0.0.0.0"
+            - name: NODE_ENV
+              value: production
+            - name: BACKEND_API
+              value: https://backend-api:8080
+            - name: MTLS_CA
+              value: /certs/ca.crt
+            - name: MTLS_CERT
+              value: /certs/client.crt
+            - name: MTLS_KEY
+              value: /certs/client.key
+            - name: ALLOWED_ORIGINS
+              valueFrom:
+                configMapKeyRef:
+                  name: correlic-config
+                  key: DASHBOARD_ORIGINS
+          ports:
+            - name: http
+              containerPort: 8788
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: certs
+          persistentVolumeClaim:
+            claimName: correlic-certs
