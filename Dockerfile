@@ -14,6 +14,14 @@
 # /var/lib/correlic/dashboard-credentials inside the data volume.
 # Dashboard: http://localhost:3001
 #
+# Graph switch: the image bundles Neo4j and starts it by default
+# (CORRELIC_GRAPH=on). Add `-e CORRELIC_GRAPH=off` to run on PostgreSQL
+# alone: supervisord never starts Neo4j and NEO4J_URI stays unset for both
+# backend planes, which drops the two graph look-back rules
+# (ai.data_exfiltration, ai.excessive_writes) and the Neo4j timeline and
+# keeps everything else. The Neo4j data directory in the volume is
+# preserved, so the switch can be flipped back later.
+#
 # Built for linux/amd64 and linux/arm64 (.github/workflows/release-images.yml).
 # The Go stages are pinned to $BUILDPLATFORM and cross-compile with
 # GOARCH=$TARGETARCH; the Node.js build stages and the runtime stage run per

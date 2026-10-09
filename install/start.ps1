@@ -59,9 +59,11 @@ if (Test-Path $pgCtl) {
     $health["PostgreSQL"] = $pgReady
 }
 
-# 2. Neo4j
+# 2. Neo4j (skipped when the installer wrote the -NoNeo4j marker)
 $neo4jHome = "$Dir\neo4j"
-if (Test-Path "$neo4jHome\bin\neo4j.bat") {
+if (Test-Path "$Dir\.no-neo4j") {
+    Write-Host "  [--] " -ForegroundColor Gray -NoNewline; Write-Host "Neo4j not started (PostgreSQL-only profile)"
+} elseif (Test-Path "$neo4jHome\bin\neo4j.bat") {
     $env:JAVA_HOME = "$Dir\jre"
     $env:NEO4J_HOME = $neo4jHome
 

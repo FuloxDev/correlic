@@ -2,6 +2,38 @@
 
 The correlation engine maps all kernel/AI events into a connected graph, establishing process trees, activity edges, and AI attribution. It operates in two tiers: real-time process tree building and batched activity correlation.
 
+## What needs the graph (Neo4j is opt-in)
+
+Neo4j is an optional upgrade. Both backend planes start without it whenever
+`NEO4J_URI` is empty (the default in every install profile: `docker compose up`
+without `--profile graph`, `install.sh --without-neo4j`, `install.ps1 -NoNeo4j`,
+the all-in-one image with `CORRELIC_GRAPH=off`, the Kubernetes base overlay).
+A configured but unreachable Neo4j logs one warning and the planes run without it.
+
+Exactly these features require the graph:
+
+| Feature | Without Neo4j |
+|---------|---------------|
+| **`ai.data_exfiltration`** — read-then-exfiltrate correlation over the last 15 min (`GetRecentEventsBySession` / `GetProcessAncestors` / `GetRecentEventsMultiPID`) | Does not fire: the look-back returns no events |
+| **`ai.excessive_writes`** — file-write burst scoring over the last 30 s (`GetRecentEvents`) | Does not fire: the look-back returns no events |
+| **Graph timeline** — `/neo4j/timeline`, `/neo4j/process-tree`, `/neo4j/attack-path`, `/processes/tree`, `/processes/activity`, `/processes/summary`, `/neo4j/investigation/*` | Routes are not registered (404); the UI hides the graph views |
+| Tier 1 process-tree writer, Tier 2 batched correlation, AI label propagation, graph-backed incident context | Disabled |
+
+`ai.discovery` is a partial case: its active-scanner signal (nmap, masscan, …)
+fires without the graph; its "3+ distinct discovery commands in 60 s" burst
+reads the same look-back window, so on PostgreSQL alone it only ever sees the
+current command and does not reach the threshold.
+
+Everything else works on PostgreSQL alone: ingestion and sampling, the other
+11 detection rules and all 11 chain patterns (AI attribution comes from the
+agent's own session tags and the attribution cache, see
+`detection.AttributionQuerier`), baselines, exceptions, incidents, block rules,
+notifications, the dashboard (including the live activity feed and the Agent
+Activity page, which `/agents/activity` serves from the events table), the AI
+explain/chat endpoints and the MCP server. `GET /health` reports
+`detection_graph: enabled|disabled` so an operator can see which mode a plane
+runs in.
+
 ## Architecture
 
 ```
@@ -332,7 +364,7 @@ type GraphQuerier interface {
 
 ## Resilience & Edge Cases
 
-- **Neo4j optional**: If unavailable, Tier 1 + Tier 2 disabled gracefully. Detection rules that need graph context return empty results (some rules degrade).
+- **Neo4j optional**: If unavailable, Tier 1 + Tier 2 disabled gracefully. The look-back queries return empty results, so `ai.data_exfiltration` and `ai.excessive_writes` never fire and `ai.discovery` loses its burst signal (see "What needs the graph" above); every other rule is unaffected.
 - **Non-blocking persistence**: Buffer drops when full; ProcessTreeWriter errors logged but don't fail ingestion; GraphPersister errors in Builder don't fail correlation.
 - **PID reuse**: First occurrence per PID wins for parent lookup. No time limit on parent search (supports long-running daemons).
 - **Unpaired exits**: process_exit without matching process_exec filtered from graph nodes.

@@ -5,6 +5,17 @@ set -euo pipefail
 # Self-hosted security observability — all data stays on your device
 #
 # Usage: curl -sSL https://raw.githubusercontent.com/FuloxDev/correlic/main/install/install.sh | sudo bash
+#
+# Options (pass them after `bash -s --`, e.g. `| sudo bash -s -- --without-neo4j`):
+#   --without-neo4j   PostgreSQL-only profile: skips the Java and Neo4j steps and
+#                     leaves NEO4J_* out of /opt/correlic/.env and the systemd units.
+#                     Everything except the two graph look-back rules
+#                     (ai.data_exfiltration, ai.excessive_writes) and the Neo4j
+#                     timeline works on PostgreSQL alone.
+#   --with-neo4j      Install the graph (the default on a fresh install; an
+#                     upgrade keeps whatever profile the existing .env has).
+# Environment:
+#   CORRELIC_NEO4J=no|yes   Same as the flags, for `curl | sudo -E bash`.
 # ============================================================
 
 VERSION="1.0.1"
@@ -148,6 +159,33 @@ cleanup() {
   exit "$exit_code"
 }
 trap cleanup EXIT
+
+# ── Options ──────────────────────────────────────────────────
+# NEO4J_CHOICE: "yes", "no" or "auto" (fresh install → yes; upgrade → whatever
+# the existing .env says). Resolved into WITH_NEO4J once the install type is known.
+
+usage() {
+  echo "Usage: install.sh [--with-neo4j | --without-neo4j]"
+  echo "  --without-neo4j   PostgreSQL-only profile (no Java, no Neo4j); CORRELIC_NEO4J=no does the same"
+  echo "  --with-neo4j      Install the Neo4j graph as well (default on a fresh install)"
+}
+
+NEO4J_CHOICE="${CORRELIC_NEO4J:-}"
+for arg in "$@"; do
+  case "$arg" in
+    --without-neo4j|--no-neo4j) NEO4J_CHOICE="no" ;;
+    --with-neo4j)               NEO4J_CHOICE="yes" ;;
+    -h|--help)                  usage; exit 0 ;;
+    *)                          usage; fail "Unknown option: $arg" ;;
+  esac
+done
+case "$(echo "$NEO4J_CHOICE" | tr '[:upper:]' '[:lower:]')" in
+  ""|auto)          NEO4J_CHOICE="auto" ;;
+  yes|y|true|on|1)  NEO4J_CHOICE="yes" ;;
+  no|n|false|off|0) NEO4J_CHOICE="no" ;;
+  *)                fail "CORRELIC_NEO4J must be yes or no (got '$NEO4J_CHOICE')" ;;
+esac
+WITH_NEO4J=true
 
 # ── Header ───────────────────────────────────────────────────
 
@@ -326,6 +364,21 @@ if [ -f "$INSTALL_DIR/.env" ]; then
   fi
 else
   log "  Fresh installation"
+fi
+
+# ── Resolve the database profile ─────────────────────────────
+# auto: a fresh install gets the graph; an upgrade keeps the profile of its
+# .env (an empty or missing NEO4J_URI means it was installed --without-neo4j).
+case "$NEO4J_CHOICE" in
+  yes) WITH_NEO4J=true ;;
+  no)  WITH_NEO4J=false ;;
+  *)   if [ "$IS_UPGRADE" = true ] && [ -z "${NEO4J_URI:-}" ]; then WITH_NEO4J=false; else WITH_NEO4J=true; fi ;;
+esac
+if [ "$WITH_NEO4J" = true ]; then
+  ok "Profile: PostgreSQL + Neo4j graph"
+else
+  ok "Profile: PostgreSQL only (graph features off)"
+  detail "Add the graph later with: --with-neo4j (or CORRELIC_NEO4J=yes)"
 fi
 
 # ── Download ─────────────────────────────────────────────────
@@ -509,6 +562,15 @@ fi
 # 5. Install Neo4j 5
 # ==============================================================
 step 5 "Setting up Neo4j..."
+
+NEO4J_BOLT_PORT=""
+if [ "$WITH_NEO4J" = false ]; then
+  ok "Skipped — PostgreSQL-only profile (no Java, no Neo4j)"
+  detail "ai.data_exfiltration, ai.excessive_writes and the Neo4j timeline stay off; everything else runs"
+fi
+
+# Everything up to "end of the Neo4j step" runs only with the graph profile.
+if [ "$WITH_NEO4J" = true ]; then
 
 # ── Helper: determine minimum Java version for a Neo4j release ─
 # Neo4j 5.x requires Java 17+, Neo4j 2025.x (11+) requires Java 21+
@@ -716,9 +778,9 @@ else
   detail "Neo4j Bolt port 7687 available"
 fi
 
-# ── Configure Neo4j (only on fresh install) ──────────────────
+# ── Configure Neo4j (fresh install, or an upgrade that adds the graph) ─
 
-if [ "$IS_UPGRADE" = false ]; then
+if [ "$IS_UPGRADE" = false ] || [ -z "${NEO4J_PASSWORD:-}" ]; then
   NEO4J_PASSWORD=$(openssl rand -hex 16)
   neo4j-admin dbms set-initial-password "$NEO4J_PASSWORD" 2>/dev/null || true
   detail "Neo4j password configured"
@@ -835,13 +897,16 @@ else
        Correlic needs at least 2GB free RAM for Neo4j.
        Free up memory or reduce heap size in /etc/neo4j/neo4j.conf and re-run."
   else
-    fail "Neo4j is required but failed to start. Check the logs above for details.
+    fail "Neo4j failed to start. Check the logs above for details.
        Common fixes:
        - Java version: apt install openjdk-21-jre-headless
        - Port conflict: ss -tlnp | grep :$NEO4J_BOLT_PORT
-       - Permissions:   ls -la /var/lib/neo4j/data/"
+       - Permissions:   ls -la /var/lib/neo4j/data/
+       Or install without the graph: re-run with --without-neo4j"
   fi
 fi
+
+fi  # end of the Neo4j step (WITH_NEO4J)
 
 # ==============================================================
 # 6. Generate mTLS certificates
@@ -909,12 +974,20 @@ if [ "$IS_UPGRADE" = false ]; then
   # (API key + password) and one restricted key for the agent.
   API_KEY=""
 
+  if [ "$WITH_NEO4J" = true ]; then
+    NEO4J_ENV="NEO4J_URI=bolt://localhost:${NEO4J_BOLT_PORT}
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=${NEO4J_PASSWORD}"
+  else
+    NEO4J_ENV="# Graph database (optional). An empty NEO4J_URI runs on PostgreSQL alone;
+# re-run the installer with --with-neo4j to add it.
+NEO4J_URI="
+  fi
+
   log "  Writing backend config (.env)..."
   cat > "$INSTALL_DIR/.env" <<EOF
 DATABASE_URL=postgres://correlic:${DB_PASSWORD}@localhost:${PG_PORT}/correlic?sslmode=disable
-NEO4J_URI=bolt://localhost:${NEO4J_BOLT_PORT}
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=${NEO4J_PASSWORD}
+${NEO4J_ENV}
 TLS_CERT_FILE=${INSTALL_DIR}/certs/server.crt
 TLS_KEY_FILE=${INSTALL_DIR}/certs/server.key
 MTLS_CA_FILE=${INSTALL_DIR}/certs/ca.crt
@@ -961,13 +1034,30 @@ EOF
 else
   ok "Configuration preserved from previous install"
 
-  # Patch preserved configs if Neo4j bolt port changed (e.g. due to port conflict in step 5)
+  # Reconcile the graph settings of the preserved .env with the chosen profile:
+  # bolt port changes (port conflict in step 5), a graph added by --with-neo4j,
+  # or a graph switched off by --without-neo4j (NEO4J_URI emptied, password kept).
   if [ -f "$INSTALL_DIR/.env" ]; then
     OLD_NEO4J_URI=$(grep "^NEO4J_URI=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2-)
-    NEW_NEO4J_URI="bolt://localhost:${NEO4J_BOLT_PORT}"
-    if [ -n "$OLD_NEO4J_URI" ] && [ "$OLD_NEO4J_URI" != "$NEW_NEO4J_URI" ]; then
-      sed -i "s|^NEO4J_URI=.*|NEO4J_URI=${NEW_NEO4J_URI}|" "$INSTALL_DIR/.env"
-      detail "Updated NEO4J_URI in .env ($OLD_NEO4J_URI → $NEW_NEO4J_URI)"
+    if [ "$WITH_NEO4J" = true ]; then
+      NEW_NEO4J_URI="bolt://localhost:${NEO4J_BOLT_PORT}"
+      if [ "$OLD_NEO4J_URI" != "$NEW_NEO4J_URI" ]; then
+        if grep -q "^NEO4J_URI=" "$INSTALL_DIR/.env"; then
+          sed -i "s|^NEO4J_URI=.*|NEO4J_URI=${NEW_NEO4J_URI}|" "$INSTALL_DIR/.env"
+        else
+          echo "NEO4J_URI=${NEW_NEO4J_URI}" >> "$INSTALL_DIR/.env"
+        fi
+        detail "Updated NEO4J_URI in .env (${OLD_NEO4J_URI:-unset} → $NEW_NEO4J_URI)"
+      fi
+      grep -q "^NEO4J_USERNAME=" "$INSTALL_DIR/.env" || echo "NEO4J_USERNAME=neo4j" >> "$INSTALL_DIR/.env"
+      if ! grep -q "^NEO4J_PASSWORD=.\+" "$INSTALL_DIR/.env"; then
+        sed -i "/^NEO4J_PASSWORD=/d" "$INSTALL_DIR/.env"
+        echo "NEO4J_PASSWORD=${NEO4J_PASSWORD}" >> "$INSTALL_DIR/.env"
+        detail "Added the Neo4j password to .env"
+      fi
+    elif [ -n "$OLD_NEO4J_URI" ]; then
+      sed -i "s|^NEO4J_URI=.*|NEO4J_URI=|" "$INSTALL_DIR/.env"
+      detail "Graph switched off: NEO4J_URI emptied in .env (NEO4J_PASSWORD kept for later)"
     fi
   fi
 fi
@@ -1318,11 +1408,15 @@ fi
 
 log "  Creating service files..."
 
+# The backend planes only wait for Neo4j when the graph profile is installed.
+NEO4J_UNIT=""
+if [ "$WITH_NEO4J" = true ]; then NEO4J_UNIT=" neo4j.service"; fi
+
 cat > /etc/systemd/system/correlic-api.service <<EOF
 [Unit]
 Description=Correlic Backend API
-After=network.target postgresql.service neo4j.service
-Wants=postgresql.service neo4j.service
+After=network.target postgresql.service${NEO4J_UNIT}
+Wants=postgresql.service${NEO4J_UNIT}
 
 [Service]
 Type=simple
@@ -1342,8 +1436,8 @@ EOF
 cat > /etc/systemd/system/correlic-telemetry.service <<EOF
 [Unit]
 Description=Correlic Telemetry Ingestion
-After=network.target postgresql.service neo4j.service
-Wants=postgresql.service neo4j.service
+After=network.target postgresql.service${NEO4J_UNIT}
+Wants=postgresql.service${NEO4J_UNIT}
 
 [Service]
 Type=simple
@@ -1524,6 +1618,11 @@ if [ -n "$GENERATED_API_KEY" ]; then
 fi
 echo -e "  API Proxy:    ${CYAN}http://localhost:${PROXY_PORT}${NC}  (loopback only)"
 echo -e "  API (mTLS):   ${CYAN}https://localhost:${API_PORT}${NC}"
+if [ "$WITH_NEO4J" = true ]; then
+  echo -e "  Profile:      PostgreSQL + Neo4j graph (bolt://localhost:${NEO4J_BOLT_PORT})"
+else
+  echo -e "  Profile:      PostgreSQL only — add the graph later with: ${CYAN}--with-neo4j${NC}"
+fi
 echo -e "  Install dir:  $INSTALL_DIR"
 echo ""
 echo -e "  The dashboard listens on localhost only. To reach it from another machine,"
