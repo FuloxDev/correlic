@@ -761,9 +761,15 @@ func main() {
 		log.Println("debug endpoints enabled (admin only): /debug/vars, /debug/pprof/*")
 	}
 
-	log.Println("Correlic backend listening on :8080")
+	// LISTEN_ADDR overrides the bind address (default ":8080"); used by the
+	// integration tests to run several stacks side by side.
+	listenAddr := os.Getenv("LISTEN_ADDR")
+	if listenAddr == "" {
+		listenAddr = ":8080"
+	}
+	log.Printf("Correlic backend listening on %s", listenAddr)
 	srv := &http.Server{
-		Addr:              ":8080",
+		Addr:              listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

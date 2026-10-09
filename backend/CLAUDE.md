@@ -7,7 +7,7 @@ Go API server. Receives telemetry from agents (Linux/macOS/Windows), applies int
 - Go 1.26+, standard library `net/http` (`http.NewServeMux()`), pgx driver (via `database/sql`)
 - PostgreSQL 14+ (JSONB for event payloads)
 - Neo4j 5+ (optional — graph database for process trees + attack chains)
-- Env vars: `DATABASE_URL`, `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `MTLS_CA_FILE`, `ALLOW_API_KEY_AUTH`, `ENABLE_DEBUG_ENDPOINTS`, `CORRELIC_RATE_LIMIT_PER_MIN`, `LLM_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `FRONTEND_URL`
+- Env vars: `DATABASE_URL`, `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `MTLS_CA_FILE`, `ALLOW_API_KEY_AUTH`, `ENABLE_DEBUG_ENDPOINTS`, `CORRELIC_RATE_LIMIT_PER_MIN`, `LLM_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `FRONTEND_URL`, `LISTEN_ADDR` (api, default `:8080`), `TELEMETRY_LISTEN_ADDR` (default `:8081`)
 
 ## Directory Structure
 ```

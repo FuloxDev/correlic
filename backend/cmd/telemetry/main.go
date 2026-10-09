@@ -298,9 +298,14 @@ func main() {
 	defer cancel()
 	maintenance.StartRetentionCleanup(ctx, db, maintenance.LoadRetentionConfig())
 
-	log.Println("Correlic telemetry plane listening on :8081")
+	// TELEMETRY_LISTEN_ADDR overrides the bind address (default ":8081").
+	listenAddr := os.Getenv("TELEMETRY_LISTEN_ADDR")
+	if listenAddr == "" {
+		listenAddr = ":8081"
+	}
+	log.Printf("Correlic telemetry plane listening on %s", listenAddr)
 	srv := &http.Server{
-		Addr:              ":8081",
+		Addr:              listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
