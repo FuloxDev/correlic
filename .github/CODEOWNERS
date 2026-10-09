@@ -1,0 +1,22 @@
+# Code owners are requested for review on every pull request that touches
+# the matching paths and, with branch protection's "require review from code
+# owners", must approve before it merges. One maintainer today; add teams or
+# people per area as the project grows.
+
+# Everything, unless a later line matches.
+*                       @FuloxDev
+
+# Security-critical paths, listed so that the ownership is explicit and a
+# future split of ownership does not loosen review of these by accident.
+/.github/               @FuloxDev
+/SECURITY.md            @FuloxDev
+/backend/internal/api/middleware/   @FuloxDev
+/backend/internal/ingest/           @FuloxDev
+/backend/internal/ai/provider/      @FuloxDev
+/agent/internal/ebpf/   @FuloxDev
+/agent/internal/enforcer/   @FuloxDev
+/agent/cmd/correlic-hook/   @FuloxDev
+/ui-proxy/              @FuloxDev
+/install/               @FuloxDev
+/Dockerfile             @FuloxDev
+/entrypoint.sh          @FuloxDev
