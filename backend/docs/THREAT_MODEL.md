@@ -5,7 +5,7 @@ not see, and where the mitigations live in the code. Read it before changing
 anything on the ingest path, the agent, the hook or the release pipeline, and
 read it as a self-hoster to decide whether the residual risks are acceptable.
 
-Companion documents: [`../../SECURITY.md`](../../SECURITY.md) (reporting,
+Companion documents: [`../../SECURITY.md`](https://github.com/FuloxDev/correlic/blob/main/SECURITY.md) (reporting,
 hardening checklist, verifying a release), [`AUTH_AND_RBAC.md`](AUTH_AND_RBAC.md),
 [`ARCHITECTURE.md`](ARCHITECTURE.md), [`HOOKS.md`](HOOKS.md),
 [`LINUX_AGENT.md`](LINUX_AGENT.md), [`MACOS_AGENT.md`](MACOS_AGENT.md),

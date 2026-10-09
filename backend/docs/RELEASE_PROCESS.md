@@ -2,7 +2,7 @@
 
 How a Correlic release is cut, what gets signed and where, how to rotate the
 optional GPG key, and how anyone can verify the result. The verification
-commands are the same as in [`../../SECURITY.md`](../../SECURITY.md)
+commands are the same as in [`../../SECURITY.md`](https://github.com/FuloxDev/correlic/blob/main/SECURITY.md)
 ("Verifying a release"); the threat model for the pipeline is in
 [`THREAT_MODEL.md`](THREAT_MODEL.md) (attacker A4).
 
