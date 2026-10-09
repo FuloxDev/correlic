@@ -156,6 +156,8 @@ Correlic is a distributed security observability platform that monitors AI codin
 | AI process race conditions | `docs/ai_process_tracking.md` |
 | Suspicious file patterns | `docs/suspicious-files-reference.md` |
 | Roadmap | `docs/ROADMAP.md` |
+| Threat model (assets, trust boundaries, attacker models, limits) | `docs/THREAT_MODEL.md` |
+| Release process (signing, SBOMs, provenance, verification) | `docs/RELEASE_PROCESS.md` |
 
 ## Backend Package Map
 
