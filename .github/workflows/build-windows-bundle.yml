@@ -3,6 +3,16 @@ name: Build Windows bundle
 # Produces the self-contained Windows install bundle (zip) with PostgreSQL,
 # Neo4j, a JRE and Node.js alongside the Correlic binaries and dashboard.
 # Everything Correlic-specific is built from this repository.
+#
+# Supply chain (see SECURITY.md "Verifying a release" and
+# backend/docs/RELEASE_PROCESS.md): the zip and the SHA256SUMS file are
+# signed with Sigstore keyless signing (cosign sign-blob; the certificate
+# identity is this workflow file, the issuer GitHub's OIDC provider, the
+# signature is in the public Rekor log) and the bundle `<asset>.sigstore.json`
+# is published next to the asset. syft writes an SPDX SBOM
+# `correlic-windows-<v>.zip.spdx.json` of the bundle directory (Correlic
+# binaries, dashboard, Node.js, PostgreSQL, Neo4j and the JRE); it is listed
+# in SHA256SUMS-windows.txt, so the signed checksum file covers it.
 
 on:
   push:
@@ -21,7 +31,8 @@ env:
   TEMURIN_VERSION_FILE: "17.0.18_8"
 
 permissions:
-  contents: write
+  contents: write  # attach assets to the draft release
+  id-token: write  # Sigstore keyless signing (OIDC token for Fulcio)
 
 jobs:
   build:
@@ -108,10 +119,51 @@ jobs:
           cp install/start.ps1 install/stop.ps1 install/uninstall.ps1 install/install-agent.ps1 install/uninstall-agent.ps1 bundle/
           mkdir -p bundle/certs bundle/logs
 
+      # syft (via the anchore/sbom-action installer) writes the SPDX SBOM.
+      # Pinned to a release tag for now; a candidate for SHA pinning once the
+      # Scorecard workflow is green.
+      - uses: anchore/sbom-action/download-syft@v0
+        id: syft
+
+      - name: SPDX SBOM of the bundle directory
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          "$SYFT" scan dir:bundle --source-name correlic-windows --source-version "${{ steps.v.outputs.version }}" \
+            -o "spdx-json=correlic-windows-${{ steps.v.outputs.version }}.zip.spdx.json"
+          ls -l correlic-windows-*.spdx.json
+
+      # The checksum file lists the zip and its SBOM; it is signed below, so
+      # verifying SHA256SUMS-windows.txt covers the SBOM as well.
       - name: Bundle everything
         run: |
           (cd bundle && zip -qr ../correlic-windows-${{ steps.v.outputs.version }}.zip .)
-          sha256sum correlic-windows-${{ steps.v.outputs.version }}.zip > SHA256SUMS-windows.txt
+          sha256sum correlic-windows-${{ steps.v.outputs.version }}.zip correlic-windows-${{ steps.v.outputs.version }}.zip.spdx.json > SHA256SUMS-windows.txt
+
+      # ── Sigstore keyless signatures (cosign) ───────────────────
+      # Candidate for SHA pinning once the Scorecard workflow is green.
+      - uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign the bundle and the checksums (cosign sign-blob)
+        run: |
+          for f in correlic-windows-${{ steps.v.outputs.version }}.zip SHA256SUMS-windows.txt; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
+          ls -l ./*.sigstore.json
+
+      # Fail here, not on a user's machine. The identity is this workflow
+      # file; the issuer is GitHub's OIDC provider.
+      - name: Verify the signatures
+        env:
+          IDENTITY_RE: ^https://github.com/${{ github.repository }}/\.github/workflows/build-windows-bundle\.yml@
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          for f in correlic-windows-${{ steps.v.outputs.version }}.zip SHA256SUMS-windows.txt; do
+            cosign verify-blob --bundle "$f.sigstore.json" \
+              --certificate-identity-regexp "$IDENTITY_RE" \
+              --certificate-oidc-issuer "$ISSUER" "$f"
+          done
+          sha256sum -c SHA256SUMS-windows.txt
 
       - uses: actions/upload-artifact@v6
         with:
@@ -119,6 +171,8 @@ jobs:
           path: |
             correlic-windows-${{ steps.v.outputs.version }}.zip
             SHA256SUMS-windows.txt
+            *.sigstore.json
+            *.spdx.json
           retention-days: 14
 
       # Runs for tag pushes and manual dispatches alike. With an explicit tag_name
@@ -132,3 +186,5 @@ jobs:
           files: |
             correlic-windows-${{ steps.v.outputs.version }}.zip
             SHA256SUMS-windows.txt
+            *.sigstore.json
+            *.spdx.json

@@ -12,6 +12,16 @@ name: Build Linux bundle
 # (correlic-linux-<v>.tar.gz, correlic_<v>_amd64.deb, correlic-<v>-1.x86_64.rpm);
 # the arm64 ones are correlic-linux-<v>-arm64.tar.gz, correlic_<v>_arm64.deb
 # and correlic-<v>-1.aarch64.rpm. SHA256SUMS-linux.txt covers all of them.
+#
+# Supply chain (see SECURITY.md "Verifying a release" and
+# backend/docs/RELEASE_PROCESS.md): every tar.gz, .deb, .rpm and the
+# SHA256SUMS file is signed with Sigstore keyless signing (cosign sign-blob;
+# the certificate identity is this workflow file, the issuer GitHub's OIDC
+# provider, the signature is in the public Rekor log) and the bundle
+# `<asset>.sigstore.json` is published next to the asset. syft writes an SPDX
+# SBOM `<asset>.spdx.json` of each bundle and package tree; the SBOMs are
+# listed in SHA256SUMS-linux.txt, so the signed checksum file covers them.
+# The optional GPG signing of .deb/.rpm (GPG_PRIVATE_KEY secret) is unchanged.
 
 on:
   push:
@@ -29,7 +39,8 @@ env:
   ARCHES: "amd64 arm64"
 
 permissions:
-  contents: write
+  contents: write  # attach assets to the draft release
+  id-token: write  # Sigstore keyless signing (OIDC token for Fulcio)
 
 jobs:
   build:
@@ -129,7 +140,15 @@ jobs:
           curl -fsSL --retry 3 -o /tmp/nfpm.tar.gz https://github.com/goreleaser/nfpm/releases/download/v2.46.0/nfpm_2.46.0_Linux_x86_64.tar.gz
           sudo tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
 
+      # syft (via the anchore/sbom-action installer) writes the SPDX SBOMs.
+      # Pinned to a release tag for now; a candidate for SHA pinning once the
+      # Scorecard workflow is green.
+      - uses: anchore/sbom-action/download-syft@v0
+        id: syft
+
       - name: Build .deb and .rpm
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           # nfpm resolves `src:` paths against the working directory, so the
           # package filesystem is assembled in pkg/ once per architecture and
@@ -149,10 +168,22 @@ jobs:
             sed -e "s/\${VERSION}/${{ steps.v.outputs.bare }}/" -e "s/\${ARCH}/$ARCH/" install/linux/nfpm.yml > nfpm.yml
             nfpm package -p deb -f nfpm.yml -t .
             nfpm package -p rpm -f nfpm.yml -t .
+            # One SPDX SBOM of the package tree, named after the .deb and the
+            # .rpm it became (nfpm's default file names; checked, so a naming
+            # change here fails the build instead of producing orphan SBOMs).
+            case "$ARCH" in amd64) RPMARCH=x86_64 ;; arm64) RPMARCH=aarch64 ;; *) echo "no rpm arch for $ARCH" >&2; exit 1 ;; esac
+            DEB="correlic_${{ steps.v.outputs.bare }}_${ARCH}.deb"
+            RPM="correlic-${{ steps.v.outputs.bare }}-1.${RPMARCH}.rpm"
+            [ -f "$DEB" ] && [ -f "$RPM" ] || { echo "expected $DEB and $RPM" >&2; ls -l; exit 1; }
+            "$SYFT" scan dir:pkg --source-name correlic --source-version "${{ steps.v.outputs.bare }}" \
+              -o "spdx-json=${DEB}.spdx.json"
+            cp "${DEB}.spdx.json" "${RPM}.spdx.json"
           done
-          ls -l correlic_*.deb correlic-*.rpm
+          ls -l correlic_*.deb correlic-*.rpm ./*.spdx.json
 
       - name: Build tar.gz bundles
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           for ARCH in $ARCHES; do
             rm -rf bundle
@@ -168,8 +199,10 @@ jobs:
             # amd64 keeps the historical asset name; other architectures carry a suffix
             SUFFIX=""; [ "$ARCH" = amd64 ] || SUFFIX="-$ARCH"
             tar -czf "correlic-linux-${{ steps.v.outputs.version }}${SUFFIX}.tar.gz" -C bundle .
+            "$SYFT" scan dir:bundle --source-name correlic-linux --source-version "${{ steps.v.outputs.version }}" \
+              -o "spdx-json=correlic-linux-${{ steps.v.outputs.version }}${SUFFIX}.tar.gz.spdx.json"
           done
-          ls -l correlic-linux-*.tar.gz
+          ls -l correlic-linux-*.tar.gz correlic-linux-*.spdx.json
 
       # ── Optional package signing (only if a key is configured) ─
       - name: Sign packages
@@ -200,8 +233,35 @@ jobs:
           [ -f correlic.gpg.key ] && cp correlic.gpg.key repo/ || true
           tar -czf correlic-linux-repo-${{ steps.v.outputs.version }}.tar.gz repo
 
+      # The checksum file lists every asset including the SBOMs; it is signed
+      # below, so verifying SHA256SUMS-linux.txt covers the SBOMs as well.
       - name: Checksums
-        run: sha256sum correlic-linux-${{ steps.v.outputs.version }}.tar.gz correlic-linux-${{ steps.v.outputs.version }}-arm64.tar.gz correlic_*.deb correlic-*.rpm > SHA256SUMS-linux.txt
+        run: sha256sum correlic-linux-${{ steps.v.outputs.version }}.tar.gz correlic-linux-${{ steps.v.outputs.version }}-arm64.tar.gz correlic-linux-repo-${{ steps.v.outputs.version }}.tar.gz correlic_*.deb correlic-*.rpm *.spdx.json > SHA256SUMS-linux.txt
+
+      # ── Sigstore keyless signatures (cosign) ───────────────────
+      # Candidate for SHA pinning once the Scorecard workflow is green.
+      - uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign assets and checksums (cosign sign-blob)
+        run: |
+          for f in correlic-linux-*.tar.gz correlic_*.deb correlic-*.rpm SHA256SUMS-linux.txt; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
+          ls -l ./*.sigstore.json
+
+      # Fail here, not on a user's machine. The identity is this workflow
+      # file; the issuer is GitHub's OIDC provider.
+      - name: Verify the signatures
+        env:
+          IDENTITY_RE: ^https://github.com/${{ github.repository }}/\.github/workflows/build-linux-bundle\.yml@
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          for f in correlic-linux-*.tar.gz correlic_*.deb correlic-*.rpm SHA256SUMS-linux.txt; do
+            cosign verify-blob --bundle "$f.sigstore.json" \
+              --certificate-identity-regexp "$IDENTITY_RE" \
+              --certificate-oidc-issuer "$ISSUER" "$f"
+          done
+          sha256sum -c SHA256SUMS-linux.txt
 
       - uses: actions/upload-artifact@v6
         with:
@@ -213,6 +273,8 @@ jobs:
             correlic_*.deb
             correlic-*.rpm
             SHA256SUMS-linux.txt
+            *.sigstore.json
+            *.spdx.json
           retention-days: 14
 
       # Runs for tag pushes and manual dispatches alike. With an explicit tag_name
@@ -230,3 +292,5 @@ jobs:
             correlic_*.deb
             correlic-*.rpm
             SHA256SUMS-linux.txt
+            *.sigstore.json
+            *.spdx.json
