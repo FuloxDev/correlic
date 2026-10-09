@@ -2,30 +2,35 @@ package notification
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
+
+	"github.com/correlic/correlic-backend/internal/secrets"
 )
 
 // DeliveryWorker polls the delivery queue and dispatches to senders.
 type DeliveryWorker struct {
 	deliveryStore *DeliveryStore
 	endpointStore *EndpointStore
-	webhook       *WebhookSender
-	slack         *SlackSender
+	senders       *Senders
 	pollInterval  time.Duration
 	done          chan struct{}
 }
 
-// NewDeliveryWorker creates a new delivery worker.
-func NewDeliveryWorker(deliveryStore *DeliveryStore, endpointStore *EndpointStore) *DeliveryWorker {
+// NewDeliveryWorker creates a new delivery worker. senders may be nil, in
+// which case a default set without a secret cipher or dashboard URL is used.
+func NewDeliveryWorker(deliveryStore *DeliveryStore, endpointStore *EndpointStore, senders *Senders) *DeliveryWorker {
 	if deliveryStore == nil || endpointStore == nil {
 		return nil
+	}
+	if senders == nil {
+		senders = NewSenders(SenderOptions{})
 	}
 	return &DeliveryWorker{
 		deliveryStore: deliveryStore,
 		endpointStore: endpointStore,
-		webhook:       NewWebhookSender(),
-		slack:         NewSlackSender(),
+		senders:       senders,
 		pollInterval:  5 * time.Second,
 		done:          make(chan struct{}),
 	}
@@ -81,15 +86,18 @@ func (w *DeliveryWorker) deliver(ctx context.Context, d Delivery) {
 		return
 	}
 
-	var sendErr error
-	switch ep.ChannelType {
-	case "webhook":
-		sendErr = w.webhook.Send(ctx, *ep, d.Payload)
-	case "slack":
-		sendErr = w.slack.Send(ctx, *ep, d.Payload)
-	default:
-		sendErr = nil // unknown channel type, mark as delivered to avoid retrying
+	sendErr := w.senders.Send(ctx, *ep, d.Payload)
+	if errors.Is(sendErr, ErrUnsupportedChannel) {
+		// Unknown channel type: mark as delivered to avoid retrying forever.
 		log.Printf("WARN: unknown channel type %q for endpoint %s", ep.ChannelType, ep.ID)
+		sendErr = nil
+	}
+	if errors.Is(sendErr, secrets.ErrNoCipher) {
+		// This plane cannot open the endpoint's sealed secret (started
+		// without LLM_ENCRYPTION_KEY). Leave the row for a plane that can:
+		// PollPending already deferred it, and the attempt is not counted.
+		log.Printf("WARN: delivery %s needs LLM_ENCRYPTION_KEY to open the secret of endpoint %s; leaving it for another plane", d.ID, ep.ID)
+		return
 	}
 
 	if sendErr == nil {

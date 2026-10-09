@@ -31,6 +31,7 @@ import (
 	"github.com/correlic/correlic-backend/internal/ingest"
 	"github.com/correlic/correlic-backend/internal/maintenance"
 	"github.com/correlic/correlic-backend/internal/notification"
+	"github.com/correlic/correlic-backend/internal/secrets"
 	"github.com/correlic/correlic-backend/internal/storage"
 	"github.com/correlic/correlic-backend/internal/storage/eventstore"
 	"github.com/correlic/correlic-backend/internal/storage/neo4j"
@@ -249,7 +250,24 @@ func main() {
 	telEndpointStore := notification.NewEndpointStore(db)
 	telNotifManager := notification.NewManager(telNotifStore, telDeliveryStore, telEndpointStore)
 	incidentCorrelator.SetNotificationEmitter(telNotifManager)
-	telDeliveryWorker := notification.NewDeliveryWorker(telDeliveryStore, telEndpointStore)
+	// The delivery worker on this plane needs LLM_ENCRYPTION_KEY to open
+	// sealed endpoint secrets (SMTP passwords, webhook HMAC secrets). Without
+	// it those deliveries are left to the API plane's worker.
+	var telSecretCipher *secrets.Cipher
+	if key := os.Getenv("LLM_ENCRYPTION_KEY"); key != "" {
+		c, err := secrets.NewCipher(key)
+		if err != nil {
+			log.Fatalf("LLM_ENCRYPTION_KEY invalid: %v", err)
+		}
+		telSecretCipher = c
+	} else {
+		log.Println("WARN: LLM_ENCRYPTION_KEY not set: e-mail and signed webhook notifications are delivered by the API plane only")
+	}
+	telSenders := notification.NewSenders(notification.SenderOptions{
+		Cipher:       telSecretCipher,
+		DashboardURL: os.Getenv("FRONTEND_URL"),
+	})
+	telDeliveryWorker := notification.NewDeliveryWorker(telDeliveryStore, telEndpointStore, telSenders)
 	if telDeliveryWorker != nil {
 		go telDeliveryWorker.Start()
 		defer telDeliveryWorker.Stop()

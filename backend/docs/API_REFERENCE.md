@@ -16,6 +16,17 @@ All endpoints are served on `:8080` over TLS (or plain HTTP in dev mode).
 
 ---
 
+## 0. MCP server
+
+The same API backs `correlic-mcp`, the Model Context Protocol server for
+Claude Code, Claude Desktop and Cursor (`cmd/mcp`): its tools call
+`/agents`, `/agents/activity`, `/api/v1/findings`, `/api/v1/incidents`,
+`/api/v1/incidents/{id}`, `/ai/proof`, `/network/summary`, `/ports/summary`
+and `/telemetry` with the configured API key, and `PATCH /api/v1/findings/{id}`
+only when started with `--allow-writes`. See `docs/MCP_SERVER.md`.
+
+---
+
 ## 1. Health and Debug
 
 | Method | Path | Auth | Description |
@@ -276,11 +287,23 @@ Claude Code / Cursor tool call reported by `correlic-hook`, with
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/v1/notification-endpoints` | authed | List notification endpoints (webhooks, Slack, etc.). |
-| POST | `/api/v1/notification-endpoints` | authed | Create a new notification endpoint. |
-| PUT | `/api/v1/notification-endpoints/{id}` | authed | Update a notification endpoint. |
-| DELETE | `/api/v1/notification-endpoints/{id}` | authed | Delete a notification endpoint. |
-| POST | `/api/v1/notification-endpoints/{id}/test` | authed | Send a test notification to an endpoint. |
+| GET | `/api/v1/notification-endpoints` | authed | List notification endpoints. Secrets are never returned (`secret_set` / `password_set` booleans instead). |
+| POST | `/api/v1/notification-endpoints` | admin | Create a notification endpoint. Body: `name`, `channel_type`, `config`, `min_severity` (`low`/`medium`/`high`/`critical`, default `medium`), `enabled`. |
+| PUT | `/api/v1/notification-endpoints/{id}` | admin | Partial update. A `config` that omits a secret keeps the stored one. |
+| DELETE | `/api/v1/notification-endpoints/{id}` | admin | Delete a notification endpoint. |
+| POST | `/api/v1/notification-endpoints/{id}/test` | admin | Send a test notification. Returns `{"ok": true}` or `{"ok": false, "error": "<category>"}`. |
+
+`channel_type` and its `config` schema:
+
+| `channel_type` | `config` keys | Example |
+|----------------|---------------|---------|
+| `webhook` | `url` (required, public http/https), `secret` (optional, HMAC-SHA256 → `X-Correlic-Signature`), `headers` (optional map) | `{"url": "https://hooks.example.com/correlic", "secret": "…"}` |
+| `slack` | `webhook_url` (required) | `{"webhook_url": "https://hooks.slack.com/services/T…/B…/…"}` |
+| `discord` | `webhook_url` (required; `https://discord.com/api/webhooks/…` or `discordapp.com`) | `{"webhook_url": "https://discord.com/api/webhooks/1234/abcd"}` |
+| `email` | `smtp_host`, `from`, `to` (list or comma-separated; required); `smtp_port` (587), `security` (`starttls` default / `tls` / `none`), `username`, `password`, `subject_prefix` (≤ 64 chars) | `{"smtp_host": "smtp.example.com", "smtp_port": 587, "security": "starttls", "username": "alerts@example.com", "password": "…", "from": "Correlic <alerts@example.com>", "to": ["soc@example.com"], "subject_prefix": "[prod]"}` |
+| `syslog` | `host` (required); `port` (514, or 6514 for tcp+tls), `protocol` (`udp` default / `tcp` / `tcp+tls`), `facility` (`local0`…`local7`, `auth`, `daemon`, … or 0–23; default `local0`), `ca_file` (absolute PEM path on the backend, tcp+tls), `insecure_skip_verify` (bool, tcp+tls) | `{"host": "siem.internal", "port": 6514, "protocol": "tcp+tls", "facility": "local4", "ca_file": "/etc/correlic/siem-ca.pem"}` |
+
+Validation errors come back as `400` with a plain message (`webhook_url rejected: blocked destination`, `security must be one of: starttls, tls, none`, …). Message formats, the delivery payload and the at-rest handling of secrets are described in `docs/ALERT_ENGINE.md`.
 
 ### Delivery History
 

@@ -10,17 +10,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/correlic/correlic-backend/internal/secrets"
 )
 
 // WebhookSender delivers notifications via HTTP POST with HMAC-SHA256 signing.
 type WebhookSender struct {
 	client *http.Client
+	cipher *secrets.Cipher
 }
 
 // NewWebhookSender creates a sender with a 10-second timeout, no redirect
 // following and an SSRF-guarded dialer (see newOutboundClient).
 func NewWebhookSender() *WebhookSender {
 	return &WebhookSender{client: newOutboundClient()}
+}
+
+// WithCipher sets the cipher used to open a sealed HMAC secret.
+func (s *WebhookSender) WithCipher(c *secrets.Cipher) *WebhookSender {
+	s.cipher = c
+	return s
 }
 
 // Send delivers a payload to a webhook endpoint.
@@ -48,8 +57,13 @@ func (s *WebhookSender) Send(ctx context.Context, endpoint Endpoint, payload map
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Correlic-Webhook/1.0")
 
-	// HMAC-SHA256 signature if secret is configured
-	if secret, _ := endpoint.Config["secret"].(string); secret != "" {
+	// HMAC-SHA256 signature if secret is configured (sealed, or plaintext on
+	// endpoints created before secrets were sealed).
+	secret, err := ResolveSecret(s.cipher, endpoint.Config, "secret")
+	if err != nil {
+		return fmt.Errorf("webhook secret: %w", err)
+	}
+	if secret != "" {
 		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write(body)
 		sig := hex.EncodeToString(mac.Sum(nil))

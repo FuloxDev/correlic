@@ -2,13 +2,18 @@ package notification
 
 import "time"
 
-// Endpoint represents a configured notification channel (webhook or Slack).
+// Endpoint represents a configured notification channel.
+//
+// ChannelType is one of ChannelTypes (webhook, slack, discord, email,
+// syslog); Config holds the channel's settings as documented in
+// docs/ALERT_ENGINE.md. Secrets inside Config are stored sealed under
+// "<key>_encrypted" and never leave the API (see Redacted).
 type Endpoint struct {
 	ID          string         `json:"id"`
 	OrgID       string         `json:"org_id"`
 	Name        string         `json:"name"`
-	ChannelType string         `json:"channel_type"` // "webhook" or "slack"
-	Config      map[string]any `json:"config"`       // {url, secret, headers} for webhook; {webhook_url} for slack
+	ChannelType string         `json:"channel_type"`
+	Config      map[string]any `json:"config"`
 	MinSeverity string         `json:"min_severity"` // "low", "medium", "high", "critical"
 	Enabled     bool           `json:"enabled"`
 	CreatedAt   time.Time      `json:"created_at"`

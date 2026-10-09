@@ -99,7 +99,7 @@ See `docs/AI_INTELLIGENCE.md` for the complete AI context assembly flow.
 │  │  • Process tree visualization                          │  │
 │  │  • Incident management + AI chat                       │  │
 │  │  • Findings, baselines, block rules management         │  │
-│  │  • Notification center + webhook/Slack config          │  │
+│  │  • Notification center + channel config (5 types)      │  │
 │  │  • Dashboard with stats and trends                     │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
@@ -162,7 +162,7 @@ See `docs/LINUX_AGENT.md`, `docs/WINDOWS_AGENT.md`, `docs/MACOS_AGENT.md` and `d
 | `api` | `cmd/api/main.go` | HTTP server (port 8080) — ingestion, detection, all API endpoints |
 | `admin` | `cmd/admin/main.go` | CLI tool — migrations, org management, API key creation |
 | `telemetry` | `cmd/telemetry/main.go` | Asynchronous telemetry processing plane |
-| `mcp` | `cmd/mcp/main.go` | Model Context Protocol server (LLM-native interface) |
+| `mcp` | `cmd/mcp/main.go` | Model Context Protocol server for MCP clients such as Claude Code, Claude Desktop and Cursor; see `docs/MCP_SERVER.md` |
 
 **Technology Stack:**
 - Go 1.26+
@@ -199,7 +199,7 @@ Key endpoint groups:
 - `/api/v1/block-rules/*` — Block rule CRUD + enforcement
 - `/api/v1/detection/settings/*` — Per-org rule tuning
 - `/api/v1/exceptions/*` — Rule exception management
-- `/api/v1/notifications/*` — In-app notifications + webhook/Slack endpoints
+- `/api/v1/notifications/*` — In-app notifications + channel endpoints (webhook, Slack, Discord, e-mail, syslog)
 - `/auth/*` — Sessions, Google OAuth, password reset, email verification
 - `/dashboard/*` — Stats and trends
 - `/neo4j/*` — Graph-powered process trees and attack paths
@@ -232,7 +232,7 @@ Key endpoint groups:
 - **Findings Dashboard** — Detection findings with allow/dismiss/block actions
 - **Behavioral Baselines** — Manage learned normal behavior
 - **Block Rules** — Create and manage process termination rules
-- **Notification Center** — In-app feed + webhook/Slack configuration
+- **Notification Center** — In-app feed + channel configuration (webhook, Slack, Discord, e-mail, syslog)
 - **Dashboard** — Aggregated stats, trends, activity feed
 
 **Technology Stack:**

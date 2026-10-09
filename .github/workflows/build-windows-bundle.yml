@@ -60,7 +60,8 @@ jobs:
           LD="-s -w -X main.version=${{ steps.v.outputs.version }}"
           (cd backend && go build -ldflags="$LD" -o ../bundle/bin/correlic-api.exe ./cmd/api \
             && go build -ldflags="$LD" -o ../bundle/bin/correlic-telemetry.exe ./cmd/telemetry \
-            && go build -ldflags="$LD" -o ../bundle/bin/correlic-admin.exe ./cmd/admin)
+            && go build -ldflags="$LD" -o ../bundle/bin/correlic-admin.exe ./cmd/admin \
+            && go build -ldflags="$LD" -o ../bundle/bin/correlic-mcp.exe ./cmd/mcp)
           (cd agent && go build -ldflags="$LD" -o ../bundle/bin/correlic-agent.exe ./cmd/agent)
           (cd agent && go build -ldflags="$LD" -o ../bundle/bin/correlic-hook.exe ./cmd/correlic-hook)
 
