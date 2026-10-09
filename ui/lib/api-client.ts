@@ -1083,11 +1083,19 @@ export interface AppNotification {
     created_at: string
 }
 
+/** Notification channel types; mirrors notification.ChannelTypes in the backend. */
+export type NotificationChannelType = 'webhook' | 'slack' | 'discord' | 'email' | 'syslog'
+
+/**
+ * A configured notification channel. `config` is channel-specific (see
+ * backend/docs/ALERT_ENGINE.md); secrets never come back from the API,
+ * only `secret_set` / `password_set` booleans.
+ */
 export interface NotificationEndpoint {
     id: string
     org_id: string
     name: string
-    channel_type: string
+    channel_type: NotificationChannelType | string
     config: Record<string, unknown>
     min_severity: string
     enabled: boolean
