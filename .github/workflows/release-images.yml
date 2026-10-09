@@ -5,6 +5,18 @@ name: Release container images
 # linux/amd64 + linux/arm64 multi-platform manifests. Runs on a version tag
 # (v1.2.3) or on demand.
 #
+# Supply chain (see SECURITY.md "Verifying a release" and
+# backend/docs/RELEASE_PROCESS.md):
+#   * BuildKit attaches SLSA provenance (mode=max) and an SBOM to every image
+#     index (`docker buildx imagetools inspect <ref> --format '{{json .Provenance}}'`).
+#   * Each image is signed by digest with Sigstore keyless signing (cosign;
+#     the certificate identity is this workflow file, the issuer is GitHub's
+#     OIDC provider, the signature is recorded in the public Rekor log).
+#   * syft produces one SPDX SBOM per platform; each is attached to the image
+#     with `cosign attest --type spdxjson` and uploaded as a workflow artifact.
+#   * Trivy scans the pushed image; findings go to the Security tab (code
+#     scanning) and never fail the release.
+#
 # GITHUB_TOKEN can only push to packages this repository owns. If a package was
 # first published from another repository, grant this repository write access
 # in the package's settings ("Manage Actions access") or delete the old package
@@ -27,7 +39,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write        # push images, signatures and attestations to GHCR
+      id-token: write        # Sigstore keyless signing (OIDC token for Fulcio)
+      security-events: write # Trivy SARIF upload to code scanning
     strategy:
       fail-fast: false
       matrix:
@@ -72,13 +86,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # provenance mode=max records the full build definition (Dockerfile,
+      # build args, base image digests, VCS revision) as an in-toto SLSA
+      # attestation; sbom=true adds BuildKit's own SBOM. Both are stored as
+      # attestation manifests inside the pushed image index.
       - uses: docker/build-push-action@v7
+        id: build
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
           platforms: linux/amd64,linux/arm64
-          provenance: false
+          provenance: mode=max
+          sbom: true
           build-args: |
             VERSION=${{ steps.v.outputs.version }}
           tags: |
@@ -86,3 +106,97 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.v.outputs.ns }}/${{ matrix.image }}:latest
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+      # Everything below addresses the image by the digest of the pushed index,
+      # never by tag: tags are mutable, digests are not.
+      - name: Resolve the pushed image by digest
+        id: ref
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [ -n "$DIGEST" ] || { echo "build-push-action returned no digest" >&2; exit 1; }
+          echo "ref=${REGISTRY}/${{ steps.v.outputs.ns }}/${{ matrix.image }}@${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # ── Signing and SBOM attestation (Sigstore keyless) ─────────────
+      # Third-party actions are pinned to a release tag for now; once the
+      # Scorecard workflow is green they are candidates for SHA pinning
+      # (Dependabot's github-actions updates keep SHA pins current).
+      - uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign the image (keyless, by digest)
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        # --recursive also signs each per-platform manifest inside the index.
+        run: cosign sign --yes --recursive "$REF"
+
+      - uses: anchore/sbom-action/download-syft@v0
+        id: syft
+
+      - name: Generate SPDX SBOMs with syft (one per platform)
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+          REF: ${{ steps.ref.outputs.ref }}
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          for P in linux/amd64 linux/arm64; do
+            A="${P#linux/}"
+            "$SYFT" scan "registry:${REF}" --platform "$P" \
+              --source-name "$IMAGE" --source-version "$VERSION" \
+              -o "spdx-json=${IMAGE}-${VERSION}-linux-${A}.spdx.json"
+          done
+          ls -l ./*.spdx.json
+
+      - name: Attach the SBOMs to the image (cosign attest)
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: |
+          for f in ./*.spdx.json; do
+            cosign attest --yes --type spdxjson --predicate "$f" "$REF"
+          done
+
+      # Fail the release here, not on a user's machine, if anything about the
+      # signature or the attestations is wrong. The identity is this very
+      # workflow file; the issuer is GitHub's OIDC provider.
+      - name: Verify the signature and the SBOM attestations
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+          IDENTITY_RE: ^https://github.com/${{ github.repository }}/\.github/workflows/release-images\.yml@
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          cosign verify --output text \
+            --certificate-identity-regexp "$IDENTITY_RE" \
+            --certificate-oidc-issuer "$ISSUER" "$REF"
+          cosign verify-attestation --type spdxjson --output text \
+            --certificate-identity-regexp "$IDENTITY_RE" \
+            --certificate-oidc-issuer "$ISSUER" "$REF" > /dev/null
+          echo "verified: $REF"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: sbom-${{ matrix.image }}-${{ steps.v.outputs.version }}
+          path: '*.spdx.json'
+          retention-days: 90
+
+      # ── Vulnerability scan of the pushed image ──────────────────────
+      # Informational: results land in the Security tab (code scanning) under
+      # the category trivy-image-<image>; exit-code 0 keeps a CVE in a base
+      # image from blocking a release. Tighten exit-code once the baseline
+      # is clean.
+      - name: Scan the image with Trivy
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.ref.outputs.ref }}
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: '0'
+
+      - name: Upload Trivy results to code scanning
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: trivy-image-${{ matrix.image }}
