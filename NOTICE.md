@@ -18,7 +18,7 @@ inside the install bundles and the all-in-one container image.
 |---|---|---|
 | Neo4j Community Edition 5 | GPL-3.0 | all-in-one image (apt package), Windows bundle (zip). Runs as a separate process reached over Bolt; source is available from https://github.com/neo4j/neo4j |
 | PostgreSQL 16 | PostgreSQL License | all-in-one image, Windows bundle |
-| Node.js 20 | MIT (plus bundled components, see its LICENSE) | all-in-one image, Linux and Windows bundles |
+| Node.js 24 | MIT (plus bundled components, see its LICENSE) | all-in-one image, Linux and Windows bundles |
 | Eclipse Temurin JRE 17 | GPL-2.0 with Classpath Exception | Windows bundle |
 | libbpf headers | LGPL-2.1 OR BSD-2-Clause | used at build time to compile the eBPF programs |
 

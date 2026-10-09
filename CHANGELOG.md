@@ -89,6 +89,38 @@ Linux arm64
   objects into the runner's kernel; `CORRELIC_BPF_LOAD_REQUIRED=1` makes the
   load test fail instead of skipping when BTF or privileges are missing.
 
+Supply chain and security scanning
+- Container images are signed by digest with Sigstore keyless signing
+  (`cosign sign --recursive`; identity `release-images.yml`, issuer GitHub
+  OIDC, recorded in Rekor), carry SLSA provenance (`provenance: mode=max`)
+  and a BuildKit SBOM in the image index, and get one syft SPDX SBOM per
+  platform attached with `cosign attest --type spdxjson`. The workflow
+  verifies the signature and the attestations before it finishes and scans
+  each pushed image with Trivy (SARIF to the Security tab, non-blocking).
+- Release assets: every tar.gz, .deb, .rpm, zip and the `SHA256SUMS-*.txt`
+  files are signed with `cosign sign-blob` and published with a
+  `<asset>.sigstore.json` bundle; syft writes `<asset>.spdx.json` for every
+  bundle and package tree, listed in the signed checksum file. Both bundle
+  workflows verify their own signatures with `cosign verify-blob` before
+  uploading. `SHA256SUMS-linux.txt` now also covers the apt/yum repo
+  tarball. The optional GPG signing of .deb/.rpm is unchanged and documented.
+- New `.github/workflows/security.yml`: CodeQL for Go (traced manual build
+  with the eBPF objects generated) and JavaScript/TypeScript, `govulncheck`
+  for the backend and the agent, a Trivy filesystem scan (vulnerabilities and
+  misconfigurations) and `dependency-review-action` on pull requests; weekly,
+  on push to `main` and on pull requests. New
+  `.github/workflows/scorecard.yml` runs the OpenSSF Scorecard with
+  published results. Only `govulncheck` and the dependency review can fail,
+  and only on a known vulnerability.
+- Docs: `SECURITY.md` rewritten (supported versions, reporting, response
+  targets, scope, the security design with code paths, a hardening
+  checklist and "Verifying a release" with the exact cosign commands);
+  new `backend/docs/THREAT_MODEL.md` (assets, trust boundaries, four attacker
+  models, what is and is not detected, mitigations mapped to code, residual
+  risks) and `backend/docs/RELEASE_PROCESS.md` (cutting a release, what is
+  signed where, GPG key rotation, verification). `.github/CODEOWNERS` added;
+  `NOTICE.md` lists the Node.js 24 runtime the bundles actually ship.
+
 ## v1.0.1 (2026-10-08)
 
 Release: https://github.com/FuloxDev/correlic/releases/tag/v1.0.1
