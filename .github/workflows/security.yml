@@ -23,6 +23,11 @@ name: Security
 # green they are candidates for SHA pinning (Dependabot's github-actions
 # updates keep SHA pins current).
 
+# Dependency review (actions/dependency-review-action) is not included: it
+# requires the Dependency graph to be enabled in the repository settings
+# (Settings > Security > Code security). Dependabot, govulncheck and Trivy
+# cover dependency advisories in the meantime.
+
 on:
   push:
     branches: [main]
@@ -63,7 +68,8 @@ jobs:
       - uses: actions/setup-go@v7
         if: matrix.language == 'go'
         with:
-          go-version-file: agent/go.mod
+          go-version: "1.26"
+          check-latest: true
           cache-dependency-path: |
             backend/go.sum
             agent/go.sum
@@ -108,7 +114,8 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version-file: ${{ matrix.module }}/go.mod
+          go-version: "1.26"
+          check-latest: true
           cache-dependency-path: ${{ matrix.module }}/go.sum
 
       - name: Install eBPF toolchain
@@ -163,19 +170,3 @@ jobs:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
 
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-
-      # Fails the pull request only when it adds or upgrades to a dependency
-      # with a known advisory of moderate severity or higher. The summary is
-      # on the job summary page (posting it as a PR comment would need
-      # pull-requests: write).
-      - uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: moderate

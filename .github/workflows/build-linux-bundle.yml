@@ -58,7 +58,8 @@ jobs:
       # ── Go binaries (one set per architecture, under build/<arch>/) ──
       - uses: actions/setup-go@v7
         with:
-          go-version-file: agent/go.mod
+          go-version: "1.26"
+          check-latest: true
           cache-dependency-path: |
             backend/go.sum
             agent/go.sum
