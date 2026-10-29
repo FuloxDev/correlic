@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.6
 	github.com/oklog/ulid/v2 v2.1.2
 	golang.org/x/crypto v0.57.0
 )
