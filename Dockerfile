@@ -27,7 +27,7 @@ ARG VERSION=dev
 # ============================================================
 # Stage 1: Build backend Go binaries
 # ============================================================
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder-backend
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder-backend
 ARG TARGETARCH
 
 RUN apk add --no-cache git
@@ -44,7 +44,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /co
 # ============================================================
 # Stage 2: Build agent Go binary (needs eBPF toolchain)
 # ============================================================
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder-agent
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS builder-agent
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
