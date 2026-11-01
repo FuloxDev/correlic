@@ -62,7 +62,7 @@ jobs:
       # runtime images) on the amd64 runner. The Go build stages do not need
       # it: they are pinned to $BUILDPLATFORM and cross-compile with
       # GOARCH=$TARGETARCH.
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
 
       - uses: docker/setup-buildx-action@v4
 
