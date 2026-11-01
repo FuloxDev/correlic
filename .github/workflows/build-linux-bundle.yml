@@ -81,7 +81,7 @@ jobs:
           done
 
       # ── UI + proxy (built here, not downloaded; pure JavaScript, shared by both architectures) ──
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
