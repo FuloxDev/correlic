@@ -52,7 +52,7 @@ jobs:
           (cd agent && go build -ldflags="$LD" -o ../bundle/bin/correlic-agent.exe ./cmd/agent)
           (cd agent && go build -ldflags="$LD" -o ../bundle/bin/correlic-hook.exe ./cmd/correlic-hook)
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
