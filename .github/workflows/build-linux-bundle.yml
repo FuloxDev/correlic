@@ -203,7 +203,7 @@ jobs:
       - name: Checksums
         run: sha256sum correlic-linux-${{ steps.v.outputs.version }}.tar.gz correlic-linux-${{ steps.v.outputs.version }}-arm64.tar.gz correlic_*.deb correlic-*.rpm > SHA256SUMS-linux.txt
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: correlic-linux-${{ steps.v.outputs.version }}
           path: |
